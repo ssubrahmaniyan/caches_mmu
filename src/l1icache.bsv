@@ -61,8 +61,8 @@ package l1icache;
     interface Get#(ICore_response#(TMul#(wordsize,8))) core_resp;
     interface Get#(IMem_request#(paddr)) read_mem_req;
     interface Put#(IMem_response#(TMul#(wordsize,8))) read_mem_resp;
-    interface Get#(IMem_request#(paddr)) io_read_req;
-    interface Put#(IMem_response#(TMul#(wordsize,8))) io_read_resp;
+    interface Get#(IMem_request#(paddr)) nc_read_req;
+    interface Put#(IMem_response#(TMul#(wordsize,8))) nc_read_resp;
 //    `ifdef simulate
 //      interface Get#(Bit#(1)) meta;
 //    `endif
@@ -77,7 +77,7 @@ package l1icache;
   (*conflict_free="request_to_memory,fence_operation"*)
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
-  module mkl1icache#(function Bool is_IO(Bit#(paddr) addr, Bool cacheable), parameter String alg)
+  module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
@@ -146,9 +146,9 @@ package l1icache;
     // This fifo stores the response from the next level memory.
     FIFOF#(IMem_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
     
-    FIFOF#(IMem_request#(paddr)) ff_io_read_request    <- mkSizedFIFOF(2);
+    FIFOF#(IMem_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(IMem_response#(respwidth)) ff_io_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(IMem_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
 //    `ifdef simulate
@@ -158,7 +158,7 @@ package l1icache;
       Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_cache_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fb_hits <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_io <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_nc <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fbfills <- mkDWire(0);
     `endif
     // ------------------------------------------------------------------------------------------//
@@ -184,9 +184,9 @@ package l1icache;
     Wire#(Maybe#(Bit#(TLog#(sets)))) wr_cache_hitindex <-mkDWire(tagged Invalid);
     Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkReg(0);
     Reg#(Bool) rg_replaylatest<-mkReg(False);
-    Wire#(RespState) wr_io_response <- mkDWire(None);
-    Wire#(Bit#(respwidth)) wr_io_word <-mkDWire(0);
-    Wire#(Bool) wr_io_err <-mkDWire(False);
+    Wire#(RespState) wr_nc_response <- mkDWire(None);
+    Wire#(Bit#(respwidth)) wr_nc_word <-mkDWire(0);
+    Wire#(Bool) wr_nc_err <-mkDWire(False);
     // ------------------------------------------------------------------------------------------//
 
 
@@ -263,7 +263,7 @@ package l1icache;
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_io_response==Hit);
+    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
       Bit#(respwidth) word=0;
       Bool err=False;
@@ -287,11 +287,11 @@ package l1icache;
             wr_total_fb_hits<=1;
         `endif
       end
-      else if(wr_io_response==Hit)begin
-        word=wr_io_word;
-        err=wr_io_err;
+      else if(wr_nc_response==Hit)begin
+        word=wr_nc_word;
+        err=wr_nc_err;
         `ifdef perf
-          wr_total_io<=1;
+          wr_total_nc<=1;
         `endif
       end
       rg_miss_ongoing<=False;
@@ -303,9 +303,9 @@ package l1icache;
       `ifdef ASSERT
         dynamicAssert(!(wr_cache_response==Hit && wr_fb_response==Hit),
                                                   "Cache and FB both are hit simultaneously");
-        dynamicAssert(!(wr_io_response==Hit && wr_fb_response==Hit),
+        dynamicAssert(!(wr_nc_response==Hit && wr_fb_response==Hit),
                                                   "IO and FB both are hit simultaneously");
-        dynamicAssert(!(wr_cache_response==Hit && wr_io_response==Hit),
+        dynamicAssert(!(wr_cache_response==Hit && wr_nc_response==Hit),
                                                   "Cache and IO both are hit simultaneously");
       `endif
     endrule
@@ -349,9 +349,9 @@ package l1icache;
       Bool cache_hit=unpack(|(hit));
       wr_hitway<=truncate(pack(countZerosLSB(hit)));
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(is_IO(addr,wr_cache_enable))begin // TODO make this programmable;
+      if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
         wr_cache_response<=None;
-        ff_io_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
       end
       else if(cache_hit)begin
         wr_cache_response<=Hit;
@@ -500,12 +500,12 @@ package l1icache;
         
     endrule
 
-    rule receive_io_response;
-      let {word,last,err}=ff_io_read_response.first;
-      ff_io_read_response.deq;
-      wr_io_err<=err;
-      wr_io_word<=word;
-      wr_io_response<=Hit;
+    rule receive_nc_response;
+      let {word,last,err}=ff_nc_read_response.first;
+      ff_nc_read_response.deq;
+      wr_nc_err<=err;
+      wr_nc_word<=word;
+      wr_nc_response<=Hit;
       `ifdef ASSERT
         dynamicAssert(last,"Why is IO response a burst");
       `endif
@@ -610,16 +610,16 @@ addr:%h way: %d",
      endmethod
     endinterface;
     
-    interface io_read_req = interface Get
+    interface nc_read_req = interface Get
       method ActionValue#(IMem_request#(paddr)) get;
-        ff_io_read_request.deq;
-        return ff_io_read_request.first;
+        ff_nc_read_request.deq;
+        return ff_nc_read_request.first;
       endmethod
     endinterface;
 
-    interface io_read_resp= interface Put
+    interface nc_read_resp= interface Put
      method Action put(IMem_response#(respwidth) resp);
-        ff_io_read_response.enq(resp);
+        ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
 //    `ifdef simulate 
@@ -635,7 +635,7 @@ addr:%h way: %d",
     endmethod
     `ifdef perf
       method Bit#(5) perf_counters;
-        return {wr_total_fbfills,wr_total_io,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
+        return {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
       endmethod
     `endif
   endmodule
