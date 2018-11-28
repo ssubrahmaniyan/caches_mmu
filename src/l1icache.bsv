@@ -173,10 +173,8 @@ package l1icache;
     end
     Ifc_replace#(sets,ways) repl <- mkreplace(alg);
     Reg#(Bit#(ways)) rg_valid[v_sets];
-//    Reg#(Bit#(ways)) rg_dirty[v_sets];
     for(Integer i=0;i<v_sets;i=i+1)begin
       rg_valid[i]<-mkReg(0);
-//      rg_dirty[i]<-mkReg(0);
     end
     Wire#(RespState) wr_cache_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_cache_hitword <-mkDWire(0);

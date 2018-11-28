@@ -29,7 +29,6 @@ Details:
 --------------------------------------------------------------------------------------------------
 */
 package cache_types;
-  typedef 32 ICACHEADDR;
                   // addr, Fence, epoch, prefetch
   typedef Tuple4#(Bit#(addr), Bool, Bit#(1), Bool) ICore_request#(numeric type addr);
                  // word , err , epoch
