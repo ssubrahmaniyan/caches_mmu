@@ -92,9 +92,8 @@ package mem_config;
       rg_output[i] <- mkCReg(2,0);
     end
 
-    Reg#(Bool) rg_read_req_made <- mkDReg(False);
     for(Integer i=0;i<valueOf(banks);i=i+1)begin
-      rule capture_output(/*rg_read_req_made &&*/ !ramreg);
+      rule capture_output(!ramreg);
         rg_output[i][0]<=ram_single[i].response;
       endrule
       rule capture_output_reg(ramreg);
@@ -106,7 +105,6 @@ package mem_config;
       for(Integer i=0;i<valueOf(banks);i=i+1) begin
         ram_single[i].request(we, index, data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
       end
-      rg_read_req_made<=True;
     endmethod
     method ActionValue#(Bit#(datawidth)) read_response;
       Bit#(datawidth) data_resp=0;
@@ -117,239 +115,239 @@ package mem_config;
     endmethod
   endmodule
   
-  
-
-  interface Ifc_mem_config#( numeric type n_entries, numeric type datawidth, numeric type banks);
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-    method ActionValue#(Bit#(datawidth)) read_response;
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
-  endinterface
-  
-  interface Ifc_mem_config_be#( numeric type n_entries, numeric type datawidth, numeric type banks);
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-    method Bit#(datawidth) read_response;
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
-        Bit#(TDiv#(datawidth, 8)) we);
-  endinterface
-  // TODO check if single-port BRAMs can be instantiated through a parameter.
-  module mkmem_config_h#(parameter Bool ramreg, parameter String porttype)(Ifc_mem_config#(n_entries, datawidth,  banks))
-    provisos(
-             Div#(datawidth, banks, bpb), 
-             Mul#(bpb, banks, datawidth),
-             Add#(a__, bpb, datawidth)
-    );
-    Integer bits_per_bank=valueOf(bpb);
-    
-    staticAssert(porttype=="single" || porttype=="dual","Only supported porttypes are: single, dual");
-
-//    BRAM_DUAL_PORT#(Bit#(TLog#(n_entries)), Bit#(bpb)) ram_double [valueOf(banks)];
-//    BRAM_PORT#(Bit#(TLog#(n_entries)), Bit#(bpb)) ram_single [valueOf(banks)];
-    Ifc_bram_1r1w#(TLog#(n_entries), bpb, n_entries) ram_double [valueOf(banks)];
-    Ifc_bram_1rw#(TLog#(n_entries), bpb, n_entries) ram_single [valueOf(banks)];
-    Reg#(Bit#(bpb)) rg_output[valueOf(banks)][2];
-    for(Integer i=0;i<valueOf(banks);i=i+1) begin
-      if(porttype=="single")
-        ram_single[i]<-mkbram_1rw;
-      else
-        ram_double[i]<-mkbram_1r1w;
-      rg_output[i] <- mkCReg(2,0);
-    end
-
-    Reg#(Bool) rg_read_req_made <- mkDReg(False);
-    for(Integer i=0;i<valueOf(banks);i=i+1)begin
-      rule capture_output(/*rg_read_req_made &&*/ !ramreg);
-        if(porttype=="single")
-          rg_output[i][0]<=ram_single[i].response;
-        else
-          rg_output[i][0]<=ram_double[i].response;
-      endrule
-      rule capture_output_reg(ramreg);
-        if(porttype=="single")
-          rg_output[i][1]<=ram_single[i].response;
-        else
-          rg_output[i][1]<=ram_double[i].response;
-      endrule
-    end
-
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-      for(Integer i=0;i<valueOf(banks);i=i+1) begin
-        if(porttype=="single")
-          ram_single[i].request(?, index, 0);
-        else
-          ram_double[i].read(index);
-      end
-      rg_read_req_made<=True;
-    endmethod
-    method ActionValue#(Bit#(datawidth)) read_response;
-      Bit#(datawidth) data_resp=0;
-      for(Integer i=0;i<valueOf(banks);i=i+1)begin
-        data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
-      end
-      return data_resp;
-    endmethod
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
-      for(Integer i=0;i<valueOf(banks);i=i+1)begin
-        if (porttype=="single")
-          ram_single[i].request(data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank], address, 1);
-        else
-          ram_double[i].write(data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank], address, 1);
-      end
-    endmethod
-  endmodule
-  
-  module mkmem_config_hbe#(parameter Bool ramreg)(Ifc_mem_config_be#(n_entries, datawidth,  banks))
-    provisos(Div#(datawidth, banks, bpb), 
-             Mul#(bpb, banks, datawidth), 
-             Div#(bpb, 8, bytes), 
-             Div#(datawidth, 8, totalbytes), 
-             Div#(totalbytes, banks, bytes_pbank), 
-             Add#(a__, TDiv#(datawidth, banks), datawidth),
-             // compiler required provisos
-             Add#(b__, bpb, datawidth), // datawidth is atleast bpb wide
-             Mul#(TDiv#(bpb, bytes_pbank), bytes_pbank, bpb)
-    );
-
-    Integer bits_per_bank=valueOf(bpb);
-    let bytes_per_bank=valueOf(bytes_pbank);
-    
-    BRAM_DUAL_PORT_BE#(Bit#(TLog#(n_entries)), Bit#(bpb), bytes_pbank) ram [valueOf(banks)];
-    Reg#(Bit#(bpb)) rg_output[valueOf(banks)][2];
-    for(Integer i=0;i<valueOf(banks);i=i+1) begin
-      ram[i]<-mkBRAMCore2BE(valueOf(n_entries), False);
-      rg_output[i] <- mkCReg(2,0);
-    end
-    Reg#(Bool) rg_read_req_made <- mkDReg(False);
-    
-    for(Integer i=0;i<valueOf(banks);i=i+1)begin
-      rule capture_output(rg_read_req_made && !ramreg);
-        rg_output[i][0]<=ram[i].a.read;
-      endrule
-      rule capture_output_reg(ramreg);
-        rg_output[i][1]<=ram[i].a.read;
-      endrule
-    end
-    
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        ram[i].a.put(0, index,  ?);
-      rg_read_req_made<=True;
-    endmethod
-    method Bit#(datawidth) read_response;
-      Bit#(datawidth) data_resp=0;
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
-      return data_resp;
-    endmethod
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
-        Bit#(TDiv#(datawidth, 8)) we);
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        ram[i].b.put(we[i*bytes_per_bank+bytes_per_bank-1:i*bytes_per_bank], address, 
-                                            data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
-    endmethod
-  endmodule:mkmem_config_hbe
-  
-  module mkmem_config_v#(parameter Bool ramreg)(Ifc_mem_config#(n_entries, datawidth,  banks))
-    provisos( Log#(n_entries, log_entries), 
-              Div#(n_entries, banks, epb), 
-              Mul#(epb, banks, n_entries), 
-              Log#(epb, log_epb), 
-              Add#(a__, TDiv#(datawidth, banks), datawidth), 
-              Add#(b__, TLog#(TDiv#(n_entries, banks)), TLog#(n_entries)), 
-              Add#(TSub#(log_entries, log_epb), c__, TLog#(n_entries)));
-    Integer entries_per_bank=valueOf(epb);
-    Reg#(Bit#(TLog#(n_entries))) rg_address <- mkReg(0);
-    
-    BRAM_DUAL_PORT#(Bit#(TLog#(TDiv#(n_entries, banks))), Bit#(datawidth)) ram [valueOf(banks)];
-    Reg#(Bit#(datawidth)) rg_output[valueOf(banks)][2];
-    Reg#(Bool) rg_read_req_made <- mkDReg(False);
-    for(Integer i=0;i<valueOf(banks);i=i+1) begin
-      ram[i]<-mkBRAMCore2(valueOf(epb), False);
-      rg_output[i]<- mkCReg(2,0);
-    end
-    
-    for(Integer i=0;i<valueOf(banks);i=i+1)begin
-      rule capture_output(rg_read_req_made && !ramreg);
-        rg_output[i][0]<=ram[i].a.read;
-      endrule
-      rule capture_output_reg(ramreg);
-        rg_output[i][1]<=ram[i].a.read;
-      endrule
-    end
-    
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        ram[i].a.put(False, truncate(index),  ?);
-      rg_address<= index;
-      rg_read_req_made<=True;
-    endmethod
-    method ActionValue#(Bit#(datawidth)) read_response;
-      Bit#(datawidth) data_resp [valueOf(banks)];
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        data_resp[i]=rg_output[i][1];
-      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
-      return data_resp[selection_index];
-    endmethod
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
-      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
-      ram[selection_index].b.put(True, truncate(address), data);
-    endmethod
-  endmodule:mkmem_config_v
-  
-  module mkmem_config_vbe#(parameter Bool ramreg)(Ifc_mem_config_be#(n_entries, datawidth,  banks))
-    provisos( Log#(n_entries, log_entries), 
-              Div#(n_entries, banks, epb), 
-              Div#(datawidth, 8, we_line), 
-              Mul#(epb, banks, n_entries), 
-              Log#(epb, log_epb), 
-              Add#(a__, TDiv#(datawidth, banks), datawidth), 
-              Add#(b__, TLog#(TDiv#(n_entries, banks)), TLog#(n_entries)), 
-              Add#(TSub#(log_entries, log_epb), c__, TLog#(n_entries)), 
-              Mul#(TDiv#(datawidth, we_line), we_line, datawidth));
-    Integer entries_per_bank=valueOf(epb);
-    Reg#(Bit#(TLog#(n_entries))) rg_address <- mkReg(0);
-    
-    BRAM_DUAL_PORT_BE#(Bit#(TLog#(TDiv#(n_entries, banks))), Bit#(datawidth),  we_line) ram [valueOf(banks)];
-    Reg#(Bit#(datawidth)) rg_output[valueOf(banks)][2];
-    Reg#(Bool) rg_read_req_made <- mkDReg(False);
-    for(Integer i=0;i<valueOf(banks);i=i+1) begin
-      ram[i]<-mkBRAMCore2BE(valueOf(epb), False);
-      rg_output[i]<- mkCReg(2,0);
-    end
-    
-    for(Integer i=0;i<valueOf(banks);i=i+1)begin
-      rule capture_output(rg_read_req_made && !ramreg);
-        rg_output[i][0]<=ram[i].a.read;
-      endrule
-      rule capture_output_reg(ramreg);
-        rg_output[i][1]<=ram[i].a.read;
-      endrule
-    end
-    
-    method Action read_request(Bit#(TLog#(n_entries)) index);
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        ram[i].a.put(0, truncate(index),  ?);
-      rg_address<= index;
-      rg_read_req_made<=True;
-    endmethod
-    method Bit#(datawidth) read_response;
-      Bit#(datawidth) data_resp [valueOf(banks)];
-      for(Integer i=0;i<valueOf(banks);i=i+1)
-        data_resp[i]=rg_output[i][1];
-      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
-      return data_resp[selection_index];
-    endmethod
-    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
-        Bit#(TDiv#(datawidth, 8)) we);
-      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
-      ram[selection_index].b.put(we, truncate(address), data);
-    endmethod
-  endmodule:mkmem_config_vbe
-
-//  (*synthesize*)
-//  module mkTb(Empty);
-//    Ifc_mem_config#(64, 256, 4) myram <- mkmem_config_h;
-//    Ifc_mem_config#(64, 256, 4) myram1 <- mkmem_config_v;
-//    Ifc_mem_config_be#(64, 256, 4) myram2 <- mkmem_config_hbe;
-//    Ifc_mem_config_be#(64, 256, 4) myram3 <- mkmem_config_vbe;
+//  
+//
+//  interface Ifc_mem_config#( numeric type n_entries, numeric type datawidth, numeric type banks);
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//    method ActionValue#(Bit#(datawidth)) read_response;
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
+//  endinterface
+//  
+//  interface Ifc_mem_config_be#( numeric type n_entries, numeric type datawidth, numeric type banks);
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//    method Bit#(datawidth) read_response;
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
+//        Bit#(TDiv#(datawidth, 8)) we);
+//  endinterface
+//  // TODO check if single-port BRAMs can be instantiated through a parameter.
+//  module mkmem_config_h#(parameter Bool ramreg, parameter String porttype)(Ifc_mem_config#(n_entries, datawidth,  banks))
+//    provisos(
+//             Div#(datawidth, banks, bpb), 
+//             Mul#(bpb, banks, datawidth),
+//             Add#(a__, bpb, datawidth)
+//    );
+//    Integer bits_per_bank=valueOf(bpb);
+//    
+//    staticAssert(porttype=="single" || porttype=="dual","Only supported porttypes are: single, dual");
+//
+////    BRAM_DUAL_PORT#(Bit#(TLog#(n_entries)), Bit#(bpb)) ram_double [valueOf(banks)];
+////    BRAM_PORT#(Bit#(TLog#(n_entries)), Bit#(bpb)) ram_single [valueOf(banks)];
+//    Ifc_bram_1r1w#(TLog#(n_entries), bpb, n_entries) ram_double [valueOf(banks)];
+//    Ifc_bram_1rw#(TLog#(n_entries), bpb, n_entries) ram_single [valueOf(banks)];
+//    Reg#(Bit#(bpb)) rg_output[valueOf(banks)][2];
+//    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+//      if(porttype=="single")
+//        ram_single[i]<-mkbram_1rw;
+//      else
+//        ram_double[i]<-mkbram_1r1w;
+//      rg_output[i] <- mkCReg(2,0);
+//    end
+//
+//    Reg#(Bool) rg_read_req_made <- mkDReg(False);
+//    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//      rule capture_output(/*rg_read_req_made &&*/ !ramreg);
+//        if(porttype=="single")
+//          rg_output[i][0]<=ram_single[i].response;
+//        else
+//          rg_output[i][0]<=ram_double[i].response;
+//      endrule
+//      rule capture_output_reg(ramreg);
+//        if(porttype=="single")
+//          rg_output[i][1]<=ram_single[i].response;
+//        else
+//          rg_output[i][1]<=ram_double[i].response;
+//      endrule
+//    end
+//
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//      for(Integer i=0;i<valueOf(banks);i=i+1) begin
+//        if(porttype=="single")
+//          ram_single[i].request(?, index, 0);
+//        else
+//          ram_double[i].read(index);
+//      end
+//      rg_read_req_made<=True;
+//    endmethod
+//    method ActionValue#(Bit#(datawidth)) read_response;
+//      Bit#(datawidth) data_resp=0;
+//      for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//        data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
+//      end
+//      return data_resp;
+//    endmethod
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
+//      for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//        if (porttype=="single")
+//          ram_single[i].request(data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank], address, 1);
+//        else
+//          ram_double[i].write(data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank], address, 1);
+//      end
+//    endmethod
 //  endmodule
+//  
+//  module mkmem_config_hbe#(parameter Bool ramreg)(Ifc_mem_config_be#(n_entries, datawidth,  banks))
+//    provisos(Div#(datawidth, banks, bpb), 
+//             Mul#(bpb, banks, datawidth), 
+//             Div#(bpb, 8, bytes), 
+//             Div#(datawidth, 8, totalbytes), 
+//             Div#(totalbytes, banks, bytes_pbank), 
+//             Add#(a__, TDiv#(datawidth, banks), datawidth),
+//             // compiler required provisos
+//             Add#(b__, bpb, datawidth), // datawidth is atleast bpb wide
+//             Mul#(TDiv#(bpb, bytes_pbank), bytes_pbank, bpb)
+//    );
+//
+//    Integer bits_per_bank=valueOf(bpb);
+//    let bytes_per_bank=valueOf(bytes_pbank);
+//    
+//    BRAM_DUAL_PORT_BE#(Bit#(TLog#(n_entries)), Bit#(bpb), bytes_pbank) ram [valueOf(banks)];
+//    Reg#(Bit#(bpb)) rg_output[valueOf(banks)][2];
+//    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+//      ram[i]<-mkBRAMCore2BE(valueOf(n_entries), False);
+//      rg_output[i] <- mkCReg(2,0);
+//    end
+//    Reg#(Bool) rg_read_req_made <- mkDReg(False);
+//    
+//    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//      rule capture_output(rg_read_req_made && !ramreg);
+//        rg_output[i][0]<=ram[i].a.read;
+//      endrule
+//      rule capture_output_reg(ramreg);
+//        rg_output[i][1]<=ram[i].a.read;
+//      endrule
+//    end
+//    
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        ram[i].a.put(0, index,  ?);
+//      rg_read_req_made<=True;
+//    endmethod
+//    method Bit#(datawidth) read_response;
+//      Bit#(datawidth) data_resp=0;
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
+//      return data_resp;
+//    endmethod
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
+//        Bit#(TDiv#(datawidth, 8)) we);
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        ram[i].b.put(we[i*bytes_per_bank+bytes_per_bank-1:i*bytes_per_bank], address, 
+//                                            data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
+//    endmethod
+//  endmodule:mkmem_config_hbe
+//  
+//  module mkmem_config_v#(parameter Bool ramreg)(Ifc_mem_config#(n_entries, datawidth,  banks))
+//    provisos( Log#(n_entries, log_entries), 
+//              Div#(n_entries, banks, epb), 
+//              Mul#(epb, banks, n_entries), 
+//              Log#(epb, log_epb), 
+//              Add#(a__, TDiv#(datawidth, banks), datawidth), 
+//              Add#(b__, TLog#(TDiv#(n_entries, banks)), TLog#(n_entries)), 
+//              Add#(TSub#(log_entries, log_epb), c__, TLog#(n_entries)));
+//    Integer entries_per_bank=valueOf(epb);
+//    Reg#(Bit#(TLog#(n_entries))) rg_address <- mkReg(0);
+//    
+//    BRAM_DUAL_PORT#(Bit#(TLog#(TDiv#(n_entries, banks))), Bit#(datawidth)) ram [valueOf(banks)];
+//    Reg#(Bit#(datawidth)) rg_output[valueOf(banks)][2];
+//    Reg#(Bool) rg_read_req_made <- mkDReg(False);
+//    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+//      ram[i]<-mkBRAMCore2(valueOf(epb), False);
+//      rg_output[i]<- mkCReg(2,0);
+//    end
+//    
+//    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//      rule capture_output(rg_read_req_made && !ramreg);
+//        rg_output[i][0]<=ram[i].a.read;
+//      endrule
+//      rule capture_output_reg(ramreg);
+//        rg_output[i][1]<=ram[i].a.read;
+//      endrule
+//    end
+//    
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        ram[i].a.put(False, truncate(index),  ?);
+//      rg_address<= index;
+//      rg_read_req_made<=True;
+//    endmethod
+//    method ActionValue#(Bit#(datawidth)) read_response;
+//      Bit#(datawidth) data_resp [valueOf(banks)];
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        data_resp[i]=rg_output[i][1];
+//      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
+//      return data_resp[selection_index];
+//    endmethod
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data);
+//      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
+//      ram[selection_index].b.put(True, truncate(address), data);
+//    endmethod
+//  endmodule:mkmem_config_v
+//  
+//  module mkmem_config_vbe#(parameter Bool ramreg)(Ifc_mem_config_be#(n_entries, datawidth,  banks))
+//    provisos( Log#(n_entries, log_entries), 
+//              Div#(n_entries, banks, epb), 
+//              Div#(datawidth, 8, we_line), 
+//              Mul#(epb, banks, n_entries), 
+//              Log#(epb, log_epb), 
+//              Add#(a__, TDiv#(datawidth, banks), datawidth), 
+//              Add#(b__, TLog#(TDiv#(n_entries, banks)), TLog#(n_entries)), 
+//              Add#(TSub#(log_entries, log_epb), c__, TLog#(n_entries)), 
+//              Mul#(TDiv#(datawidth, we_line), we_line, datawidth));
+//    Integer entries_per_bank=valueOf(epb);
+//    Reg#(Bit#(TLog#(n_entries))) rg_address <- mkReg(0);
+//    
+//    BRAM_DUAL_PORT_BE#(Bit#(TLog#(TDiv#(n_entries, banks))), Bit#(datawidth),  we_line) ram [valueOf(banks)];
+//    Reg#(Bit#(datawidth)) rg_output[valueOf(banks)][2];
+//    Reg#(Bool) rg_read_req_made <- mkDReg(False);
+//    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+//      ram[i]<-mkBRAMCore2BE(valueOf(epb), False);
+//      rg_output[i]<- mkCReg(2,0);
+//    end
+//    
+//    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+//      rule capture_output(rg_read_req_made && !ramreg);
+//        rg_output[i][0]<=ram[i].a.read;
+//      endrule
+//      rule capture_output_reg(ramreg);
+//        rg_output[i][1]<=ram[i].a.read;
+//      endrule
+//    end
+//    
+//    method Action read_request(Bit#(TLog#(n_entries)) index);
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        ram[i].a.put(0, truncate(index),  ?);
+//      rg_address<= index;
+//      rg_read_req_made<=True;
+//    endmethod
+//    method Bit#(datawidth) read_response;
+//      Bit#(datawidth) data_resp [valueOf(banks)];
+//      for(Integer i=0;i<valueOf(banks);i=i+1)
+//        data_resp[i]=rg_output[i][1];
+//      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
+//      return data_resp[selection_index];
+//    endmethod
+//    method Action write_request(Bit#(TLog#(n_entries)) address,  Bit#(datawidth) data,
+//        Bit#(TDiv#(datawidth, 8)) we);
+//      Bit#(TSub#(log_entries, log_epb)) selection_index=truncateLSB(rg_address);
+//      ram[selection_index].b.put(we, truncate(address), data);
+//    endmethod
+//  endmodule:mkmem_config_vbe
+//
+////  (*synthesize*)
+////  module mkTb(Empty);
+////    Ifc_mem_config#(64, 256, 4) myram <- mkmem_config_h;
+////    Ifc_mem_config#(64, 256, 4) myram1 <- mkmem_config_v;
+////    Ifc_mem_config_be#(64, 256, 4) myram2 <- mkmem_config_hbe;
+////    Ifc_mem_config_be#(64, 256, 4) myram3 <- mkmem_config_vbe;
+////  endmodule
 endpackage
