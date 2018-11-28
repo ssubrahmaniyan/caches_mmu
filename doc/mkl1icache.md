@@ -57,4 +57,22 @@ The following parameters are internally derived through provisos
 
 ## Global Structures
 
+### Structures used at interface
+
+1. `ff_core_request`: This is a 2-entry FIFO of type `ICore_request#(paddr)`. This fifo is used to capture the request from the core
+through the `core_req` interface. Data in this fifo is enqued in the `core_req` interface and is dequed either during a fence operation
+or when responding back to the core with relevant data.
+2. `ff_core_response`: This is a 2-entry FIFO of type `ICore_response#(respwidth)`. Data in this fifo is enqued when there is a hit either in
+the data-RAM, the fill-buffer or on completed IO read-request. The value from the fifo is dequed in the `core_resp` interface towards the core.
+3. `ff_read_mem_request`: This is a 2-entry FIFO of type `IMem_request#(paddr)`. Data is enqued into this fifo when a miss occurs in both the data-RAMs
+and the fill-buffer for a cacheable request. Data is dequed through the `read_mem_req` interface by the system bus transactor. The `burst_len` and `burst_size`
+fields of the tuple are hardcoded to `blocksize-1` and `wordbits-1` respectively for all line-requests.
+4. `ff_read_mem_response`: This is a 2-entry BypassFIFO of type `IMem_response(respwidth)` which is enqued through the interface `read_mem_resp` 
+when the system bus responds with the data for the respective line-request. The fifo is dequed within the module while filling a line in the fill-buffer.
+5. `ff_io_read_request`: This is a 2-entry FIFO of type `IMem_request#(paddr)` which is enqued on a non-cacheable request from the core. The fifo 
+is dequed through the `io_read_req` interface by the system bus transactor.
+6. `ff_io_read_response`: This is a 2-entry BypassFIFO of type `IMem_response(respwidth)` which is enqued through the interface `io_read_resp` 
+when the system bus responds with the data for the respective non-cacheable request. The fifo is dequed within the module whie responding to the core
+with the relevant data.
+
 
