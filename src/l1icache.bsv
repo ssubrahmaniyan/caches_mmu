@@ -40,7 +40,6 @@ package l1icache;
   import FIFOF::*;
   import DReg::*;
   import SpecialFIFOs::*;
-  import BRAMCore::*;
   import FIFO::*;
   import Assert::*;
   import GetPut::*;
@@ -78,7 +77,7 @@ package l1icache;
   (*conflict_free="request_to_memory,fence_operation"*)
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
-  module mkl1icache#(function Bool is_IO(Bit#(paddr) addr, Bool cacheable))
+  module mkl1icache#(function Bool is_IO(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
@@ -135,7 +134,7 @@ package l1icache;
       return unpack(a);
     endfunction
   
-    String alg ="RROBIN";
+//    String alg ="RROBIN";
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
@@ -656,7 +655,7 @@ addr:%h way: %d",
   (*synthesize*)
   module mkicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1));
     let ifc();
-    mkl1icache#(isIO) _temp(ifc);
+    mkl1icache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);
   endmodule
 endpackage
