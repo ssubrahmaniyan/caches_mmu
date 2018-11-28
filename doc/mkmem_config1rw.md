@@ -11,9 +11,9 @@
 
 ## Quick Info
 
-* **Module Name**: ``mkmem_config1rw``
-* **Package Name**: ``mem_config``
-* **Interface Name**: ``Ifc_mem_config1rw``
+* **Module Name**: [``mkmem_config1rw``](../src/mem_config.bsv#L77)
+* **Package Name**: [``mem_config``](../src/mem_config.bsv)
+* **Interface Name**: [``Ifc_mem_config1rw``](../src/mem_config.bsv#L72)
 * **BSV Libraries Used**: None
 * **Local Packages Used**: `bram_1rw_new`
 
