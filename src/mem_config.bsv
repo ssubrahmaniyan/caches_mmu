@@ -66,8 +66,7 @@ package mem_config;
   import FIFOF::*;
   import SpecialFIFOs::*;
   import Assert::*;
-  import bram_1r1w::*;
-  import bram_1rw_new::*;
+  import bram_1rw::*;
   
   interface Ifc_mem_config1rw#( numeric type n_entries, numeric type datawidth, numeric type banks);
     method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
