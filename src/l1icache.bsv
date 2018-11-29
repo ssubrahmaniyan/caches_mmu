@@ -54,11 +54,12 @@ package l1icache;
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
-                           numeric type fbsize
+                           numeric type fbsize,
+                           numeric type esize 
                            );
 
-    interface Put#(ICore_request#(paddr)) core_req;
-    interface Get#(ICore_response#(TMul#(wordsize,8))) core_resp;
+    interface Put#(ICore_request#(paddr,esize)) core_req;
+    interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(IMem_request#(paddr)) read_mem_req;
     interface Put#(IMem_response#(TMul#(wordsize,8))) read_mem_resp;
     interface Get#(IMem_request#(paddr)) nc_read_req;
@@ -78,7 +79,7 @@ package l1icache;
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize,esize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -138,9 +139,9 @@ package l1icache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(ICore_request#(paddr)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(ICore_request#(paddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(ICore_response#(respwidth))ff_core_response <- mkSizedFIFOF(2);
+    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(IMem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
@@ -570,7 +571,7 @@ addr:%h way: %d",
     endrule
 
     interface core_req=interface Put
-      method Action put(ICore_request#(paddr) req)if( ff_core_response.notFull &&
+      method Action put(ICore_request#(paddr,esize) req)if( ff_core_response.notFull &&
                                 !rg_replaylatest &&  !rg_fence_stall && !fb_full);
         `ifdef perf
           wr_total_access<=1;
@@ -593,7 +594,7 @@ addr:%h way: %d",
     endinterface;
 
     interface core_resp = interface Get
-      method ActionValue#(ICore_response#(respwidth)) get();
+      method ActionValue#(ICore_response#(respwidth,esize)) get();
         ff_core_response.deq;
         return ff_core_response.first;
       endmethod
@@ -653,7 +654,7 @@ addr:%h way: %d",
 
 
   (*synthesize*)
-  module mkicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1));
+  module mkicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
     let ifc();
     mkl1icache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);

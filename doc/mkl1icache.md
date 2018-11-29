@@ -37,6 +37,8 @@ and the fill-buffer.
 4. `ways`: This is a numeric parameter which defines the number of blocks per set.
 5. `paddr`: This is numeric parameter indicating the size of address of the system bus. This helps identify the number of tagbits that will be required.
 6. `fbsize`: This is a numeric parameter defining the number of entries in the fill-buffer. `fbsize` should always be > 0.
+7. `esize`: This is a numeric parameter indicating the size of the `epoch` field in the request and
+the response from/to the core respectively.
 
 ### Module Parameters:
 

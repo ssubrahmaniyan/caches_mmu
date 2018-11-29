@@ -20,20 +20,20 @@ available in the src folder of this repo.
 ## Type Definitions
 
 1. `ICore_request`: Tuple of 4 elements
-    * **Arguments**: `addr`
+    * **Arguments**: `addr` , `esize`
     * **Description**: This type represents the request packet format from the core to the instruction cache.
     * **Fields**: 
         1. An `addr`-bit wide field containing the address of the request.
         2. A boolean field indicating if the request is a fence operation or not.
-        3. A Single bit field indicating `epoch` tag of the request.
+        3. A `esize`bit field indicating `epoch` tag of the request.
         4. A boolean field indicating if the request is a prefetch request.
 2. `ICore_response`: Tuple of 3 elements
-    * **Arguments**: `data`
+    * **Arguments**: `data` , `esize`
     * **Description**: This type represents the response packet from the instruction cache to the core.
     * **Fields**: 
         1. `data`-bit wide field containing the instruction to be sent to the core.
         2. A boolean field indicating if the request faced a bus-error.
-        3. A single-bit field containing the `epoch` tag of the request.
+        3. A `esize`-bit field containing the `epoch` tag of the request.
 3. `IMem_request`: Tuple of 3 elements
     * **Arguments**: `addr`
     * **Description**: This type represents the packet format of the request sent to the memory bus from the instruction cache.
