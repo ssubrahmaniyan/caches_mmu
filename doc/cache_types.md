@@ -1,3 +1,9 @@
+## Contents
+- [Quick Info](#quick-info)
+- [General Description](#general-description)
+- [Type Definitions](#type-definitions)
+- [Functions](#functions)
+
 ## Quick Info
 
 * **Module Name**: None
@@ -97,3 +103,15 @@ used in the cache designs
         6. `g`: Boolean field indicating if the papge has global access.
         7. `a`: Boolean field indicating if the papge has been previously accesssed or not.
         8. `d`: Boolean field indicating if the papge has been previously written. 
+
+## Functions
+
+1. `bits_to_permissions`: 
+    * **Arguments**: 8-bit value
+    * **Return Type**: `TLB_permissions` type
+    * **Description**: converts the lower 8 bits of the page table entry into `TLB_permissions` type.
+2. `countName`:
+    * **Arguments**: Integer 
+    * **Return Type**: String
+    * **Description**: This function is used by the i-cache to associate string name with varios performance counters. Each performance counter is numbered
+    and this function associates the number with the relevent string definition.
