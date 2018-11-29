@@ -15,7 +15,7 @@
 * **Package Name**: [``mem_config``](../src/mem_config.bsv)
 * **Interface Name**: [``Ifc_mem_config1rw``](../src/mem_config.bsv#L72)
 * **BSV Libraries Used**: None
-* **Local Packages Used**: `bram_1rw_new`
+* **Local Packages Used**: [`bram_1rw`](../src/bram_1rw.bsv)
 
 ## General Description:
 
