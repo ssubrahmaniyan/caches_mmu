@@ -416,7 +416,9 @@ package l1icache;
         wr_fb_response<=Miss;
       // setting this register will prevent the rule tag_match from firing when polling is expected.
       rg_polling<=(linehit && !wordhit);
-      wrpolling<=rg_polling;
+      `ifdef simulate
+        wrpolling<=rg_polling;
+      `endif
       wr_fb_word<=truncate(hitline>>block_offset); 
 
       if(verbosity!=0)begin
