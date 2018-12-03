@@ -84,6 +84,27 @@ with the relevant data.
 12. `wr_total_nc`: This is a single-bit wire which is set to `1` whenever there is a non-cacheable request from the core.
 13. `wr_total_fbfills`: This is a single-bit wire which is set to `1` whenever the fill-buffer is successfull in writing a line from the RAMs.
 
+### Structures to maintain RAM access
+
+1. `data_arr`: This an array of `ways` elements, where each element is of type
+`mkmem_config1rw` with `sets` depth and `linewidth` width. 
+This structure maintains the cache lines of each way.
+2. `tag_arr` This is an array `ways` elements, wherer each element if of type 
+`mkmem_config1rw` with `sets` depth and `tagbits` width. 
+This structure holds the tag bits of each corresponding line in the `data_arr`.
+3. `replacement`: This is an instance of the [`mkreplacement`](../src/replacement.bsv) module
+and provides the replacement policy to replace lines in an n-way (n>1) associative cache.
+4. `rg_valid`: This is an array of `sets` entries, with each entry being `ways`-bits wide. This structure indicates which ways of a particular set are valid. 
+5. `wr_ram_response`: This is a wire of enum type `RespState` which indicates if a core 
+request is a hit or miss in the `tag_arr`.
+6. `wr_ram_hitword`: This is a wire of `respwidth`-bits which contains the hit word from the 
+ram if `wr_ram_response` indicates a hit in `tag_arr`. On a ram miss it holds `0`.
+7. `wr_ram_hitway`: This is a wire of `TLog#(ways)`-bits wide which holds the ram way 
+which gave a hit for `wr_ram_response`. On a ram miss this wire holds `0`. This wire is used
+to update the `PLRU` replacement policy on a hit in the ram. For a cache configuration
+with less than 2 ways or `RROBIN` or `RANDOM` replacement policies, this wire is not used.
+  
+
 
 
 
