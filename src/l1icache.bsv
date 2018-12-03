@@ -172,17 +172,17 @@ package l1icache;
       data_arr[i]<-mkmem_config1rw(False, "single"); // TODO parameterize arguments
       tag_arr[i]<-mkmem_config1rw(False, "single");
     end
-    Ifc_replace#(sets,ways) repl <- mkreplace(alg);
+    Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
     Reg#(Bit#(ways)) rg_valid[v_sets];
     for(Integer i=0;i<v_sets;i=i+1)begin
       rg_valid[i]<-mkReg(0);
     end
-    Wire#(RespState) wr_cache_response <- mkDWire(None);
-    Wire#(Bit#(respwidth)) wr_cache_hitword <-mkDWire(0);
-    Wire#(Bit#(TLog#(ways))) wr_hitway <-mkDWire(0);
+    Wire#(RespState) wr_ram_response <- mkDWire(None);
+    Wire#(Bit#(respwidth)) wr_ram_hitword <-mkDWire(0);
+    Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
     Reg#(Bool) rg_miss_ongoing <- mkReg(False);
     Reg#(Bool) rg_fence_stall <- mkReg(False);
-    Wire#(Maybe#(Bit#(TLog#(sets)))) wr_cache_hitindex <-mkDWire(tagged Invalid);
+    Wire#(Maybe#(Bit#(TLog#(sets)))) wr_ram_hitindex <-mkDWire(tagged Invalid);
     Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkReg(0);
     Reg#(Bool) rg_replaylatest<-mkReg(False);
     Wire#(RespState) wr_nc_response <- mkDWire(None);
@@ -256,7 +256,7 @@ package l1icache;
         fb_valid[i]<=False;
       rg_fence_stall<=False;
       ff_core_request.deq; // TODO depends on how fence should be handled.
-      repl.reset_repl;
+      replacement.reset_repl;
       if(verbosity!=0)begin
         $display($time,"\tICACHE: Fence operation in progress");
       end
@@ -264,16 +264,16 @@ package l1icache;
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
+    rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
       Bit#(respwidth) word=0;
       Bool err=False;
       let set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-      if(wr_cache_response==Hit)begin
-        word=wr_cache_hitword;
+      if(wr_ram_response==Hit)begin
+        word=wr_ram_hitword;
         if(alg=="PLRU") begin
-          wr_cache_hitindex<=tagged Valid set_index;
-          repl.update_set(set_index, wr_hitway);//wr_replace_line); // TODO update for PLRU should happen here
+          wr_ram_hitindex<=tagged Valid set_index;
+          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); // TODO update for PLRU should happen here
         end
         `ifdef perf
           wr_total_cache_hits<=1;
@@ -302,11 +302,11 @@ package l1icache;
       ff_core_response.enq(tuple3(word,err,epoch));
       ff_core_request.deq;
       `ifdef ASSERT
-        dynamicAssert(!(wr_cache_response==Hit && wr_fb_response==Hit),
+        dynamicAssert(!(wr_ram_response==Hit && wr_fb_response==Hit),
                                                   "Cache and FB both are hit simultaneously");
         dynamicAssert(!(wr_nc_response==Hit && wr_fb_response==Hit),
                                                   "IO and FB both are hit simultaneously");
-        dynamicAssert(!(wr_cache_response==Hit && wr_nc_response==Hit),
+        dynamicAssert(!(wr_ram_response==Hit && wr_nc_response==Hit),
                                                   "Cache and IO both are hit simultaneously");
       `endif
     endrule
@@ -348,18 +348,18 @@ package l1icache;
         end
       end
       Bool cache_hit=unpack(|(hit));
-      wr_hitway<=truncate(pack(countZerosLSB(hit)));
+      wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
       if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
-        wr_cache_response<=None;
+        wr_ram_response<=None;
         ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
       end
       else if(cache_hit)begin
-        wr_cache_response<=Hit;
-        wr_cache_hitword<=response_word;
+        wr_ram_response<=Hit;
+        wr_ram_hitword<=response_word;
       end
       else begin
-        wr_cache_response<=Miss;
+        wr_ram_response<=Miss;
       end
 
       if(verbosity!=0)begin
@@ -451,7 +451,7 @@ package l1icache;
     // entire line in the FB has been filled.
     // It is not possible at any point of time for rg_fbmissallocate and rg_fbbeingfilled to update
     // the same entry in the FB.
-    rule request_to_memory(wr_cache_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
+    rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
                                                                                         &&!fb_full);
                                                                                         
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
@@ -529,15 +529,15 @@ package l1icache;
       let addr=fb_addr[rg_fbwriteback];
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(tagbits) tag = addr[v_paddr-1:v_paddr-v_tagbits];
-      let waynum<-repl.line_replace(set_index, rg_valid[set_index]);
+      let waynum<-replacement.line_replace(set_index, rg_valid[set_index]);
       if(&(rg_valid[set_index])==1)begin
         if(alg!="PLRU")
-          repl.update_set(set_index,waynum);
+          replacement.update_set(set_index,waynum);
         else begin
-          if(wr_cache_hitindex matches tagged Valid .i &&& i==set_index)begin
+          if(wr_ram_hitindex matches tagged Valid .i &&& i==set_index)begin
           end
           else
-            repl.update_set(set_index,waynum);
+            replacement.update_set(set_index,waynum);
         end
       end
       rg_valid[set_index][waynum]<=1'b1;
