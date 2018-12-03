@@ -95,8 +95,7 @@ This structure holds the tag bits of each corresponding line in the `data_arr`.
 3. `replacement`: This is an instance of the [`mkreplacement`](./mkreplacement.md) module
 and provides the replacement policy to replace lines in an n-way (n>1) associative cache.
 4. `rg_valid`: This is an array of `sets` entries, with each entry being `ways`-bits wide. This structure indicates which ways of a particular set are valid. 
-5. `wr_ram_response`: This is a wire of enum type [`RespState`](./cache_types.md#51) which indicates if a core 
-request is a hit or miss in the `tag_arr`.
+5. `wr_ram_response`: This is a wire of enum type [`RespState`](./cache_types.md#type-definitions) which indicates if a core request is a hit or miss in the `tag_arr`.
 6. `wr_ram_hitword`: This is a wire of `respwidth`-bits which contains the hit word from the 
 ram if `wr_ram_response` indicates a hit in `tag_arr`. On a ram miss it holds `0`.
 7. `wr_ram_hitway`: This is a wire of `TLog#(ways)`-bits wide which holds the ram way 
