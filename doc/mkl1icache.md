@@ -76,5 +76,19 @@ is dequed through the `io_read_req` interface by the system bus transactor.
 6. `ff_io_read_response`: This is a 2-entry BypassFIFO of type `IMem_response(respwidth)` which is enqued through the interface `io_read_resp` 
 when the system bus responds with the data for the respective non-cacheable request. The fifo is dequed within the module whie responding to the core
 with the relevant data.
+7. `wr_takingrequest`: This a Boolean wire which is set to `True` for the cycle when the `core_req` interface is fired. This wire is used to indicate an oppurtunity to the fill-buffer - that the core is not or cannot request an operation on the RAM ports in this cycle and thus the fill buffer may choose to replace a line back in to the RAMs.
+8. `wr_cache_enable`: This is a Boolean wire, which when set to `True` indicates that the current request from the core needs to be cached (if it is non-IO access) else bypass the cache for the core request.
+9. `wr_total_access`: This a single-bit wire which is set to `1` whenever the core sends a request through the `core_req` interface.
+10. `wr_total_cache_hits`: This is a single-bit wire which is set to `1` whenever there is a hit in the RAMs
+11. `wr_total_fb_hits`: This is a single-bit wire which is set to `1` whenever there is a hit in the fill-buffer.
+12. `wr_total_nc`: This is a single-bit wire which is set to `1` whenever there is a non-cacheable request from the core.
+13. `wr_total_fbfills`: This is a single-bit wire which is set to `1` whenever the fill-buffer is successfull in writing a line from the RAMs.
+
+
+
+
+
+
+
 
 
