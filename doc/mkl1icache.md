@@ -87,15 +87,15 @@ with the relevant data.
 ### Structures to maintain RAM access
 
 1. `data_arr`: This an array of `ways` elements, where each element is of type
-`mkmem_config1rw` with `sets` depth and `linewidth` width. 
+[`mkmem_config1rw`](./mkmem_config1rw.md) with `sets` depth and `linewidth` width. 
 This structure maintains the cache lines of each way.
 2. `tag_arr` This is an array `ways` elements, wherer each element if of type 
-`mkmem_config1rw` with `sets` depth and `tagbits` width. 
+[`mkmem_config1rw`](./mkmem_config1rw.md) with `sets` depth and `tagbits` width. 
 This structure holds the tag bits of each corresponding line in the `data_arr`.
-3. `replacement`: This is an instance of the [`mkreplacement`](../src/replacement.bsv) module
+3. `replacement`: This is an instance of the [`mkreplacement`](./mkreplacement.md) module
 and provides the replacement policy to replace lines in an n-way (n>1) associative cache.
 4. `rg_valid`: This is an array of `sets` entries, with each entry being `ways`-bits wide. This structure indicates which ways of a particular set are valid. 
-5. `wr_ram_response`: This is a wire of enum type `RespState` which indicates if a core 
+5. `wr_ram_response`: This is a wire of enum type [`RespState`](./cache_types.md#51) which indicates if a core 
 request is a hit or miss in the `tag_arr`.
 6. `wr_ram_hitword`: This is a wire of `respwidth`-bits which contains the hit word from the 
 ram if `wr_ram_response` indicates a hit in `tag_arr`. On a ram miss it holds `0`.
