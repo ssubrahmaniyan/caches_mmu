@@ -32,7 +32,8 @@ Details:
   3. Total IO requests
   4. Total Fills from FB to Cache
   
-
+TODO: rg_latest_index will not be required since a write-operation to the RAMs by the Fill-buffer
+should not cause a change in the read-output-port of the RAMs.
 --------------------------------------------------------------------------------------------------
 */
 package l1icache;
@@ -169,7 +170,7 @@ package l1icache;
     Ifc_mem_config1rw#(sets, linewidth, 1) data_arr [v_ways]; // data array
     Ifc_mem_config1rw#(sets, tagbits, 1) tag_arr [v_ways];// one extra valid bit
     for(Integer i=0;i<v_ways;i=i+1)begin
-      data_arr[i]<-mkmem_config1rw(False, "single"); // TODO parameterize arguments
+      data_arr[i]<-mkmem_config1rw(False, "single"); 
       tag_arr[i]<-mkmem_config1rw(False, "single");
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
@@ -180,11 +181,17 @@ package l1icache;
     Wire#(RespState) wr_ram_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_ram_hitword <-mkDWire(0);
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
+    Wire#(Maybe#(Bit#(TLog#(sets)))) wr_ram_hitindex <-mkDWire(tagged Invalid);
+    // ------------------------------------------------------------------------------------------//
+
+    // -------------------------- Common State control structures -------------------------------//
     Reg#(Bool) rg_miss_ongoing <- mkReg(False);
     Reg#(Bool) rg_fence_stall <- mkReg(False);
-    Wire#(Maybe#(Bit#(TLog#(sets)))) wr_ram_hitindex <-mkDWire(tagged Invalid);
     Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkReg(0);
     Reg#(Bool) rg_replaylatest<-mkReg(False);
+    // ----------------------------------------------------------------------------------------- //
+
+    // -------------------------------- None Cacheable Strcutures ------------------------------ //
     Wire#(RespState) wr_nc_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_nc_word <-mkDWire(0);
     Wire#(Bool) wr_nc_err <-mkDWire(False);
@@ -196,7 +203,6 @@ package l1icache;
     Reg#(Bit#(paddr)) fb_addr [v_fbsize];
     Reg#(Bit#(blocksize)) fb_enables [v_fbsize];
     Vector#(fbsize,Reg#(Bool)) fb_valid<-replicateM(mkReg(False));
-//    Reg#(Bit#(fbsize)) fb_valid <-mkReg(0);
     for(Integer i=0;i<v_fbsize;i=i+1)begin
       fb_dataline[i]<-mkReg(0);
       fb_addr[i]<-mkReg(0);
