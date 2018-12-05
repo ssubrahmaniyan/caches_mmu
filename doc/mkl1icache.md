@@ -94,7 +94,7 @@ This structure maintains the cache lines of each way.
 This structure holds the tag bits of each corresponding line in the `data_arr`.
 3. `replacement`: This is an instance of the [`mkreplacement`](./mkreplacement.md) module
 and provides the replacement policy to replace lines in an n-way (n>1) associative cache.
-4. `rg_valid`: This is an array of `sets` entries, with each entry being `ways`-bits wide. This structure indicates which ways of a particular set are valid. 
+4. `rg_valid`: This is an array of `sets` registers, with each register being `ways`-bits wide. This structure indicates which ways of a particular set are valid. 
 5. `wr_ram_response`: This is a wire of enum type [`RespState`](./cache_types.md#type-definitions) which indicates if a core request is a hit or miss in the `tag_arr`.
 6. `wr_ram_hitword`: This is a wire of `respwidth`-bits which contains the hit word from the 
 ram if `wr_ram_response` indicates a hit in `tag_arr`. On a ram miss it holds `0`.
@@ -102,8 +102,39 @@ ram if `wr_ram_response` indicates a hit in `tag_arr`. On a ram miss it holds `0
 which gave a hit for `wr_ram_response`. On a ram miss this wire holds `0`. This wire is used
 to update the `PLRU` replacement policy on a hit in the ram. For a cache configuration
 with less than 2 ways or `RROBIN` or `RANDOM` replacement policies, this wire is not used.
-  
+8. `wr_ram_hitindex`: This is a `Mayb#(TLog#(sets))`-bit wide wire which holds the index of set
+ number which was a hit in the RAM for a given core-request. When the `PLRU` replacement
+ policy is enabled this wire is read when the fill-buffer performs a write in to the RAM. 
+ If this write is to the same set as a hit in the RAM, then the RAM hit gets precedence
+ over-updating the `PLRU` states rather than the fill-buffer write updating the policy.
 
+ ### Common Control-flow structures
+ 1. `rg_miss_ongoing`: This is a boolean register which is set to `True` when a miss
+ in both RAM and fill-buffer is identified for a particular core request. Once this
+ register is set then the following rules are diabled:
+    * tag_match
+    * request_to_memory
+This will prevent from any further requests from the core being serviced. The register is
+set to `False` only when the next memory level has responded with the required request and 
+that value is forwarded back to the core.
+2. `rg_fence_stall`: This is a boolean register which is set to `True` as soon as a
+fence request from the core is received. When set to `True` the cache will no longer
+receive requests from the core i.e. it disables the interface `core_req` from firing. When 
+set to `True`, this register can trigger the rule `release_from_FB` to fire as well if 
+other conditions are met as well. Rule `fence_operation` will also fire when this register 
+is set to `True` if all the other conditions for the rule are met.
+
+### Non-Cacheable Structures
+1. `wr_nc_response`: This is a wire of enum type [`RespState`](./cache_types.md#type-definitions) which indicates if the response for a non-cacheable
+request has arrived. 
+2. `wr_nc_word`: This a `respwidth`-bit wide wire which carries the word of non-cacheable
+response which needs to be forwarded back to the core.
+3. `wr_nc_errr`: This is a boolean wire which indicates if a bus-error occurred while
+ performing a non-cacheable access. 
+
+ ### Fill Buffer Structures
+ 1. `fb_dataline`: This is an `fbize` array of registers, with each register being `linewidth`
+ -bits wide. This array stores the data-line that was received from the next level memory.
 
 
 
