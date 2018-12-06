@@ -132,10 +132,19 @@ response which needs to be forwarded back to the core.
 3. `wr_nc_errr`: This is a boolean wire which indicates if a bus-error occurred while
  performing a non-cacheable access. 
 
- ### Fill Buffer Structures
- 1. `fb_dataline`: This is an `fbize` array of registers, with each register being `linewidth`
+### Fill Buffer Structures
+1. `fb_dataline`: This is an `fbize` array of registers, with each register being `linewidth`
  -bits wide. This array stores the data-line that was received from the next level memory.
-
+2. `fb_addr`: This is an `fbsize` array of registers, with each register holding the physical
+address of the corresponding line in the fill-buffer. This register is filled when there is 
+a miss in both RAM and fill-buffer for a given request from the core.
+3. `fb_enables`: This is an `fbsize` array of registers, with each register holding a 
+`blocksize`-bit variable indicating which words in the corresponding `fb_dataline` are present
+in the registers. Each bit in this register is set once the corresponding word from the next 
+level of memory arrives to the cache.
+4. `fb_valid`: This is an `fbsize` array of boolean type registers. This is register is made
+`True` when there is a miss in the RAM and fill-buffer for a given core request. The register 
+is made `False` when the fill-buffer writes the dataline back to the RAM. 
 
 
 
