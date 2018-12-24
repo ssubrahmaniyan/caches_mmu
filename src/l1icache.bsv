@@ -202,14 +202,17 @@ package l1icache;
     Reg#(Bit#(linewidth)) fb_dataline [v_fbsize];
     Reg#(Bit#(paddr)) fb_addr [v_fbsize];
     Reg#(Bit#(blocksize)) fb_enables [v_fbsize];
+    Reg#(Bit#(1)) fb_err [v_fbsize];
     Vector#(fbsize,Reg#(Bool)) fb_valid<-replicateM(mkReg(False));
     for(Integer i=0;i<v_fbsize;i=i+1)begin
       fb_dataline[i]<-mkReg(0);
       fb_addr[i]<-mkReg(0);
       fb_enables[i]<-mkReg(0);
+      fb_err[i]<-mkReg(0);
     end
     Wire#(RespState) wr_fb_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_fb_word <-mkDWire(0);
+    Wire#(Bit#(1)) wr_fb_err <-mkDWire(0);
     Reg#(Bool) rg_fb_err <-mkDReg(False);
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
@@ -287,7 +290,7 @@ package l1icache;
       end
       else if(wr_fb_response==Hit)begin
         word=wr_fb_word;
-        err=rg_fb_err;
+        err=unpack(wr_fb_err);
         `ifdef perf
           // Only when the hit in the LB is not because of a miss should the counter be enabled.
           if(!rg_miss_ongoing)
@@ -392,6 +395,7 @@ package l1icache;
       Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
+      Bit#(1) fberr = 0;
  
  /*
       Bit#(linewidth) data_t [v_fbsize];
@@ -409,6 +413,7 @@ package l1icache;
         // we use truncateLSB because we need to match only the tag and set bits
         if( truncateLSB(fb_addr[i])==t && fb_valid[i])begin
           hitline=fb_dataline[i];
+          fberr=fb_err[i];
           fbhit[i]=1;
           if(fb_enables[i][word_index]==1'b1) begin
             wordhit=True;
@@ -427,6 +432,7 @@ package l1icache;
         wrpolling<=rg_polling;
       `endif
       wr_fb_word<=truncate(hitline>>block_offset); 
+      wr_fb_err <= fberr;
 
       if(verbosity!=0)begin
         $display($time,"\tICACHE: Polling addr: %h linehit: %b wordhit: %b rg_polling: %b",
@@ -499,12 +505,13 @@ package l1icache;
         mask[i*v_respwidth+v_respwidth-1:i*v_respwidth]=we;
       end
       fb_dataline[fbindex]<=(~mask&fb_dataline[fbindex])|(mask&duplicate(word));
+      fb_err[fbindex]<=pack(err);
       if(last)
         ff_fb_fillindex.deq();
 
       if(verbosity!=0)begin
         $display($time,"\tICACHE: Filling up FB. fbindex: %d fb_addr: %h fb_dataline: %h \
-        fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex]);
+  fb_enables: %h err: %b",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex], err);
       end
         
     endrule
