@@ -565,7 +565,7 @@ package l1icache;
         if(verbosity!=0)begin
           $display($time,"\tICACHE: release from FB firing");
           $display($time,"\tICACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
-addr:%  h way: %d",
+addr:%h way: %d",
            rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
            fb_addr[rg_fbwriteback], waynum);
         end
