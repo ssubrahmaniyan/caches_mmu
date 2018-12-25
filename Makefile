@@ -2,7 +2,6 @@
 
 include Makefile.inc
 
-TOP_MODULE:=mkicache
 BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
 BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(SUPPORTED):$(DIR)

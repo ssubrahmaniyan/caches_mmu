@@ -130,7 +130,7 @@ package replacement_dcache;
       Vector#(sets,Reg#(Bit#(TSub#(ways,1)))) v_count <- replicateM(mkReg(5));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
-        if (&(valid)==1 && &(dirty)==1)begin // if all lines are valid choose one to randomly replace
+        if (&(valid)==1)begin // if all lines are valid choose one to randomly replace
           case (v_count[index]) matches
             'b?00: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 0"); return 0;end 
             'b?10: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 1"); return 1;end
@@ -138,19 +138,10 @@ package replacement_dcache;
             default: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 3"); return 3; end
           endcase
         end
-        else if(&(valid)!=1) begin // if any line empty then send that
-          Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(valid[i]==0)begin
-              temp=truncate(i);
-            end
-          end
-          return temp;
-        end
         else begin // if any line empty then send that
           Bit#(TLog#(ways)) temp=0;
           for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(dirty[i]==0)begin
+            if(valid[i]==0)begin
               temp=truncate(i);
             end
           end
