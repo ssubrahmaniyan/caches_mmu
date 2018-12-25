@@ -669,11 +669,11 @@ addr:%  h way: %d",
   endfunction
 
 
-  (*synthesize*)
-  module mktempicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
-    let ifc();
-    mkl1icache#(isIO,"RROBIN") _temp(ifc);
-    return (ifc);
-  endmodule
+//  (*synthesize*)
+//  module mktempicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
+//    let ifc();
+//    mkl1icache#(isIO,"RROBIN") _temp(ifc);
+//    return (ifc);
+//  endmodule
 endpackage
 

@@ -1004,11 +1004,11 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
   endfunction
 
 
-  (*synthesize*)
-  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
-    let ifc();
-    mkl1dcache#(isIO) _temp(ifc);
-    return (ifc);
-  endmodule
+//  (*synthesize*)
+//  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
+//    let ifc();
+//    mkl1dcache#(isIO) _temp(ifc);
+//    return (ifc);
+//  endmodule
 endpackage
 
