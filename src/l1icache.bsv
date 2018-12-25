@@ -556,23 +556,23 @@ package l1icache;
         end
         tag_arr[waynum].request(1'b1,set_index,writetag);
         data_arr[waynum].request(1'b1,set_index,writedata);
+        rg_valid[set_index][waynum]<=1'b1;
+        if(fb_full && fillindex==rg_latest_index)
+          rg_replaylatest<=True;
+        `ifdef perf
+          wr_total_fbfills<=1;
+        `endif
+        if(verbosity!=0)begin
+          $display($time,"\tICACHE: release from FB firing");
+          $display($time,"\tICACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
+addr:%  h way: %d",
+           rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
+           fb_addr[rg_fbwriteback], waynum);
+        end
       end
 
-      rg_valid[set_index][waynum]<=1'b1;
       rg_fbwriteback<=rg_fbwriteback+1;
       fb_valid[rg_fbwriteback]<=False;
-      if(fb_full && fillindex==rg_latest_index)
-        rg_replaylatest<=True;
-      `ifdef perf
-        wr_total_fbfills<=1;
-      `endif
-      if(verbosity!=0)begin
-        $display($time,"\tICACHE: release from FB firing");
-        $display($time,"\tICACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
-addr:%h way: %d",
-         rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
-         fb_addr[rg_fbwriteback], waynum);
-      end
     endrule
 
     rule replay_latest_request(rg_replaylatest);
@@ -669,11 +669,11 @@ addr:%h way: %d",
   endfunction
 
 
-//  (*synthesize*)
-//  module mktempicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
-//    let ifc();
-//    mkl1icache#(isIO,"RROBIN") _temp(ifc);
-//    return (ifc);
-//  endmodule
+  (*synthesize*)
+  module mktempicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
+    let ifc();
+    mkl1icache#(isIO,"RROBIN") _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage
 
