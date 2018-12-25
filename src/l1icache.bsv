@@ -542,20 +542,23 @@ package l1icache;
       let addr=fb_addr[rg_fbwriteback];
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(tagbits) tag = addr[v_paddr-1:v_paddr-v_tagbits];
-      let waynum<-replacement.line_replace(set_index, rg_valid[set_index]);
-      if(&(rg_valid[set_index])==1)begin
-        if(alg!="PLRU")
-          replacement.update_set(set_index,waynum);
-        else begin
-          if(wr_ram_hitindex matches tagged Valid .i &&& i==set_index)begin
-          end
-          else
+      if(fb_err[rg_fbwriteback]==0)begin
+        let waynum<-replacement.line_replace(set_index, rg_valid[set_index]);
+        if(&(rg_valid[set_index])==1)begin
+          if(alg!="PLRU")
             replacement.update_set(set_index,waynum);
+          else begin
+            if(wr_ram_hitindex matches tagged Valid .i &&& i==set_index)begin
+            end
+            else
+              replacement.update_set(set_index,waynum);
+          end
         end
+        tag_arr[waynum].request(1'b1,set_index,writetag);
+        data_arr[waynum].request(1'b1,set_index,writedata);
       end
+
       rg_valid[set_index][waynum]<=1'b1;
-      tag_arr[waynum].request(1'b1,set_index,writetag);
-      data_arr[waynum].request(1'b1,set_index,writedata);
       rg_fbwriteback<=rg_fbwriteback+1;
       fb_valid[rg_fbwriteback]<=False;
       if(fb_full && fillindex==rg_latest_index)
