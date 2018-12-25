@@ -82,7 +82,7 @@ package l1dcache;
   (*conflict_free="respond_to_core,update_store_inFB"*)
   (*conflict_free="update_fb_with_memory_response,update_store_inFB"*)
   (*conflict_free="update_storebuffer_onhit,update_store_inFB"*)
-  module mkl1dcache#(function Bool is_IO(Bit#(paddr) addr, Bool cacheable))
+  module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
@@ -144,9 +144,6 @@ package l1dcache;
     function Bool isOne(Bit#(1) a);
       return unpack(a);
     endfunction
-
-  
-    String alg ="RROBIN";
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
@@ -435,7 +432,7 @@ package l1dcache;
       wr_hitway<=truncate(pack(countZerosLSB(hit)));
       wr_hitline<=hitline;
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(is_IO(addr,wr_cache_enable))begin // TODO make this programmable;
+      if(isNonCacheable(addr,wr_cache_enable))begin 
         wr_cache_response<=None;
         ff_io_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
       end
@@ -608,7 +605,7 @@ package l1dcache;
         word=wr_cache_hitword;
         if(alg=="PLRU") begin
           wr_cache_hitindex<=tagged Valid set_index;
-          repl.update_set(set_index, wr_hitway);//wr_replace_line); // TODO update for PLRU should happen here
+          repl.update_set(set_index, wr_hitway);//wr_replace_line); 
         end
         `ifdef perf
           wr_total_cache_hits<=1;
@@ -1007,7 +1004,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 //  (*synthesize*)
 //  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
 //    let ifc();
-//    mkl1dcache#(isIO) _temp(ifc);
+//    mkl1dcache#(isIO, "PLRU") _temp(ifc);
 //    return (ifc);
 //  endmodule
 endpackage
