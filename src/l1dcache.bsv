@@ -210,6 +210,7 @@ package l1dcache;
 
     // ----------------- Fill buffer structures -------------------------------------------------//
     Reg#(Bit#(linewidth)) fb_dataline [v_fbsize];
+    Reg#(Bit#(1)) fb_err [v_fbsize];
     Reg#(Bit#(paddr)) fb_addr [v_fbsize];
     Reg#(Bit#(blocksize)) fb_enables [v_fbsize];
     Reg#(Bit#(1)) fb_dirty [v_fbsize] ;
@@ -220,11 +221,12 @@ package l1dcache;
       fb_enables[i]<-mkReg(0);
       fb_dataline[i]<-mkReg(0);
       fb_dirty[i]<-mkReg(0);
+      fb_err[i]<-mkReg(0);
     end
     Wire#(RespState) wr_fb_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_fb_word <-mkDWire(0);
     Wire#(Bit#(TLog#(fbsize))) wr_fbindexhit <-mkDWire(0);
-    Reg#(Bool) rg_fb_err <-mkDReg(False);
+    Wire#(Bit#(1)) wr_fb_err <-mkDWire(0);
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
     Reg#(Bool) rg_polling <-mkReg(False);
@@ -470,6 +472,7 @@ package l1dcache;
       Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
+      Bit#(1) fberr =0;
  
  /*
       Bit#(linewidth) data_t [v_fbsize];
@@ -488,6 +491,7 @@ package l1dcache;
         if( truncateLSB(fb_addr[i])==t && fb_valid[i])begin
           hitline=fb_dataline[i];
           fbhit[i]=1;
+          fberr=fb_err[i];
           if(fb_enables[i][word_index]==1'b1) begin
             wordhit=True;
           end
@@ -506,6 +510,7 @@ package l1dcache;
       `endif
       wr_fb_word<=truncate(hitline>>block_offset); 
       wr_fbindexhit<=truncate(pack(countZerosLSB(fbhit)));
+      wr_fb_err<= fberr;
 
       if(verbosity!=0)begin
         $display($time,"\tDCACHE: Polling addr: %h linehit: %b wordhit: %b rg_polling: %b",
@@ -611,11 +616,10 @@ package l1dcache;
       end
       else if(wr_sb_response==Hit)begin
         word=wr_sb_hitword;
-        err=False;
       end
       else if(wr_fb_response==Hit)begin
         word=wr_fb_word;
-        err=rg_fb_err;
+        err=unpack(wr_fb_err);
         `ifdef perf
           // Only when the hit in the LB is not because of a miss should the counter be enabled.
           if(!rg_miss_ongoing)
@@ -724,7 +728,7 @@ package l1dcache;
     rule update_fb_with_memory_response(!fb_empty);
       let {word,last,err}=ff_read_mem_response.first();
       let fbindex=ff_fb_fillindex.first();
-      rg_fb_err<=err;
+      fb_err[fbindex]<=pack(err);
       ff_read_mem_response.deq;
       Bit#(blocksize) temp=0;
       Bit#(blockbits) word_index=fb_addr[fbindex][v_blockbits+v_wordbits-1:v_wordbits];
@@ -792,53 +796,59 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
       Bit#(tagbits) tag = addr[v_paddr-1:v_paddr-v_tagbits];
       let waynum<-repl.line_replace(set_index, rg_valid[set_index], rg_dirty[set_index]);
       // the line being replaced is dirty then evict it.
-      if((rg_valid[set_index][waynum]&rg_dirty[set_index][waynum])==1 && !rg_readdone)begin
-        if(verbosity!=0)begin
-          $display($time,"\tDCACHE: release. Read request for dirty line. way: %d set_index: %d", 
-              waynum,set_index);
-        end
-        tag_arr[waynum].request(0,set_index,writetag);
-        data_arr[waynum].request(0,set_index,writedata);
-        rg_readdone<=True;
-      end
-      else if((rg_valid[set_index][waynum]&rg_dirty[set_index][waynum])!=1 || rg_readdone)begin
-        Bit#(TSub#(paddr,TAdd#(tagbits,setbits))) zeros='d0;
-        let dirtytag<-tag_arr[waynum].read_response;
-        let dirtydata<-data_arr[waynum].read_response;
-        Bit#(paddr) final_address={dirtytag,set_index,zeros};
-        if(rg_readdone)begin
+      if(fb_err[rg_fbwriteback]==0)begin
+        if((rg_valid[set_index][waynum]&rg_dirty[set_index][waynum])==1 && !rg_readdone)begin
           if(verbosity!=0)begin
-            $display($time,"\tDCACHE: release. Write to mem. addr: %h data: %h", 
-                final_address,dirtydata);
+            $display($time,"\tDCACHE: release. Read request for dirty line. way: %d set_index: %d", 
+                waynum,set_index);
           end
-          ff_write_mem_request.enq(tuple4(final_address,fromInteger(valueOf(blocksize)-1),
-                                fromInteger(valueOf(TLog#(wordsize))),dirtydata));
+          tag_arr[waynum].request(0,set_index,writetag);
+          data_arr[waynum].request(0,set_index,writedata);
+          rg_readdone<=True;
         end
-        rg_valid[set_index][waynum]<=1'b1;
-        rg_dirty[set_index][waynum]<=fb_dirty[rg_fbwriteback];
-        tag_arr[waynum].request(1,set_index,writetag);
-        data_arr[waynum].request(1,set_index,writedata);
-        rg_fbwriteback<=rg_fbwriteback+1;
-        fb_valid[rg_fbwriteback]<=False;
-        if((fb_full && fillindex==rg_latest_index) || rg_dirty[set_index][waynum]==1)
-          rg_replaylatest<=True;
-        if(&(rg_valid[set_index])==1)begin
-          if(alg!="PLRU")
-            repl.update_set(set_index,waynum);
-          else begin
-            if(wr_cache_hitindex matches tagged Valid .i &&& i==set_index)begin
+        else if((rg_valid[set_index][waynum]&rg_dirty[set_index][waynum])!=1 || rg_readdone)begin
+          Bit#(TSub#(paddr,TAdd#(tagbits,setbits))) zeros='d0;
+          let dirtytag<-tag_arr[waynum].read_response;
+          let dirtydata<-data_arr[waynum].read_response;
+          Bit#(paddr) final_address={dirtytag,set_index,zeros};
+          if(rg_readdone)begin
+            if(verbosity!=0)begin
+              $display($time,"\tDCACHE: release. Write to mem. addr: %h data: %h", 
+                  final_address,dirtydata);
             end
-            else
+            ff_write_mem_request.enq(tuple4(final_address,fromInteger(valueOf(blocksize)-1),
+                                  fromInteger(valueOf(TLog#(wordsize))),dirtydata));
+          end
+          rg_valid[set_index][waynum]<=1'b1;
+          rg_dirty[set_index][waynum]<=fb_dirty[rg_fbwriteback];
+          tag_arr[waynum].request(1,set_index,writetag);
+          data_arr[waynum].request(1,set_index,writedata);
+          rg_fbwriteback<=rg_fbwriteback+1;
+          fb_valid[rg_fbwriteback]<=False;
+          if((fb_full && fillindex==rg_latest_index) || rg_dirty[set_index][waynum]==1)
+            rg_replaylatest<=True;
+          if(&(rg_valid[set_index])==1)begin
+            if(alg!="PLRU")
               repl.update_set(set_index,waynum);
+            else begin
+              if(wr_cache_hitindex matches tagged Valid .i &&& i==set_index)begin
+              end
+              else
+                repl.update_set(set_index,waynum);
+            end
+          end
+          if(verbosity!=0)begin
+            $display($time,"\tDCACHE: release from FB firing");
+            $display($time,"\tDCACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
+ addr:   %h way: %d fb_dataline: %h",
+             rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
+             fb_addr[rg_fbwriteback], waynum,fb_dataline[rg_fbwriteback]);
           end
         end
-        if(verbosity!=0)begin
-          $display($time,"\tDCACHE: release from FB firing");
-          $display($time,"\tDCACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
- addr: %h way: %d fb_dataline: %h",
-           rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
-           fb_addr[rg_fbwriteback], waynum,fb_dataline[rg_fbwriteback]);
-        end
+      end
+      else begin 
+        fb_valid[rg_fbwriteback]<= False;
+        rg_fbwriteback<=rg_fbwriteback+1;
       end
       `ifdef perf
         wr_total_fbfills<=1;
@@ -995,7 +1005,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 
 
   (*synthesize*)
-  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
+  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
     let ifc();
     mkl1dcache#(isIO) _temp(ifc);
     return (ifc);
