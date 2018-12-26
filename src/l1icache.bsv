@@ -307,7 +307,8 @@ package l1icache;
       rg_miss_ongoing<=False;
       // depending onthe request made by the core, the word is either sigextended/zeroextend and
       // truncated if necessary.
-      $display($time,"\tICACHE: Sending response to core. Word: %d for address: %h",word,addr);
+      if(verbosity!=0)
+        $display($time,"\tICACHE: Sending response to core. Word: %d for address: %h",word,addr);
       ff_core_response.enq(tuple3(word,err,epoch));
       ff_core_request.deq;
       `ifdef ASSERT
