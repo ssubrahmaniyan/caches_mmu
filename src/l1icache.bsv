@@ -660,14 +660,14 @@ addr:%h way: %d",
     `endif
   endmodule
  
-  function Bool isIO(Bit#(32) addr, Bool cacheable);
-    if(!cacheable)
-      return True;
-    else if( addr < 4096)
-      return True;
-    else
-      return False;    
-  endfunction
+//  function Bool isIO(Bit#(32) addr, Bool cacheable);
+//    if(!cacheable)
+//      return True;
+//    else if( addr < 4096)
+//      return True;
+//    else
+//      return False;    
+//  endfunction
 
 
 //  (*synthesize*)
