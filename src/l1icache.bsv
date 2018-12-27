@@ -247,7 +247,7 @@ package l1icache;
 
     rule display_stuff;
       if(verbosity!=0)begin
-        $display($time,"\tDACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: %d",
+        $display($time,"\tICACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: %d",
           fb_full,fb_empty,rg_fbwriteback,rg_fbmissallocate);
         $display($time,"\tICACHE: ff_core_response.notFull: %b rg_fence_stall: %b",
           ff_core_response.notFull,rg_fence_stall);
@@ -360,11 +360,7 @@ package l1icache;
       Bool cache_hit=unpack(|(hit));
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
-        wr_ram_response<=None;
-        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
-      end
-      else if(cache_hit)begin
+      if(cache_hit)begin
         wr_ram_response<=Hit;
         wr_ram_hitword<=response_word;
       end
@@ -468,20 +464,26 @@ package l1icache;
                                                                                         &&!fb_full);
                                                                                         
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
-      addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-      ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
-      rg_miss_ongoing<=True;
-      rg_fbmissallocate<=rg_fbmissallocate+1;
-      fb_valid[rg_fbmissallocate]<=True;
-      fb_addr[rg_fbmissallocate]<=addr;
-      fb_enables[rg_fbmissallocate]<=0;
-      ff_fb_fillindex.enq(rg_fbmissallocate);
-      
-      if(verbosity!=0)begin
-        $display($time,"\tICACHE: Sending memory request. Addr: %h",addr);
-        $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
+      if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
+        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+        if(verbosity!=0)begin
+          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
+        end
       end
-
+      else begin
+        if(verbosity!=0)begin
+          $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",addr);
+          $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
+        end
+        addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
+        ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+        rg_fbmissallocate<=rg_fbmissallocate+1;
+        fb_valid[rg_fbmissallocate]<=True;
+        fb_addr[rg_fbmissallocate]<=addr;
+        fb_enables[rg_fbmissallocate]<=0;
+        ff_fb_fillindex.enq(rg_fbmissallocate);
+      end
+      rg_miss_ongoing<=True;
     endrule
 
     // This rule will update an entry pointed by the register rg_fbbeingfilled with the incoming
