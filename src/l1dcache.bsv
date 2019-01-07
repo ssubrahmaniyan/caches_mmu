@@ -57,8 +57,8 @@ package l1dcache;
     interface Get#(DCore_response#(TMul#(wordsize,8))) core_resp;
     interface Get#(DMem_read_request#(paddr)) read_mem_req;
     interface Put#(DMem_read_response#(TMul#(wordsize,8))) read_mem_resp;
-    interface Get#(DMem_read_request#(paddr)) io_read_req;
-    interface Put#(DMem_read_response#(TMul#(wordsize,8))) io_read_resp;
+    interface Get#(DMem_read_request#(paddr)) nc_read_req;
+    interface Put#(DMem_read_response#(TMul#(wordsize,8))) nc_read_resp;
     
     interface Get#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
     interface Put#(DMem_write_response) write_mem_resp;
@@ -155,9 +155,9 @@ package l1dcache;
     // This fifo stores the response from the next level memory.
     FIFOF#(DMem_read_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
     
-    FIFOF#(DMem_read_request#(paddr)) ff_io_read_request    <- mkSizedFIFOF(2);
+    FIFOF#(DMem_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(DMem_read_response#(respwidth)) ff_io_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
     
     FIFOF#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
                                                                               <- mkSizedFIFOF(2);
@@ -195,9 +195,9 @@ package l1dcache;
     Wire#(Bit#(respwidth)) wr_cache_hitword <-mkDWire(0);
     Wire#(Bit#(TLog#(ways))) wr_hitway <-mkDWire(0);
     Wire#(Maybe#(Bit#(TLog#(sets)))) wr_cache_hitindex <-mkDWire(tagged Invalid);
-    Wire#(RespState) wr_io_response <- mkDWire(None);
-    Wire#(Bit#(respwidth)) wr_io_word <-mkDWire(0);
-    Wire#(Bool) wr_io_err <-mkDWire(False);
+    Wire#(RespState) wr_nc_response <- mkDWire(None);
+    Wire#(Bit#(respwidth)) wr_nc_word <-mkDWire(0);
+    Wire#(Bool) wr_nc_err <-mkDWire(False);
     Wire#(Bit#(linewidth)) wr_hitline <-mkDWire(0);
     Reg#(Bool) rg_miss_ongoing <- mkReg(False);
     Reg#(Bool) rg_fence_stall <- mkReg(False);
@@ -432,11 +432,7 @@ package l1dcache;
       wr_hitway<=truncate(pack(countZerosLSB(hit)));
       wr_hitline<=hitline;
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(isNonCacheable(addr,wr_cache_enable))begin 
-        wr_cache_response<=None;
-        ff_io_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
-      end
-      else if(cache_hit)begin
+      if(cache_hit)begin
         wr_cache_response<=Hit;
         wr_cache_hitword<=response_word;
       end
@@ -595,7 +591,7 @@ package l1dcache;
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_io_response==Hit ||
+    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit ||
     wr_sb_response==Hit);
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
       Bit#(respwidth) word=0;
@@ -623,9 +619,9 @@ package l1dcache;
             wr_total_fb_hits<=1;
         `endif
       end
-      else if(wr_io_response==Hit)begin
-        word=wr_io_word;
-        err=wr_io_err;
+      else if(wr_nc_response==Hit)begin
+        word=wr_nc_word;
+        err=wr_nc_err;
         `ifdef perf
           wr_total_io<=1;
         `endif
@@ -672,7 +668,7 @@ package l1dcache;
         if(wr_fb_response==Hit)begin
           temp[1]=1;
         end
-        if(wr_io_response==Hit)begin
+        if(wr_nc_response==Hit)begin
           temp[2]=1;
           temp1[2]=1;
         end
@@ -701,21 +697,29 @@ package l1dcache;
     // the line to be filled is further enqued into the ff_fb_fillindex which is used to identify
     // which line is the memory response to fill in the FB
     rule request_to_memory(wr_cache_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                         && wr_sb_response==Miss && wr_io_response!=Hit &&!fb_full);
+                                         && wr_sb_response==Miss && wr_nc_response!=Hit &&!fb_full);
                                                                                         
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-      addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-      ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
-      rg_miss_ongoing<=True;
-      rg_fbmissallocate<=rg_fbmissallocate+1;
-      fb_valid[rg_fbmissallocate]<=True;
-      fb_addr[rg_fbmissallocate]<=addr;
-      fb_enables[rg_fbmissallocate]<=0;
-      ff_fb_fillindex.enq(rg_fbmissallocate);
-      
-      if(verbosity!=0)begin
-        $display($time,"\tDCACHE: Sending memory request. Addr: %h",addr);
-        $display($time,"\tDCACHE: Allocating FB line: %d",rg_fbmissallocate);
+      if(isNonCacheable(addr,wr_cache_enable))begin
+        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+        if(verbosity!=0)begin
+          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
+        end
+      end
+      else begin
+        addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
+        ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+        rg_miss_ongoing<=True;
+        rg_fbmissallocate<=rg_fbmissallocate+1;
+        fb_valid[rg_fbmissallocate]<=True;
+        fb_addr[rg_fbmissallocate]<=addr;
+        fb_enables[rg_fbmissallocate]<=0;
+        ff_fb_fillindex.enq(rg_fbmissallocate);
+        
+        if(verbosity!=0)begin
+          $display($time,"\tDCACHE: Sending memory request. Addr: %h",addr);
+          $display($time,"\tDCACHE: Allocating FB line: %d",rg_fbmissallocate);
+        end
       end
 
     endrule
@@ -758,12 +762,12 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
       `endif
       wr_fbbeingfilled<=tagged Valid fbindex;
     endrule
-    rule receive_io_response;
-      let {word,last,err}=ff_io_read_response.first;
-      ff_io_read_response.deq;
-      wr_io_err<=err;
-      wr_io_word<=word;
-      wr_io_response<=Hit;
+    rule receive_nc_response;
+      let {word,last,err}=ff_nc_read_response.first;
+      ff_nc_read_response.deq;
+      wr_nc_err<=err;
+      wr_nc_word<=word;
+      wr_nc_response<=Hit;
       `ifdef ASSERT
         dynamicAssert(last,"Why is IO response a burst");
       `endif
@@ -943,16 +947,16 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
      endmethod
     endinterface;
     
-    interface io_read_req = interface Get
+    interface nc_read_req = interface Get
       method ActionValue#(DMem_read_request#(paddr)) get;
-        ff_io_read_request.deq;
-        return ff_io_read_request.first;
+        ff_nc_read_request.deq;
+        return ff_nc_read_request.first;
       endmethod
     endinterface;
 
-    interface io_read_resp= interface Put
+    interface nc_read_resp= interface Put
      method Action put(DMem_read_response#(respwidth) resp);
-        ff_io_read_response.enq(resp);
+        ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
     `ifdef simulate 
@@ -991,21 +995,21 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 
   endmodule
  
-//  function Bool isIO(Bit#(32) addr, Bool cacheable);
-//    if(!cacheable)
-//      return True;
-//    else if( addr < 4096)
-//      return True;
-//    else
-//      return False;    
-//  endfunction
+  function Bool isIO(Bit#(32) addr, Bool cacheable);
+    if(!cacheable)
+      return True;
+    else if( addr < 4096)
+      return True;
+    else
+      return False;    
+  endfunction
 
 
-//  (*synthesize*)
-//  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
-//    let ifc();
-//    mkl1dcache#(isIO, "PLRU") _temp(ifc);
-//    return (ifc);
-//  endmodule
+  (*synthesize*)
+  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
+    let ifc();
+    mkl1dcache#(isIO, "PLRU") _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage
 
