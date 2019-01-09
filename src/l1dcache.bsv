@@ -50,11 +50,12 @@ package l1dcache;
                            numeric type ways,
                            numeric type paddr,
                            numeric type fbsize,
-                           numeric type sbsize
+                           numeric type sbsize,
+                           numeric type esize
                            );
 
-    interface Put#(DCore_request#(paddr,TMul#(wordsize,8))) core_req;
-    interface Get#(DCore_response#(TMul#(wordsize,8))) core_resp;
+    interface Put#(DCore_request#(paddr,TMul#(wordsize,8),esize)) core_req;
+    interface Get#(DCore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(DMem_read_request#(paddr)) read_mem_req;
     interface Put#(DMem_read_response#(TMul#(wordsize,8))) read_mem_resp;
     interface Get#(DMem_read_request#(paddr)) nc_read_req;
@@ -62,6 +63,8 @@ package l1dcache;
     
     interface Get#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
     interface Put#(DMem_write_response) write_mem_resp;
+    interface Get#(DMem_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
+    interface Put#(DMem_write_response) nc_write_resp;
     `ifdef simulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -69,7 +72,10 @@ package l1dcache;
       method Bit#(5) perf_counters;
     `endif
     method Action cache_enable(Bool c);
-    method Action perform_store(Bit#(1) currepoch);
+    method Action perform_store(Bit#(esize) currepoch);
+    method Bool cache_available;
+    method Bool storebuffer_empty;
+    method Bool store_response;
   endinterface
 
   (*conflict_free="request_to_memory,update_fb_with_memory_response"*)
@@ -83,7 +89,7 @@ package l1dcache;
   (*conflict_free="update_fb_with_memory_response,update_store_inFB"*)
   (*conflict_free="update_storebuffer_onhit,update_store_inFB"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize)) 
+    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize,esize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -147,9 +153,9 @@ package l1dcache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(DCore_request#(paddr,respwidth)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(DCore_request#(paddr,respwidth,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(DCore_response#(respwidth))ff_core_response <- mkSizedFIFOF(2);
+    FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(DMem_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
@@ -158,6 +164,9 @@ package l1dcache;
     FIFOF#(DMem_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
     FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+    
+    FIFOF#(DMem_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
+    FIFOF#(DMem_write_response) ff_nc_write_response  <- mkSizedFIFOF(2);
     
     FIFOF#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
                                                                               <- mkSizedFIFOF(2);
@@ -271,13 +280,13 @@ package l1dcache;
 
     // -------------------------- Structures for store-buffer -----------------------------------//
 
-    Reg#(Bit#(respwidth)) store_data [v_sbsize];
-//    Reg#(Bit#(1)) store_valid [v_sbsize];
-    Vector#(sbsize,Reg#(Bool)) store_valid <-replicateM(mkReg(False));
-    Reg#(Bit#(3)) store_size [v_sbsize];
     Reg#(Bit#(paddr)) store_addr [v_sbsize];
+    Reg#(Bit#(respwidth)) store_data [v_sbsize];
+    Reg#(Bit#(3)) store_size [v_sbsize];
+    Vector#(sbsize,Reg#(Bool)) store_valid <-replicateM(mkReg(False));
     Reg#(Bit#(TLog#(fbsize))) store_fbindex [v_sbsize];
-    Reg#(Bit#(1)) store_epoch [v_sbsize];
+    Reg#(Bit#(esize)) store_epoch [v_sbsize];
+    Reg#(Bit#(1)) store_io [v_sbsize];
     for (Integer i=0;i<v_sbsize;i=i+1)begin
       store_data[i]<-mkReg(0);
       store_valid[i]<-mkReg(False);
@@ -285,13 +294,15 @@ package l1dcache;
       store_addr[i]<-mkReg(0);
       store_fbindex[i]<-mkReg(0);
       store_epoch[i]<-mkReg(0);
+      store_io[i]<- mkReg(0);
     end
     Reg#(Bit#(TLog#(sbsize))) rg_storehead <-mkReg(0);
     Reg#(Bit#(TLog#(sbsize))) rg_storetail <- mkReg(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingdata <-mkDWire(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingmask <-mkDWire(0);
     Wire#(Bool) wr_perform_store <-mkDWire(False);
-    Wire#(Bit#(1)) wr_currepoch <-mkDWire(0);
+    Wire#(Bit#(esize)) wr_currepoch <-mkDWire(0);
+    Wire#(Bool) wr_store_response <- mkDWire(False);
     Bool sb_full= (all(isTrue,readVReg(store_valid)));
     Bool sb_empty=!(any(isTrue,readVReg(store_valid)));
     // ------------------------------------------------------------------------------------------//
@@ -579,6 +590,7 @@ package l1dcache;
         store_size[sbindex]<=size;
         store_addr[sbindex]<=addr;
         store_fbindex[sbindex]<=fbindex;
+        store_io[sbindex]<=pack(isNonCacheable(addr,wr_cache_enable));
       end
       else begin
         store_data[sbindex]<=finalword;
@@ -655,7 +667,7 @@ package l1dcache;
           default: word;
         endcase;
       if(verbosity!=0)
-        $display($time,"\tDCACHE: Sending response to core. Word: %d for address: %h",word,addr);
+        $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h",word,addr);
       ff_core_response.enq(tuple3(word,err,epoch));
       ff_core_request.deq;
       `ifdef ASSERT
@@ -754,6 +766,7 @@ package l1dcache;
         ff_fb_fillindex.deq();
       end
       if(verbosity!=0)begin
+        $display($time,"\tDCACHE: finalmask: %h final_data: %h",final_mask,final_data);
         $display($time,"\tDCACHE: Filling up FB. fbindex: %d fb_addr: %h fb_dataline: %h \
 fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex]);
       end
@@ -874,25 +887,32 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
       let valid = store_valid[rg_storehead];
       let size = store_size[rg_storehead];
       let epoch = store_epoch[rg_storehead];
+      let io = store_io[rg_storehead];
       Bit#(linewidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
       Bit#(wordbits) zeros=0;
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits))) block_offset=
                                     {addr[v_blockbits+v_wordbits-1:0],3'b0};
       mask=mask<<block_offset;
       if(epoch==wr_currepoch)begin
-        if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex==fbi)begin
-          wr_upd_fillingmask<=mask;
-          wr_upd_fillingdata<=duplicate(data);
-          if(verbosity!=0)
-            $display($time,"\tDCACHE: Store to FB being filled. mask: %h data: %h",mask,data);
+        if(io==1)begin
+          ff_nc_write_request.enq(tuple4(addr,0,size,data));
         end
         else begin
-          if(verbosity!=0)
-            $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
-          fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
+          wr_store_response<=True;
+          if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex==fbi)begin
+            wr_upd_fillingmask<=mask;
+            wr_upd_fillingdata<=duplicate(data);
+            if(verbosity!=0)
+              $display($time,"\tDCACHE: Store to FB being filled. mask: %h data: %h",mask,data);
+          end
+          else begin
+            if(verbosity!=0)
+              $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
+            fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
+          end
+          $display($time,"\tDCACHE: Store to FB. rg_storehead: %d",rg_storehead);
+          fb_dirty[fbindex]<=1'b1;
         end
-        $display($time,"\tDCACHE: Store to FB. rg_storehead: %d",rg_storehead);
-        fb_dirty[fbindex]<=1'b1;
       end
       else if(verbosity!=0)
         $display($time,"\tDCACHE: Dropping Store for addr: %h store_head: %d",addr,rg_storehead);
@@ -905,7 +925,7 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
 
 
     interface core_req=interface Put
-      method Action put(DCore_request#(paddr,respwidth) req)if( ff_core_response.notFull &&
+      method Action put(DCore_request#(paddr,respwidth,esize) req)if( ff_core_response.notFull &&
                                 !rg_replaylatest &&  !rg_fence_stall && !fb_full);
         `ifdef perf
           wr_total_access<=1;
@@ -928,7 +948,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     endinterface;
 
     interface core_resp = interface Get
-      method ActionValue#(DCore_response#(respwidth)) get();
+      method ActionValue#(DCore_response#(respwidth,esize)) get();
         ff_core_response.deq;
         return ff_core_response.first;
       endmethod
@@ -971,7 +991,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       wr_cache_enable<=c;
     endmethod
 
-    method Action perform_store(Bit#(1) currepoch);
+    method Action perform_store(Bit#(esize) currepoch);
       wr_perform_store <= True;
       wr_currepoch<=currepoch;
     endmethod
@@ -992,24 +1012,42 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
         ff_write_mem_response.enq(resp);
      endmethod
     endinterface;
+    
+    interface nc_write_req = interface Get
+      method ActionValue#(DMem_write_request#(paddr,TMul#(wordsize,8))) get;
+        ff_nc_write_request.deq;
+        return ff_nc_write_request.first;
+      endmethod
+    endinterface;
+
+    interface nc_write_resp= interface Put
+     method Action put(DMem_write_response resp);
+        ff_nc_write_response.enq(resp);
+     endmethod
+    endinterface;
+
+    method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
+                                                  !rg_replaylatest &&  !rg_fence_stall && !fb_full;
+    method storebuffer_empty = sb_empty;
+    method store_response=wr_store_response;
 
   endmodule
  
-//  function Bool isIO(Bit#(32) addr, Bool cacheable);
-//    if(!cacheable)
-//      return True;
-//    else if( addr < 4096)
-//      return True;
-//    else
-//      return False;    
-//  endfunction
+  function Bool isIO(Bit#(32) addr, Bool cacheable);
+    if(!cacheable)
+      return True;
+    else if( addr < 4096)
+      return True;
+    else
+      return False;    
+  endfunction
 
 
-//  (*synthesize*)
-//  module mktempdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4));
-//    let ifc();
-//    mkl1dcache#(isIO, "PLRU") _temp(ifc);
-//    return (ifc);
-//  endmodule
+  (*synthesize*)
+  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4,1));
+    let ifc();
+    mkl1dcache#(isIO, "PLRU") _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage
 
