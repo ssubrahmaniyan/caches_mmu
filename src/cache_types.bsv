@@ -53,7 +53,7 @@ package cache_types;
   typedef Tuple3#(Bit#(data), Bool, Bool) DMem_read_response#(numeric type data);
                 
                 // addr ,  burst len, burst_size, data
-  typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(3), Bit#(linewidth)) DMem_write_request#(
+  typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(2), Bit#(linewidth)) DMem_write_request#(
                                     numeric type addr, numeric type linewidth);
   typedef Bool DMem_write_response;
 
