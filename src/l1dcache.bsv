@@ -73,10 +73,10 @@ package l1dcache;
       method Bit#(5) perf_counters;
     `endif
     method Action cache_enable(Bool c);
-    method Action perform_store(Bit#(esize) currepoch);
+    method ActionValue#(Bool) perform_store(Bit#(esize) currepoch);
     method Bool cache_available;
     method Bool storebuffer_empty;
-    method Bool store_response;
+    method Bool nc_store_response;
   endinterface
 
   (*conflict_free="request_to_memory,update_fb_with_memory_response"*)
@@ -86,9 +86,9 @@ package l1dcache;
   (*conflict_free="respond_to_core,release_from_FB"*)
   (*conflict_free="respond_to_core,update_fb_with_memory_response"*)
   (*conflict_free="release_from_FB,update_fb_with_memory_response"*)
-  (*conflict_free="respond_to_core,update_store_inFB"*)
-  (*conflict_free="update_fb_with_memory_response,update_store_inFB"*)
-  (*conflict_free="allocate_storebuffer,update_store_inFB"*)
+  (*conflict_free="respond_to_core,perform_store"*)
+  (*conflict_free="update_fb_with_memory_response,perform_store"*)
+  (*conflict_free="allocate_storebuffer,perform_store"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize,esize)) 
     provisos(
@@ -298,8 +298,6 @@ package l1dcache;
     Reg#(Bit#(TLog#(sbsize))) rg_storetail <- mkReg(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingdata <-mkDWire(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingmask <-mkDWire(0);
-    Wire#(Bool) wr_perform_store <-mkDWire(False);
-    Wire#(Bit#(esize)) wr_currepoch <-mkDWire(0);
     Wire#(Bool) wr_store_response <- mkDWire(False);
     PulseWire wr_allocate_storebuffer <- mkPulseWire();
 //    Wire#(Bool) wr_allocate_storebuffer<-mkDWire(False);
@@ -885,47 +883,8 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
       end
     endrule
 
-    rule update_store_inFB(wr_perform_store && !sb_empty);
-      let fbindex=store_fbindex[rg_storehead];
-      let addr = store_addr[rg_storehead];
-      let data = store_data[rg_storehead];
-      let valid = store_valid[rg_storehead];
-      let size = store_size[rg_storehead];
-      let epoch = store_epoch[rg_storehead];
-      let io = store_io[rg_storehead];
-      Bit#(linewidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
-      Bit#(wordbits) zeros=0;
-      Bit#(TAdd#(3,TAdd#(wordbits,blockbits))) block_offset=
-                                    {addr[v_blockbits+v_wordbits-1:0],3'b0};
-      mask=mask<<block_offset;
-      if(epoch==wr_currepoch)begin
-        if(io==1)begin
-          ff_nc_write_request.enq(tuple4(addr,0,size,data));
-        end
-        else begin
-          wr_store_response<=True;
-          if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex==fbi)begin
-            wr_upd_fillingmask<=mask;
-            wr_upd_fillingdata<=duplicate(data);
-            if(verbosity!=0)
-              $display($time,"\tDCACHE: Store to FB being filled. mask: %h data: %h",mask,data);
-          end
-          else begin
-            if(verbosity!=0)
-              $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
-            fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
-          end
-          $display($time,"\tDCACHE: Store to FB. rg_storehead: %d",rg_storehead);
-          fb_dirty[fbindex]<=1'b1;
-        end
-      end
-      else if(verbosity!=0)
-        $display($time,"\tDCACHE: Dropping Store for addr: %h store_head: %d",addr,rg_storehead);
-      rg_storehead<=rg_storehead+1;
-      store_valid[rg_storehead]<=False;
-      `ifdef ASSERT
-        dynamicAssert(store_valid[rg_storehead],"Performing Store on invalid entry in SB");
-      `endif
+    rule receive_nc_write_response;
+      ff_nc_write_response.deq;
     endrule
 
 
@@ -996,9 +955,52 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       wr_cache_enable<=c;
     endmethod
 
-    method Action perform_store(Bit#(esize) currepoch);
-      wr_perform_store <= True;
-      wr_currepoch<=currepoch;
+    method ActionValue#(Bool) perform_store(Bit#(esize) currepoch);
+      Bool complete=False;
+      let fbindex=store_fbindex[rg_storehead];
+      let addr = store_addr[rg_storehead];
+      let data = store_data[rg_storehead];
+      let valid = store_valid[rg_storehead];
+      let size = store_size[rg_storehead];
+      let epoch = store_epoch[rg_storehead];
+      let io = store_io[rg_storehead];
+      Bit#(linewidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
+      Bit#(wordbits) zeros=0;
+      Bit#(TAdd#(3,TAdd#(wordbits,blockbits))) block_offset=
+                                    {addr[v_blockbits+v_wordbits-1:0],3'b0};
+      mask=mask<<block_offset;
+      if(epoch==currepoch)begin
+        if(io==1)begin
+          ff_nc_write_request.enq(tuple4(addr,0,size,data));
+        end
+        else begin
+          complete=True;
+          if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex==fbi)begin
+            wr_upd_fillingmask<=mask;
+            wr_upd_fillingdata<=duplicate(data);
+            if(verbosity!=0)
+              $display($time,"\tDCACHE: Store to FB being filled. mask: %h data: %h",mask,data);
+          end
+          else begin
+            if(verbosity!=0)
+              $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
+            fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
+          end
+          $display($time,"\tDCACHE: Store to FB. rg_storehead: %d",rg_storehead);
+          fb_dirty[fbindex]<=1'b1;
+        end
+      end
+      else begin
+        if(verbosity!=0)
+          $display($time,"\tDCACHE: Dropping Store for addr: %h store_head: %d",addr,rg_storehead);
+        complete=True;
+      end
+      rg_storehead<=rg_storehead+1;
+      store_valid[rg_storehead]<=False;
+      `ifdef ASSERT
+        dynamicAssert(store_valid[rg_storehead],"Performing Store on invalid entry in SB");
+      `endif
+      return complete;
     endmethod
     `ifdef perf
       method Bit#(5) perf_counters;
@@ -1034,7 +1036,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
                                                   !rg_replaylatest &&  !rg_fence_stall && !fb_full;
     method storebuffer_empty = sb_empty;
-    method store_response=wr_store_response;
+    method nc_store_response=ff_nc_write_response.first();
 
   endmodule
  
