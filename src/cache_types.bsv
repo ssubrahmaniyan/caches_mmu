@@ -43,10 +43,10 @@ package cache_types;
   typedef enum {Hit, Miss, None} RespState deriving(Eq,Bits,FShow);
 
                   // addr, Fence, epoch, access_type, access_size data
-  typedef Tuple6#(Bit#(addr), Bool, Bit#(1), Bit#(2), Bit#(3), Bit#(data)) 
-                    DCore_request#(numeric type addr, numeric type data);
+  typedef Tuple6#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data)) 
+                    DCore_request#(numeric type addr, numeric type data, numeric type esize);
                  // word , err , epoch
-  typedef Tuple3#(Bit#(data), Bool, Bit#(1)) DCore_response#(numeric type data);
+  typedef Tuple3#(Bit#(data), Bool, Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
                 // addr ,  burst len, burst_size 
   typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) DMem_read_request#(numeric type addr);
                   // data , last, err
