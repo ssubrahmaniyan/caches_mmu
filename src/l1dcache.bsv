@@ -39,6 +39,7 @@ package l1dcache;
   import Assert::*;
   import GetPut::*;
   import BUtils::*;
+  import ConfigReg::*;
 
   import cache_types::*;
   import mem_config::*;
@@ -87,7 +88,7 @@ package l1dcache;
   (*conflict_free="release_from_FB,update_fb_with_memory_response"*)
   (*conflict_free="respond_to_core,update_store_inFB"*)
   (*conflict_free="update_fb_with_memory_response,update_store_inFB"*)
-  (*conflict_free="update_storebuffer_onhit,update_store_inFB"*)
+  (*conflict_free="allocate_storebuffer,update_store_inFB"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize,esize)) 
     provisos(
@@ -112,6 +113,7 @@ package l1dcache;
           Add#(d__, 8, respwidth),
           Add#(TAdd#(tagbits, setbits), g__, paddr),
           Add#(h__, 1, blocksize),
+          Add#(e__, 3, TLog#(respwidth)),
 
           Add#(i__, TLog#(ways), 4),
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
@@ -242,7 +244,7 @@ package l1dcache;
 
     // This register indicates which entry in the FB should be allocated when there is miss in the
     // FB and the cache for a given request.
-    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <-mkReg(0);
+    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <-mkConfigReg(0);
 
     // This register follows the rg_fbmissallocate register but is updated when the last word of a
     // line is filled in the FB on a miss.
@@ -272,17 +274,13 @@ package l1dcache;
     Reg#(Bool) rg_fence_pending <- mkReg(False);
     Reg#(Bool) rg_globaldirty <- mkReg(False);
     Reg#(Bool) rg_fenceinit <-mkReg(True);
-    Wire#(RespState) wr_sb_response <- mkDWire(None);
-    Wire#(Bit#(respwidth)) wr_sb_hitword <-mkDWire(0);
-    Wire#(Bit#(respwidth)) wr_sb_hitword1 <-mkDWire(0);
-    Wire#(Bit#(TLog#(sbsize))) wr_sbindexhit <-mkDWire(0);
     // ------------------------------------------------------------------------------------------//
 
     // -------------------------- Structures for store-buffer -----------------------------------//
 
     Reg#(Bit#(paddr)) store_addr [v_sbsize];
     Reg#(Bit#(respwidth)) store_data [v_sbsize];
-    Reg#(Bit#(3)) store_size [v_sbsize];
+    Reg#(Bit#(2)) store_size [v_sbsize];
     Vector#(sbsize,Reg#(Bool)) store_valid <-replicateM(mkReg(False));
     Reg#(Bit#(TLog#(fbsize))) store_fbindex [v_sbsize];
     Reg#(Bit#(esize)) store_epoch [v_sbsize];
@@ -303,6 +301,12 @@ package l1dcache;
     Wire#(Bool) wr_perform_store <-mkDWire(False);
     Wire#(Bit#(esize)) wr_currepoch <-mkDWire(0);
     Wire#(Bool) wr_store_response <- mkDWire(False);
+    PulseWire wr_allocate_storebuffer <- mkPulseWire();
+//    Wire#(Bool) wr_allocate_storebuffer<-mkDWire(False);
+
+    Wire#(Bit#(respwidth)) wr_sb_hitword <-mkDWire(0);
+    Wire#(Bit#(respwidth)) wr_sb_mask <- mkDWire(0);
+
     Bool sb_full= (all(isTrue,readVReg(store_valid)));
     Bool sb_empty=!(any(isTrue,readVReg(store_valid)));
     // ------------------------------------------------------------------------------------------//
@@ -527,88 +531,83 @@ package l1dcache;
     endrule
 
     rule check_hit_in_storebuffer(ff_core_response.notFull && !tpl_2(ff_core_request.first));
+      
+      let offset = (v_respwidth==64)?2:1;
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-      Bit#(TSub#(paddr,wordbits)) compareaddr=truncateLSB(addr);
-      Bit#(respwidth) word=0;
-      Bit#(sbsize) sbhit=0;
-      for (Integer i=0;i<v_sbsize;i=i+1)begin
-        if(store_valid[i] && compareaddr==truncateLSB(store_addr[i]))begin
-          sbhit[i]=1;
-          word=store_data[i];
-        end
+      Bit#(TLog#(respwidth)) shiftamt1 = {store_addr[rg_storetail-1][v_wordbits-1:0],3'b0}; // parameterize for XLEN
+      Bit#(respwidth) storemask1 = 0;
+      Bit#(respwidth) storemask2 = 0;
+      Bool validm1 = store_valid[rg_storetail-1];
+      Bool valid = store_valid[rg_storetail];
+      Bit#(TSub#(paddr,wordbits)) wordaddr = truncateLSB(addr);
+
+      Bit#(TSub#(paddr,wordbits)) compareaddr1=truncateLSB(store_addr[rg_storetail-1]);
+      Bit#(TSub#(paddr,wordbits)) compareaddr2=truncateLSB(store_addr[rg_storetail]);
+      if(compareaddr1 == wordaddr && validm1)begin
+        Bit#(respwidth) temp = store_size[rg_storetail-1]==0?'hff:
+                          store_size[rg_storetail-1]==1?'hffff:
+                          store_size[rg_storetail-1]==2?'hffffffff:'1;
+        temp = temp << shiftamt1; 
+        if(verbosity>0)
+          $display($time,"\tSTOREBUFFER Addr1: %h Data1: %h Size: %h temp: %h rg_tail: %d",
+            store_addr[rg_storetail-1], store_data[rg_storetail-1],store_size[rg_storetail-1], 
+            temp, rg_storetail-1);
+        storemask1 = temp;  
       end
-      if(|sbhit==1)
-        wr_sb_response<=Hit;
-      else
-        wr_sb_response<=Miss;
-      wr_sb_hitword1<=word;
-      Bit#(TAdd#(wordbits,3)) wordoffset={addr[v_wordbits-1:0],3'b0};
-      Bit#(respwidth) coreword=word>>wordoffset;
-      if(verbosity!=0)
-        $display($time,"\tDCACHE: sbhit: %b word: %h store_addr: %h wordoffset: %d coreword: %h", 
-                                                      sbhit, word, compareaddr, wordoffset,coreword);
-      wr_sb_hitword<=coreword;
-      wr_sbindexhit<=truncate(pack(countZerosLSB(sbhit)));
-      `ifdef ASSERT
-        dynamicAssert(countOnes(sbhit)<=1,"More than one line in SB is hit");
-      `endif
+      if(compareaddr2 == wordaddr && valid)begin
+        Bit#(TLog#(respwidth)) shiftamt2 = {store_addr[rg_storetail][v_wordbits-1:0],3'b0}; // parameterize for XLEN
+        Bit#(respwidth) temp = store_size[rg_storetail]==0?'hff:
+                          store_size[rg_storetail]==1?'hffff:
+                          store_size[rg_storetail]==2?'hffffffff:'1;
+        temp = temp << shiftamt2;
+        if(verbosity>0)
+          $display($time,"\tSTOREBUFFER Addr1: %h Data1: %h Size: %h temp: %h rg_storetail: %d",
+                store_addr[rg_storetail], store_data[rg_storetail],store_size[rg_storetail], 
+                temp, rg_storetail);
+        storemask2 = temp&(~storemask1); // 'h00_00_00_FF
+      end
+    
+      let data1 = storemask1& store_data[rg_storetail-1];
+      let data2 = storemask2& store_data[rg_storetail];
+      wr_sb_hitword<=data1|data2;
+      wr_sb_mask<=storemask1|storemask2;
     endrule
 
-    rule update_storebuffer_onhit(tpl_4(ff_core_request.first)!=1 && (wr_cache_response==Hit || 
-        wr_fb_response==Hit || wr_sb_response==Hit) && !tpl_2(ff_core_request.first()));
+    rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
+      wr_allocate_storebuffer) &&
+                                  tpl_4(ff_core_request.first)!=1 && !tpl_2(ff_core_request.first) );
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-      Bit#(respwidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
-      Bit#(TAdd#(3,wordbits)) wordoffset={addr[v_wordbits-1:0],3'b0};
-      Bit#(respwidth) hitword = wr_cache_hitword;
-      Bit#(TLog#(fbsize)) fbindex = rg_fbmissallocate;
-      Bit#(TLog#(sbsize)) sbindex = rg_storetail;
+        Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
+        Bit#(TLog#(sbsize)) sbindex = rg_storetail;
 
-      mask=mask<<wordoffset;
-      data = case (size[1:0])
-          'b00: duplicate(data[7:0]);
-          'b01: duplicate(data[15:0]);
-          'b10: duplicate(data[31:0]);
-          default: data;
-      endcase;
-
-      if(wr_sb_response==Hit)begin
-        hitword=wr_sb_hitword1;
-        sbindex=wr_sbindexhit;
-      end
-      else if(wr_fb_response==Hit)begin
-        hitword=wr_fb_word;
-        rg_storetail<=rg_storetail+1;
-        fbindex=wr_fbindexhit;
-      end
-      else begin
-        rg_storetail<=rg_storetail+1;
-      end
-      Bit#(respwidth) finalword=(mask&data)|(~mask&hitword);
-      if(wr_sb_response!=Hit)begin
-        store_data[sbindex]<=finalword;
+        data = case (size[1:0])
+            'b00: duplicate(data[7:0]);
+            'b01: duplicate(data[15:0]);
+            'b10: duplicate(data[31:0]);
+            default: data;
+        endcase;
+        store_data[sbindex]<=data;
         store_valid[sbindex]<=True;
-        store_size[sbindex]<=size;
+        store_size[sbindex]<=truncate(size);
         store_addr[sbindex]<=addr;
         store_fbindex[sbindex]<=fbindex;
-        store_io[sbindex]<=pack(isNonCacheable(addr,wr_cache_enable));
-      end
-      else begin
-        store_data[sbindex]<=finalword;
-      end
-      store_epoch[sbindex]<=epoch;
-      if(verbosity!=0)
-        $display($time,"\tDCACHE: Updating SB. sbindex: %d data: %h addr: %h fbindex: %d",
-            sbindex,data,addr,fbindex);
+        store_io[sbindex]<=pack(wr_allocate_storebuffer);
+        store_epoch[sbindex]<=epoch;
+        rg_storetail<=rg_storetail+1;
+        if(verbosity!=0)
+          $display($time,"\tDCACHE: Updating SB. sbindex: %d data: %h addr: %h fbindex: %d",
+              sbindex,data,addr,fbindex);
     endrule
-    
+
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit ||
-    wr_sb_response==Hit);
+    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
       Bit#(respwidth) word=0;
       Bool err=False;
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      let offset = (v_respwidth==64)?2:1;
+      Bit#(TLog#(respwidth)) loadoffset = {addr[v_wordbits-1:0],3'b0}; // parameterize for XLEN
       if(wr_cache_response==Hit)begin
         word=wr_cache_hitword;
         if(alg=="PLRU") begin
@@ -619,11 +618,15 @@ package l1dcache;
           wr_total_cache_hits<=1;
         `endif
       end
-      else if(wr_sb_response==Hit)begin
-        word=wr_sb_hitword;
-      end
       else if(wr_fb_response==Hit)begin
-        word=wr_fb_word;
+        if(access==1)begin
+          Bit#(respwidth) updated_word = wr_fb_word<<loadoffset;
+          updated_word= (updated_word&~wr_sb_mask)|(wr_sb_hitword);
+          word = updated_word>>loadoffset;
+        end
+        else 
+          word=wr_fb_word;
+
         err=unpack(wr_fb_err);
         `ifdef perf
           // Only when the hit in the LB is not because of a miss should the counter be enabled.
@@ -667,7 +670,7 @@ package l1dcache;
           default: word;
         endcase;
       if(verbosity!=0)
-        $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h",word,addr);
+        $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h access: %d",word,addr,access);
       ff_core_response.enq(tuple3(word,err,epoch));
       ff_core_request.deq;
       `ifdef ASSERT
@@ -684,8 +687,6 @@ package l1dcache;
           temp[2]=1;
           temp1[2]=1;
         end
-        if(wr_sb_response==Hit)
-          temp1[1]=1;
         dynamicAssert(countOnes(temp)<=1, "More than one data structure shows a hit");
         dynamicAssert(countOnes(temp1)<=1, "More than one data structure shows a hit");
       `endif
@@ -709,16 +710,11 @@ package l1dcache;
     // the line to be filled is further enqued into the ff_fb_fillindex which is used to identify
     // which line is the memory response to fill in the FB
     rule request_to_memory(wr_cache_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                         && wr_sb_response==Miss && wr_nc_response!=Hit &&!fb_full);
+                                         && wr_nc_response!=Hit &&!fb_full);
                                                                                         
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-      if(isNonCacheable(addr,wr_cache_enable))begin
-        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
-        if(verbosity!=0)begin
-          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
-        end
-      end
-      else begin
+      // TODO in case of nonCacheable writes what do you do?
+      if(!isNonCacheable(addr,wr_cache_enable)) begin
         addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
         ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
         rg_miss_ongoing<=True;
@@ -732,6 +728,15 @@ package l1dcache;
           $display($time,"\tDCACHE: Sending memory request. Addr: %h",addr);
           $display($time,"\tDCACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
+      end
+      else if(access!=2)begin
+        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+        if(verbosity!=0)begin
+          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
+        end
+      end
+      else if(access==2)begin
+        wr_allocate_storebuffer.send;
       end
 
     endrule
@@ -1044,7 +1049,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 
 
   (*synthesize*)
-  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,4,1));
+  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,2,1));
     let ifc();
     mkl1dcache#(isIO, "PLRU") _temp(ifc);
     return (ifc);

@@ -2,3 +2,5 @@
 build/
 
 verilog/
+
+obj_dir/

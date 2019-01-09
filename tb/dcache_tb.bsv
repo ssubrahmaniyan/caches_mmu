@@ -54,9 +54,8 @@ package dcache_tb;
   `define ways 4
   `define repl RROBIN
 
-
   (*synthesize*)
-  module mktest(Ifc_test_caches#(`word_size , `block_size , `sets , `ways ,32,`addr_width ));
+  module mktest(Ifc_test_caches#(`word_size , `block_size , `sets , `ways ,32,`addr_width));
     let ifc();
     mktest_caches _temp(ifc);
     return (ifc);
@@ -239,7 +238,7 @@ package dcache_tb;
     else begin
       rg_write_burst_count<=rg_write_burst_count+1;
       let nextdata=writedata>>32;
-      write_mem_req <= tagged Valid tuple4(axi4burst_addrgen(burst,size,2,addr),burst,size,nextdata); // parameterize
+      write_mem_req <= tagged Valid tuple4(axi4burst_addrgen(burst,zeroExtend(size),2,addr),burst,size,nextdata); // parameterize
     end
     
     let v_wordbits = valueOf(TLog#(`word_size));
