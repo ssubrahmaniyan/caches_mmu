@@ -61,6 +61,23 @@ package dcache_tb;
     return (ifc);
   endmodule
 
+  function Bool isIO(Bit#(32) addr, Bool cacheable);
+    if(!cacheable)
+      return True;
+    else if( addr < 4096)
+      return True;
+    else
+      return False;    
+  endfunction
+
+
+  (*synthesize*)
+  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,2,1));
+    let ifc();
+    mkl1dcache#(isIO, "PLRU") _temp(ifc);
+    return (ifc);
+  endmodule
+
   (*synthesize*)
   module mkdcache_tb(Empty);
 
@@ -82,7 +99,7 @@ package dcache_tb;
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`word_size, 8), 8), `addr_width ) )) ff_req <- mkSizedFIFOF(32);
-  `ifdef simulate
+  `ifdef pysimulate
     FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(32);
   `endif
 
@@ -124,7 +141,7 @@ package dcache_tb;
       if((delay==0) || request=='1)begin // if not a fence instruction
         $display($time,"\tTB: Enquiing request: %h",req);
         ff_req.enq(req);
-        `ifdef simulate
+        `ifdef pysimulate
           ff_meta.enq(e_meta.sub(truncate(index)));
         `endif
       end
@@ -145,7 +162,7 @@ package dcache_tb;
 
   rule checkout_request(ff_req.first[39:0]=='1);
     ff_req.deq;
-    `ifdef simulate
+    `ifdef pysimulate
       ff_meta.deq;
     `endif
     rg_test_count<=rg_test_count+1;
@@ -156,7 +173,7 @@ package dcache_tb;
   rule core_resp(ff_req.first[39:0]!='1);
     let resp <- dcache.core_resp.get();
     let req = ff_req.first;
-    `ifdef simulate  
+    `ifdef pysimulate  
       let meta <- dcache.meta.get();
       let expected_meta=ff_meta.first();
       ff_meta.deq();
@@ -176,7 +193,7 @@ package dcache_tb;
       Bool metafail=False;
       Bool datafail=False;
   
-      `ifdef simulate
+      `ifdef pysimulate
        if(expected_meta!=meta)begin
          $display($time,"\tTB: Meta does not match for Req: %h",req);
          $display($time,"\tTB: Expected Meta: %b Received Meta:%b", expected_meta,meta);

@@ -46,7 +46,7 @@ package cache_types;
   typedef Tuple6#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data)) 
                     DCore_request#(numeric type addr, numeric type data, numeric type esize);
                  // word , err , epoch
-  typedef Tuple3#(Bit#(data), Bool, Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
+  typedef Tuple3#(Bit#(data), Bit#(2), Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
                 // addr ,  burst len, burst_size 
   typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) DMem_read_request#(numeric type addr);
                   // data , last, err

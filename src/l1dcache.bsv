@@ -66,7 +66,7 @@ package l1dcache;
     interface Put#(DMem_write_response) write_mem_resp;
     interface Get#(DMem_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
     interface Put#(DMem_write_response) nc_write_resp;
-    `ifdef simulate
+    `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
     `ifdef perf
@@ -102,7 +102,7 @@ package l1dcache;
           Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
 
           `ifdef ASSERT
-          Add#(1, e__, TLog#(TAdd#(1, fbsize))),
+          Add#(1, p__, TLog#(TAdd#(1, fbsize))),
           Add#(1, f__, TLog#(TAdd#(1, ways))),
           Add#(1, o__, TLog#(TAdd#(1, sbsize))),
           `endif
@@ -176,7 +176,7 @@ package l1dcache;
 
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
-    `ifdef simulate
+    `ifdef pysimulate
       FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
     `endif
     `ifdef perf
@@ -238,7 +238,7 @@ package l1dcache;
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
     Reg#(Bool) rg_polling <-mkReg(False);
-    `ifdef simulate
+    `ifdef pysimulate
       Wire#(Bool) wrpolling<-mkDWire(False);
     `endif
 
@@ -384,8 +384,8 @@ package l1dcache;
         ff_core_request.deq;
         rg_globaldirty<=False;
         repl.reset_repl;
-        ff_core_response.enq(tuple3(?,False,tpl_3(ff_core_request.first)));
-        `ifdef simulate
+        ff_core_response.enq(tuple3(?,0,tpl_3(ff_core_request.first)));
+        `ifdef pysimulate
           ff_meta.enq(0);
         `endif
       end
@@ -511,7 +511,7 @@ package l1dcache;
         wr_fb_response<=Miss;
       // setting this register will prevent the rule tag_match from firing when polling is expected.
       rg_polling<=(linehit && !wordhit);
-      `ifdef simulate
+      `ifdef pysimulate
         wrpolling<=rg_polling;
       `endif
       wr_fb_word<=truncate(hitline>>block_offset); 
@@ -572,29 +572,29 @@ package l1dcache;
     endrule
 
     rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
-      wr_allocate_storebuffer) &&
-                                  tpl_4(ff_core_request.first)!=1 && !tpl_2(ff_core_request.first) );
+          wr_allocate_storebuffer) &&  tpl_4(ff_core_request.first)!=1 && 
+          !tpl_2(ff_core_request.first) );
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-        Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
-        Bit#(TLog#(sbsize)) sbindex = rg_storetail;
+      Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
+      Bit#(TLog#(sbsize)) sbindex = rg_storetail;
 
-        data = case (size[1:0])
-            'b00: duplicate(data[7:0]);
-            'b01: duplicate(data[15:0]);
-            'b10: duplicate(data[31:0]);
-            default: data;
-        endcase;
-        store_data[sbindex]<=data;
-        store_valid[sbindex]<=True;
-        store_size[sbindex]<=truncate(size);
-        store_addr[sbindex]<=addr;
-        store_fbindex[sbindex]<=fbindex;
-        store_io[sbindex]<=pack(wr_allocate_storebuffer);
-        store_epoch[sbindex]<=epoch;
-        rg_storetail<=rg_storetail+1;
-        if(verbosity!=0)
-          $display($time,"\tDCACHE: Updating SB. sbindex: %d data: %h addr: %h fbindex: %d",
-              sbindex,data,addr,fbindex);
+      data = case (size[1:0])
+          'b00: duplicate(data[7:0]);
+          'b01: duplicate(data[15:0]);
+          'b10: duplicate(data[31:0]);
+          default: data;
+      endcase;
+      store_data[sbindex]<=data;
+      store_valid[sbindex]<=True;
+      store_size[sbindex]<=truncate(size);
+      store_addr[sbindex]<=addr;
+      store_fbindex[sbindex]<=fbindex;
+      store_io[sbindex]<=pack(wr_allocate_storebuffer);
+      store_epoch[sbindex]<=epoch;
+      rg_storetail<=rg_storetail+1;
+      if(verbosity!=0)
+        $display($time,"\tDCACHE: Updating SB. sbindex: %d data: %h addr: %h fbindex: %d",
+            sbindex,data,addr,fbindex);
     endrule
 
     // This rule is fired when there is a hit in the cache. The word received is further modified
@@ -669,7 +669,7 @@ package l1dcache;
         endcase;
       if(verbosity!=0)
         $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h access: %d",word,addr,access);
-      ff_core_response.enq(tuple3(word,err,epoch));
+      ff_core_response.enq(tuple3(word,{1'b0,pack(err)},epoch));
       ff_core_request.deq;
       `ifdef ASSERT
         Bit#(3) temp=0;
@@ -690,7 +690,7 @@ package l1dcache;
       `endif
     endrule
 
-    `ifdef simulate
+    `ifdef pysimulate
       rule put_meta;
         if(wr_cache_response==Hit)
           ff_meta.enq(1);
@@ -943,7 +943,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
         ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
-    `ifdef simulate 
+    `ifdef pysimulate 
       interface meta = interface Get
         method ActionValue#(Bit#(1)) get();
           ff_meta.deq;
@@ -1040,21 +1040,21 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 
   endmodule
  
-  function Bool isIO(Bit#(32) addr, Bool cacheable);
-    if(!cacheable)
-      return True;
-    else if( addr < 4096)
-      return True;
-    else
-      return False;    
-  endfunction
-
-
-  (*synthesize*)
-  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,2,1));
-    let ifc();
-    mkl1dcache#(isIO, "PLRU") _temp(ifc);
-    return (ifc);
-  endmodule
+//  function Bool isIO(Bit#(32) addr, Bool cacheable);
+//    if(!cacheable)
+//      return True;
+//    else if( addr < 4096)
+//      return True;
+//    else
+//      return False;    
+//  endfunction
+//
+//
+//  (*synthesize*)
+//  module mkdcache(Ifc_l1dcache#(4, 8, 64, 4 ,32,8,2,1));
+//    let ifc();
+//    mkl1dcache#(isIO, "PLRU") _temp(ifc);
+//    return (ifc);
+//  endmodule
 endpackage
 
