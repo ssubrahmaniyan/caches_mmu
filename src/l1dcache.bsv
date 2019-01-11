@@ -194,7 +194,7 @@ package l1dcache;
     Ifc_mem_config1rw#(sets, linewidth, 1) data_arr [v_ways]; // data array
     Ifc_mem_config1rw#(sets, tagbits, 1) tag_arr [v_ways];// one extra valid bit
     for(Integer i=0;i<v_ways;i=i+1)begin
-      data_arr[i]<-mkmem_config1rw(False, "single"); // TODO parameterize arguments
+      data_arr[i]<-mkmem_config1rw(False, "single"); 
       tag_arr[i]<-mkmem_config1rw(False, "single");
     end
     Ifc_replace#(sets,ways) repl <- mkreplace(alg);
@@ -712,7 +712,6 @@ package l1dcache;
                                          && wr_nc_response!=Hit &&!fb_full);
                                                                                         
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
-      // TODO in case of nonCacheable writes what do you do?
       if(!isNonCacheable(addr,wr_cache_enable)) begin
         addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
         ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
@@ -1051,7 +1050,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
                                                   !rg_replaylatest &&  !rg_fence_stall && !fb_full;
     method storebuffer_empty = sb_empty;
     method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
-      return tuple2(ff_nc_write_response.first(),store_addr[rg_storehead-1]); // TODO This is wrong  address
+      return tuple2(ff_nc_write_response.first(),store_addr[rg_storehead-1]); 
     endmethod
 
   endmodule
