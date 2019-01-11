@@ -73,10 +73,11 @@ package l1dcache;
       method Bit#(5) perf_counters;
     `endif
     method Action cache_enable(Bool c);
-    method ActionValue#(Bool) perform_store(Bit#(esize) currepoch);
+    method Action perform_store(Bit#(esize) currepoch);
+    method Bool cacheable_store;
     method Bool cache_available;
     method Bool storebuffer_empty;
-    method Bool nc_store_response;
+    method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
   endinterface
 
   (*conflict_free="request_to_memory,update_fb_with_memory_response"*)
@@ -311,7 +312,7 @@ package l1dcache;
 
     rule display_stuff;
       if(verbosity!=0)begin
-        $display($time,"\tDACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: :%d"
+        $display($time,"\tDCACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: :%d"
           ,fb_full,fb_empty,rg_fbwriteback,rg_fbmissallocate);
         $display($time,"\tDCACHE: ff_core_response.notFull: %b rg_fence_stall: %b",
           ff_core_response.notFull,rg_fence_stall);
@@ -572,7 +573,7 @@ package l1dcache;
     endrule
 
     rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
-          wr_allocate_storebuffer) &&  tpl_4(ff_core_request.first)!=1 && 
+          wr_allocate_storebuffer) &&  tpl_4(ff_core_request.first)!=0 && 
           !tpl_2(ff_core_request.first) );
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
       Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
@@ -617,7 +618,7 @@ package l1dcache;
         `endif
       end
       else if(wr_fb_response==Hit)begin
-        if(access==1)begin
+        if(access==0 || access==2)begin
           Bit#(respwidth) updated_word = wr_fb_word<<loadoffset;
           updated_word= (updated_word&~wr_sb_mask)|(wr_sb_hitword);
           word = updated_word>>loadoffset;
@@ -639,12 +640,12 @@ package l1dcache;
           wr_total_io<=1;
         `endif
       end
-      if(access!=1 && (wr_fb_response==Hit || wr_cache_response==Hit))begin
+      if(access!=0 && (wr_fb_response==Hit || wr_cache_response==Hit))begin
         rg_globaldirty<=True;
       end
 
       // This captures a line from the cache RAMS into the Fill buffer on a store/atomic hit.
-      if(access!=1 && wr_cache_response==Hit)begin
+      if(access!=0 && wr_cache_response==Hit)begin
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
         fb_addr[rg_fbmissallocate]<=addr;
@@ -727,14 +728,20 @@ package l1dcache;
           $display($time,"\tDCACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
       end
-      else if(access!=2)begin
+      else if(access==0 || access==2)begin
+        rg_miss_ongoing<=True;
         ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
         if(verbosity!=0)begin
-          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
+          $display($time,"\tDCACHE: Sending IO memory request. Addr: %h",addr);
         end
       end
-      else if(access==2)begin
+      else if(access==1)begin
         wr_allocate_storebuffer.send;
+        ff_core_response.enq(tuple3(?,0,epoch));
+        ff_core_request.deq;
+        if(verbosity!=0)begin
+          $display($time,"\tDCACHE: Allocating IO Write in SB for Addr: %h",addr);
+        end
       end
 
     endrule
@@ -955,8 +962,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       wr_cache_enable<=c;
     endmethod
 
-    method ActionValue#(Bool) perform_store(Bit#(esize) currepoch);
-      Bool complete=False;
+    method Action perform_store(Bit#(esize) currepoch);
       let fbindex=store_fbindex[rg_storehead];
       let addr = store_addr[rg_storehead];
       let data = store_data[rg_storehead];
@@ -964,17 +970,21 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       let size = store_size[rg_storehead];
       let epoch = store_epoch[rg_storehead];
       let io = store_io[rg_storehead];
-      Bit#(linewidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
+      Bit#(respwidth) temp = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
+      Bit#(linewidth) mask =zeroExtend(temp); 
       Bit#(wordbits) zeros=0;
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits))) block_offset=
                                     {addr[v_blockbits+v_wordbits-1:0],3'b0};
       mask=mask<<block_offset;
       if(epoch==currepoch)begin
         if(io==1)begin
+          if(verbosity!=0)begin
+            $display($time,"\tDCACHE: Sending IO Write Request for Addr: %h Size: %d Data: %h",
+                                              addr, size, data);
+          end
           ff_nc_write_request.enq(tuple4(addr,0,size,data));
         end
         else begin
-          complete=True;
           if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex==fbi)begin
             wr_upd_fillingmask<=mask;
             wr_upd_fillingdata<=duplicate(data);
@@ -993,13 +1003,17 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       else begin
         if(verbosity!=0)
           $display($time,"\tDCACHE: Dropping Store for addr: %h store_head: %d",addr,rg_storehead);
-        complete=True;
       end
       rg_storehead<=rg_storehead+1;
       store_valid[rg_storehead]<=False;
       `ifdef ASSERT
         dynamicAssert(store_valid[rg_storehead],"Performing Store on invalid entry in SB");
       `endif
+    endmethod
+    method Bool cacheable_store;
+      Bool complete=True;
+      if(store_io[rg_storehead]==1)
+        complete=False;
       return complete;
     endmethod
     `ifdef perf
@@ -1036,7 +1050,9 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
                                                   !rg_replaylatest &&  !rg_fence_stall && !fb_full;
     method storebuffer_empty = sb_empty;
-    method nc_store_response=ff_nc_write_response.first();
+    method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
+      return tuple2(ff_nc_write_response.first(),store_addr[rg_storehead-1]); // TODO This is wrong  address
+    endmethod
 
   endmodule
  
