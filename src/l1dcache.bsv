@@ -45,6 +45,31 @@ package l1dcache;
   import mem_config::*;
   import replacement_dcache::*;
   
+  function Bit#(ELEN) fn_atomic_op (Bit#(5) op,  Bit#(ELEN) rs2,  Bit#(ELEN) loaded);
+    Bit#(ELEN) op1 = loaded;
+    Bit#(ELEN) op2 = rs2;
+    if(op[4]==0)begin
+			op1=signExtend(loaded[31:0]);
+      op2= signExtend(rs2[31:0]);
+    end
+    Int#(ELEN) s_op1 = unpack(op1);
+		Int#(ELEN) s_op2 = unpack(op2);
+    
+    case (op[3:0])
+				'b0011:return op2;
+				'b0000:return (op1+op2);
+				'b0010:return (op1^op2);
+				'b0110:return (op1&op2);
+				'b0100:return (op1|op2);
+				'b1100:return min(op1,op2);
+				'b1110:return max(op1,op2);
+				'b1000:return pack(min(s_op1,s_op2));
+				'b1010:return pack(max(s_op1,s_op2));
+				default:return op1;
+			endcase
+  endfunction
+
+  
   interface Ifc_l1dcache#( numeric type wordsize, 
                            numeric type blocksize,  
                            numeric type sets,
@@ -177,6 +202,7 @@ package l1dcache;
 
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
+    Wire#(Bit#(respwidth)) wr_resp_word <- mkWire();
     `ifdef pysimulate
       FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
     `endif
@@ -301,7 +327,6 @@ package l1dcache;
     Wire#(Bit#(linewidth)) wr_upd_fillingmask <-mkDWire(0);
     Wire#(Bool) wr_store_response <- mkDWire(False);
     PulseWire wr_allocate_storebuffer <- mkPulseWire();
-//    Wire#(Bool) wr_allocate_storebuffer<-mkDWire(False);
 
     Wire#(Bit#(respwidth)) wr_sb_hitword <-mkDWire(0);
     Wire#(Bit#(respwidth)) wr_sb_mask <- mkDWire(0);
@@ -594,7 +619,11 @@ package l1dcache;
     `endif
       Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
       Bit#(TLog#(sbsize)) sbindex = rg_storetail;
-
+    `ifdef atomic
+      if(access ==2)begin
+        data = fn_atomic_op(atomicop, data, wr_resp_word);
+      end
+    `endif
       data = case (size[1:0])
           'b00: duplicate(data[7:0]);
           'b01: duplicate(data[15:0]);
@@ -678,6 +707,7 @@ package l1dcache;
       rg_miss_ongoing<=False;
       // depending onthe request made by the core, the word is either sigextended/zeroextend and
       // truncated if necessary.
+      wr_resp_word<= word;
       word=
         case (size)
           'b000: signExtend(word[7:0]);
