@@ -429,6 +429,9 @@ package l1dcache;
     rule receive_memory_response(rg_fence_pending && tpl_2(ff_core_request.first));
       rg_fence_pending<=False;
       let x=ff_write_mem_response.first;
+    endrule
+
+    rule deq_write_response;
       ff_write_mem_response.deq;
     endrule
 
@@ -1054,7 +1057,6 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
               $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
             fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
           end
-          $display($time,"\tDCACHE: Store to FB. rg_storehead: %d",rg_storehead);
           fb_dirty[fbindex]<=1'b1;
         end
       end
