@@ -91,6 +91,7 @@ package l1dcache;
   (*conflict_free="update_fb_with_memory_response,perform_store"*)
   (*conflict_free="allocate_storebuffer,perform_store"*)
   (*conflict_free="allocate_storebuffer,respond_to_core"*)
+  (*conflict_free="allocate_storebuffer,request_to_memory"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize,esize)) 
     provisos(
