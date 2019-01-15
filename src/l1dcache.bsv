@@ -326,7 +326,8 @@ package l1dcache;
     Wire#(Bit#(linewidth)) wr_upd_fillingdata <-mkDWire(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingmask <-mkDWire(0);
     Wire#(Bool) wr_store_response <- mkDWire(False);
-    PulseWire wr_allocate_storebuffer <- mkPulseWire();
+//    PulseWire wr_allocate_storebuffer <- mkPulseWire();
+    Wire#(Bool) wr_allocate_storebuffer <- mkDWire(False);
 
     Wire#(Bit#(respwidth)) wr_sb_hitword <-mkDWire(0);
     Wire#(Bit#(respwidth)) wr_sb_mask <- mkDWire(0);
@@ -340,13 +341,14 @@ package l1dcache;
 
     rule display_stuff;
       if(verbosity!=0)begin
-        $display($time,"\tDCACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: :%d"
-          ,fb_full,fb_empty,rg_fbwriteback,rg_fbmissallocate);
+        $display($time,"\tDCACHE: fb_full: %b fb_empty: %b rg_fbwriteback: %d rg_fbmissallocate: :%d   fbvalid :%b"
+          ,fb_full,fb_empty,rg_fbwriteback,rg_fbmissallocate,readVReg(fb_valid));
         $display($time,"\tDCACHE: ff_core_response.notFull: %b rg_fence_stall: %b",
           ff_core_response.notFull,rg_fence_stall);
         $display($time,"\tDCACHE: sb_empty: %b sb_full: %b store_valid: %h",sb_empty,sb_full,readVReg(store_valid));
         $display($time,"\tDCACHE: fb_enables[wr]: %h rg_replaylatest: %b fb_valid[wr]",
         fb_enables[rg_fbwriteback],rg_replaylatest, fb_valid[rg_fbwriteback]);
+        $display($time,"\tDCACHE rg_storetail: %d rg_storehead: %d",rg_storetail,rg_storehead);
       end
     endrule
 
@@ -616,7 +618,7 @@ package l1dcache;
     endrule
 
     rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
-          wr_allocate_storebuffer) &&  tpl_4(ff_core_request.first)!=0 && 
+          wr_allocate_storebuffer|| wr_nc_response==Hit) &&  tpl_4(ff_core_request.first)!=0 && 
           !tpl_2(ff_core_request.first) );
       wr_store_in_progress<=True;
     `ifdef atomic
@@ -709,7 +711,9 @@ package l1dcache;
         fb_dataline[rg_fbmissallocate]<=wr_hitline;
         fb_dirty[rg_fbmissallocate]<=rg_dirty[set_index][wr_hitway];
         rg_valid[set_index][wr_hitway]<=1'b0;
-
+        `ifdef ASSERT
+          dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill-buffer on Cache Hit");
+        `endif
       end
       rg_miss_ongoing<=False;
       // depending onthe request made by the core, the word is either sigextended/zeroextend and
@@ -787,6 +791,9 @@ package l1dcache;
           $display($time,"\tDCACHE: Sending memory request. Addr: %h",addr);
           $display($time,"\tDCACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
+        `ifdef ASSERT
+          dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill-buffer");
+        `endif
       end
       else if(access==0 `ifdef atomic || access==2 `endif )begin
         rg_miss_ongoing<=True;
@@ -796,9 +803,10 @@ package l1dcache;
         end
       end
       else if(access==1)begin
-        wr_allocate_storebuffer.send;
+        wr_allocate_storebuffer<=True;
         ff_core_response.enq(tuple3(?,0,epoch));
         ff_core_request.deq;
+        wr_resp_word<= data;
         if(verbosity!=0)begin
           $display($time,"\tDCACHE: Allocating IO Write in SB for Addr: %h",addr);
         end
