@@ -293,8 +293,6 @@ package l1dcache;
     Bool fb_empty=!(any(isTrue,readVReg(fb_valid)));
     Bit#(TLog#(sets)) fillindex=fb_addr[rg_fbwriteback][v_setbits+v_blockbits+v_wordbits-1:
                                                                           v_blockbits+v_wordbits];
-    Bool fill_oppurtunity=(!ff_core_request.notEmpty || !wr_takingrequest) && !fb_empty &&
-         /*countOnes(fb_valid)>0 &&*/ (fillindex!=rg_latest_index);
     // ------------------------------------------------------------------------------------------//
 
     // ----------------------------- structures for fence operation -----------------------------//
@@ -335,7 +333,10 @@ package l1dcache;
 
     Bool sb_full= (all(isTrue,readVReg(store_valid)));
     Bool sb_empty=!(any(isTrue,readVReg(store_valid)));
+    Wire#(Bool) wr_store_in_progress <- mkDWire(False);
     // ------------------------------------------------------------------------------------------//
+    Bool fill_oppurtunity=(!ff_core_request.notEmpty || !wr_takingrequest) && !fb_empty &&
+         /*countOnes(fb_valid)>0 &&*/ (fillindex!=rg_latest_index) && !wr_store_in_progress;
 
     rule display_stuff;
       if(verbosity!=0)begin
@@ -617,6 +618,7 @@ package l1dcache;
     rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
           wr_allocate_storebuffer) &&  tpl_4(ff_core_request.first)!=0 && 
           !tpl_2(ff_core_request.first) );
+      wr_store_in_progress<=True;
     `ifdef atomic
       let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
     `else
