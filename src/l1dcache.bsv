@@ -932,9 +932,9 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
           if(verbosity!=0)begin
             $display($time,"\tDCACHE: release from FB firing");
             $display($time,"\tDCACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
- addr:   %h way: %d fb_dataline: %h",
+ addr:   %h way: %d fb_dataline: %h fb_dirty: %b",
              rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
-             fb_addr[rg_fbwriteback], waynum,fb_dataline[rg_fbwriteback]);
+             fb_addr[rg_fbwriteback], waynum,fb_dataline[rg_fbwriteback],fb_dirty[rg_fbwriteback]);
           end
         end
       end
@@ -965,7 +965,7 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
 
     interface core_req=interface Put
       method Action put(DCore_request#(paddr,respwidth,esize) req)if( ff_core_response.notFull &&
-                                !rg_replaylatest &&  !rg_fence_stall && !fb_full);
+                 !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty);
         `ifdef perf
           wr_total_access<=1;
         `endif
@@ -1119,7 +1119,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     endinterface;
 
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
-                                                  !rg_replaylatest &&  !rg_fence_stall && !fb_full;
+                  !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty;
     method storebuffer_empty = sb_empty;
     method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
       return tuple2(ff_nc_write_response.first(),store_addr[rg_storehead-1]); 
