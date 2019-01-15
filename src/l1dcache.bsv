@@ -439,7 +439,7 @@ package l1dcache;
     // miss. On a hit the required word is forwarded to the rule respond_to_core. On a miss the
     // address is forwarded to the rule request_to_memory;
     rule tag_match(ff_core_response.notFull && !rg_miss_ongoing && !rg_polling &&
-          !tpl_2(ff_core_request.first()) );
+          !tpl_2(ff_core_request.first()) && !fb_full);
     `ifdef atomic
       let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
     `else
