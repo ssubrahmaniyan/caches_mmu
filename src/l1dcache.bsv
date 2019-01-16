@@ -185,22 +185,22 @@ package l1dcache;
     // This fifo stores the request from the core.
     FIFOF#(DCore_request#(paddr,respwidth,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
+    FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(DMem_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(DMem_read_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(DMem_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
     
     FIFOF#(DMem_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
     
     FIFOF#(DMem_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
     FIFOF#(DMem_write_response) ff_nc_write_response  <- mkSizedFIFOF(2);
     
     FIFOF#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
                                                                               <- mkSizedFIFOF(2);
-    FIFOF#(DMem_write_response) ff_write_mem_response  <- mkSizedFIFOF(2);
+    FIFOF#(DMem_write_response) ff_write_mem_response  <- mkBypassFIFOF();
 
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
