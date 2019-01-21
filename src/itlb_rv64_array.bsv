@@ -48,8 +48,22 @@ package itlb_rv64_array;
   import BUtils::*;
 
   import mem_config::*;
-  import common_types::*;
   import replacement::*;
+
+  `define Inst_addr_misaligned  0 
+  `define Inst_access_fault     1 
+  `define Illegal_inst          2 
+  `define Breakpoint            3 
+  `define Load_addr_misaligned  4 
+  `define Load_access_fault     5 
+  `define Store_addr_misaligned 6 
+  `define Store_access_fault    7 
+  `define Ecall_from_user       8 
+  `define Ecall_from_supervisor 9 
+  `define Ecall_from_machine    11
+  `define Inst_pagefault        12
+  `define Load_pagefault        13
+  `define Store_pagefault       15
 
   interface Ifc_itlb_rv64_array#(
       numeric type reg_size, 
@@ -60,12 +74,13 @@ package itlb_rv64_array;
       numeric type giga_ways,
       numeric type asid_width);
     interface Put#(Bit#(64)) core_req;
-    interface Get#(Tuple2#(Bit#(44), Trap_type)) core_resp;
+                          // physical-addr, exception, cause
+    interface Get#(Tuple3#(Bit#(44), Bool, Bit#(6))) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
     interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
                           // ppn   , levels , trap
-    interface Put#(Tuple3#(Bit#(54),Bit#(2),Trap_type)) resp_from_ptw;
+    interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
@@ -153,7 +168,7 @@ package itlb_rv64_array;
     // FIFO to hold the next input
     FIFOF#(Bit#(64)) ff_req_queue <- mkSizedFIFOF(2);
     FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(44),Trap_type)) ff_core_resp<- mkSizedFIFOF(2);
+    FIFOF#(Tuple3#(Bit#(44),Bool, Bit#(6))) ff_core_resp<- mkSizedFIFOF(2);
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
 
@@ -308,13 +323,12 @@ package itlb_rv64_array;
       Bit#(25) unused_va=ff_req_queue.first()[63:39];
       // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
       if(unused_va!=signExtend(ff_req_queue.first()[38])) begin
-        Trap_type exception=tagged Exception Inst_pagefault; 
-        ff_core_resp.enq(tuple2(physical_address,exception));
+        ff_core_resp.enq(tuple3(physical_address,True,`Inst_pagefault ));
         ff_req_queue.deq;
       end
       // transparent translation
       else if(satp_mode==0 || wr_priv==3)begin
-        ff_core_resp.enq(tuple2(signExtend(ff_req_queue.first()[38:12]),tagged None));
+        ff_core_resp.enq(tuple3(signExtend(ff_req_queue.first()[38:12]),False,?));
         ff_req_queue.deq();
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
@@ -333,8 +347,7 @@ package itlb_rv64_array;
         else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
           page_fault=True;
 
-        Trap_type exception=page_fault?tagged Exception Inst_pagefault:tagged None; 
-        ff_core_resp.enq(tuple2(physical_address,exception));
+        ff_core_resp.enq(tuple3(physical_address,True,`Inst_pagefault ));
         ff_req_queue.deq;
       end
       else begin
@@ -371,10 +384,10 @@ package itlb_rv64_array;
       endmethod
     endinterface;
     interface resp_from_ptw = interface Put
-      method Action put(Tuple3#(Bit#(54),Bit#(2),Trap_type) resp)if(rg_tlb_miss && !rg_init);
+      method Action put(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6)) resp)if(rg_tlb_miss && !rg_init);
         // This will then cause the rule access_tlb_on_request to fire again
         // which cause a hit in the tlb now and thus respond back to the core.
-        let {pte, levels, trap}=resp;
+        let {pte, levels, trap_taken, cause}=resp;
         let va=ff_req_queue.first();
         Bit#(27) vpn_reg=ff_req_queue.first[38:12];
         Bit#(TLog#(reg_size)) index_reg=truncate(vpn_reg);
@@ -385,7 +398,7 @@ package itlb_rv64_array;
         Bit#(9) vpn_giga=ff_req_queue.first[38:30];
         Bit#(TLog#(giga_size)) index_giga=truncate(vpn_giga);
 
-        if(trap matches tagged None)begin
+        if(!trap_taken)begin
           if(levels==0) begin
               tlb_pte_reg[reg_replaceway][index_reg]<=pte;
               tlb_vtag_reg[reg_replaceway][index_reg]<={satp_asid,vpn_reg};
@@ -417,7 +430,7 @@ package itlb_rv64_array;
           physical_address={pte[53:19],vpn0};
         else
           physical_address={pte[53:28],vpn1,vpn0};
-        ff_core_resp.enq(tuple2(physical_address,trap));
+        ff_core_resp.enq(tuple3(physical_address,trap_taken,cause));
         ff_req_queue.deq;
         rg_tlb_miss<=True;
       endmethod
@@ -429,11 +442,18 @@ package itlb_rv64_array;
     endinterface;
 
     interface core_resp= interface Get
-      method ActionValue#(Tuple2#(Bit#(44),Trap_type)) get;
+      method ActionValue#(Tuple3#(Bit#(44),Bool, Bit#(6))) get;
         ff_core_resp.deq;
         return ff_core_resp.first();
       endmethod
     endinterface;
+  endmodule
+  
+  (*synthesize*)
+  module mkitlb(Ifc_itlb_rv64_array#(8,8,8,1,1,1,9));
+    let ifc();
+    mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
+    return (ifc);
   endmodule
 endpackage
 
