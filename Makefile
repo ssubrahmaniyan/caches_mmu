@@ -6,7 +6,7 @@ BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
 BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(SUPPORTED):$(DIR)
 BSVOUTDIR:=./bin
-define_macros:=-D VERBOSITY=2 -D ASSERT=True -D pysimulate=True
+define_macros:=-D VERBOSITY=2 -D ASSERT=True -D atomic=True
 
 ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
   VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout
