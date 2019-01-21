@@ -65,9 +65,9 @@ package l1icache;
     interface Put#(IMem_response#(TMul#(wordsize,8))) read_mem_resp;
     interface Get#(IMem_request#(paddr)) nc_read_req;
     interface Put#(IMem_response#(TMul#(wordsize,8))) nc_read_resp;
-//    `ifdef simulate
-//      interface Get#(Bit#(1)) meta;
-//    `endif
+    `ifdef pysimulate
+      interface Get#(Bit#(1)) meta;
+    `endif
     `ifdef perf
       method Bit#(5) perf_counters;
     `endif
@@ -153,9 +153,9 @@ package l1icache;
     FIFOF#(IMem_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
-//    `ifdef simulate
-//      FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
-//    `endif
+    `ifdef pysimulate
+      FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
+    `endif
     `ifdef perf
       Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_cache_hits <- mkDWire(0);
@@ -217,7 +217,7 @@ package l1icache;
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
     Reg#(Bool) rg_polling <-mkReg(False);
-    `ifdef simulate
+    `ifdef pysimulate
       Wire#(Bool) wrpolling<-mkDWire(False);
     `endif
 
@@ -308,9 +308,15 @@ package l1icache;
       // depending onthe request made by the core, the word is either sigextended/zeroextend and
       // truncated if necessary.
       if(verbosity!=0)
-        $display($time,"\tICACHE: Sending response to core. Word: %d for address: %h",word,addr);
+        $display($time,"\tICACHE: Sending response to core. Word: %h for address: %h",word,addr);
       ff_core_response.enq(tuple3(word,err,epoch));
       ff_core_request.deq;
+      `ifdef pysimulate
+        if(wr_ram_response==Hit)
+          ff_meta.enq(1);
+        else
+          ff_meta.enq(0);
+      `endif
       `ifdef ASSERT
         dynamicAssert(!(wr_ram_response==Hit && wr_fb_response==Hit),
                                                   "Cache and FB both are hit simultaneously");
@@ -425,7 +431,7 @@ package l1icache;
         wr_fb_response<=Miss;
       // setting this register will prevent the rule tag_match from firing when polling is expected.
       rg_polling<=(linehit && !wordhit);
-      `ifdef simulate
+      `ifdef pysimulate
         wrpolling<=rg_polling;
       `endif
       wr_fb_word<=truncate(hitline>>block_offset); 
@@ -440,15 +446,6 @@ package l1icache;
         dynamicAssert(countOnes(fbhit)<=1,"More than one line in FB is hit");
       `endif
     endrule
-//
-//    `ifdef simulate
-//      rule put_meta;
-//        if(wr_cache_response==Hit)
-//          ff_meta.enq(1);
-//        else if(wr_fb_response==Hit)
-//          ff_meta.enq(pack(!wrpolling));
-//      endrule
-//    `endif
 
     // This rule will generate a miss request to the next level memory. The address from the core
     // cannot be directly sent to the bus. The address will have to made word-aligned before sending
@@ -644,14 +641,14 @@ addr:%h way: %d",
         ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
-//    `ifdef simulate 
-//      interface meta = interface Get
-//        method ActionValue#(Bit#(1)) get();
-//          ff_meta.deq;
-//          return ff_meta.first;
-//        endmethod
-//      endinterface;
-//    `endif 
+    `ifdef pysimulate 
+      interface meta = interface Get
+        method ActionValue#(Bit#(1)) get();
+          ff_meta.deq;
+          return ff_meta.first;
+        endmethod
+      endinterface;
+    `endif 
     method Action cache_enable(Bool c);
       wr_cache_enable<=c;
     endmethod
@@ -670,10 +667,10 @@ addr:%h way: %d",
 //    else
 //      return False;    
 //  endfunction
-
-
+//
+//
 //  (*synthesize*)
-//  module mktempicache(Ifc_l1icache#(4, 16, 64, 1 ,32,1,2));
+//  module mkicache(Ifc_l1icache#(4, 8, 64, 4 ,32,1,2));
 //    let ifc();
 //    mkl1icache#(isIO,"RROBIN") _temp(ifc);
 //    return (ifc);

@@ -134,7 +134,12 @@ package dcache_tb;
 
       if(request!=0) begin // // not end of simulation
         if(request!='1 && delay==0)
+        `ifdef atomic
+          dcache.core_req.put(tuple7(truncate(req),unpack(fence),0, truncate(readwrite), size,
+          writedata,0));
+        `else
           dcache.core_req.put(tuple6(truncate(req),unpack(fence),0, truncate(readwrite), size, writedata));
+        `endif
         index<=index+1;
         $display($time,"\tTB: Sending core request for addr: %h",req);
       end

@@ -33,10 +33,9 @@ package icache_tb;
   `define block_size 8
   `define addr_width 32
   `define ways 4
-  `define repl PLRU
+  `define repl RROBIN
 
-  import icache_nway::*;
-  //import icache_dm::*;
+  import l1icache::*;
   import cache_types::*;
   import mem_config::*;
   import GetPut::*;
@@ -47,8 +46,16 @@ package icache_tb;
   import RegFile::*;
   import device_common::*;
   import Vector::*;
+  import test_caches::*;
 
-  function Bool isIO(Bit#(`addr_width ) addr, Bool cacheable);
+  (*synthesize*)
+  module mktest(Ifc_test_caches#(`word_size , `block_size , `sets , `ways ,32,`addr_width));
+    let ifc();
+    mktest_caches _temp(ifc);
+    return (ifc);
+  endmodule
+ 
+  function Bool isIO(Bit#(32) addr, Bool cacheable);
     if(!cacheable)
       return True;
     else if( addr < 4096)
@@ -57,57 +64,36 @@ package icache_tb;
       return False;    
   endfunction
 
-  interface Ifc_icache;
-    interface Put#(ICore_request#(32)) core_req;
-    interface Get#(ICore_response#(32)) core_resp;
-    interface Get#(IMem_request#(32)) mem_req;
-    interface Put#(IMem_response#(32)) mem_resp;
-    `ifdef simulate
-      interface Get#(Bit#(1)) meta;
-    `endif
-    `ifdef perf
-      method Bit#(5) perf_counters;
-    `endif
-  endinterface
 
   (*synthesize*)
-  (*conflict_free="core_req_put,icache_deq_lb"*)
-  (*conflict_free="icache_upd_data_into_cache,core_req_put"*)
-  module mkicache(Ifc_icache);
-                   // word size, block size, sets, ways, response_width, address width
-    Ifc_icache_dm#(`word_size , `block_size , `sets ,`ways, 32 , `addr_width ) icache <- 
-        mkicache_dm(isIO,  True, "PLRU", False, "single"); // io function, reg-output, Replacement Alg, Prefetch
-    //Ifc_icache_dm#(`word_size , `block_size , `sets , 32 , `addr_width ) icache <- mkicache_dm(isIO,
-    //False, False);
-    interface core_req=icache.core_req;
-    interface core_resp=icache.core_resp;
-    interface mem_req=icache.mem_req;
-    interface mem_resp=icache.mem_resp;
-    `ifdef simulate
-      interface meta=icache.meta;
-    `endif
-    `ifdef perf
-      method perf_counters=icache.perf_counters;
-    `endif
+  module mkicache(Ifc_l1icache#(`word_size , `block_size , `sets , `ways ,32,8,2));
+    let ifc();
+    mkl1icache#(isIO,"RROBIN") _temp(ifc);
+    return (ifc);
   endmodule
+
 
   (*synthesize*)
   module mkicache_tb(Empty);
 
-  Ifc_icache icache <- mkicache();
+  let icache <- mkicache();
+  let testcache<- mktest();
+
+  RegFile#(Bit#(10), Bit#(TAdd#(TAdd#(TMul#(`word_size, 8), 8), `addr_width ) )) stim <- 
+                                                                      mkRegFileFullLoad("test.mem");
+  RegFile#(Bit#(10), Bit#(1))  e_meta <- mkRegFileFullLoad("gold.mem");
+  RegFile#(Bit#(19), Bit#(TMul#(`word_size, 8))) data <- mkRegFileFullLoad("data.mem");
+
   Reg#(Bit#(32)) index<- mkReg(0);
   Reg#(Bit#(32)) e_index<- mkReg(0);
-  Reg#(Maybe#(IMem_request#(32))) mem_req<- mkReg(tagged Invalid);
-  Reg#(Bit#(8)) rg_burst_count <- mkReg(0);
-  Reg#(Bit#(32)) rg_test_count <- mkReg(0);
+  Reg#(Maybe#(IMem_request#(32))) read_mem_req<- mkReg(tagged Invalid);
+  Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
+  Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 
-  FIFOF#(Bit#(36)) ff_req <- mkSizedFIFOF(32);
-  `ifdef simulate
+  FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`word_size, 8), 8), `addr_width ) )) ff_req <- mkSizedFIFOF(32);
+  `ifdef pysimulate
     FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(32);
   `endif
-  RegFile#(Bit#(10), Bit#(36)) stim <- mkRegFileFullLoad("test.mem");
-  RegFile#(Bit#(10), Bit#(1))  e_meta <- mkRegFileFullLoad("gold.mem");
-  RegFile#(Bit#(19), Bit#(32)) data <- mkRegFileFullLoad("data.mem");
 
     
   let verbosity=`VERBOSITY;
@@ -120,101 +106,133 @@ package icache_tb;
       rg_counters[i]<=rg_counters[i]+zeroExtend(incr[i]);
   endrule
   `endif
+
+  rule enable_disable_cache;
+    icache.cache_enable(True);
+  endrule
+
   rule core_req;
     let stime<-$stime;
-    if(stime>=660)begin
+    if(stime>=(20)) begin
       let req=stim.sub(truncate(index));
-      Bit#(4) control = truncateLSB(req);
-      if(control[2]==0)begin // if input is delayed
-        if(req!=0)begin
-          icache.core_req.put(tuple4(truncate(req),unpack(control[1]),0, False));
-          index<=index+1;
-          $display($time,"\tTB: Sending core request for addr: %h",req);
-        end
-        if(control[1]!=1'b1)begin
-          ff_req.enq(req);
-          `ifdef simulate
-            ff_meta.enq(e_meta.sub(truncate(index)));
-          `endif
-        end
-        if(control[1]==1)begin
-          rg_test_count<=rg_test_count+1;
-          $display($time,"\tTB: ********** Test:%d PASSED\
-********",rg_test_count);
-        end
-      end
-      else
+      // read/write : delay/nodelay : Fence/noFence : Null 
+      Bit#(8) control = req[`addr_width + 7: `addr_width ];
+      Bit#(2) readwrite=control[7:6];
+      Bit#(3) size=control[5:3];
+      Bit#(1) delay=control[2];
+      Bit#(1) fence=control[1];
+      Bit#(TAdd#(`addr_width ,  8)) request = truncate(req);
+      Bit#(TMul#(`word_size, 8)) writedata=truncateLSB(req);
+
+      if(request!=0) begin // // not end of simulation
+        if(request!='1 && delay==0)
+        icache.core_req.put(tuple4(truncate(req),unpack(fence),0,False));
         index<=index+1;
+        $display($time,"\tTB: Sending core request for addr: %h",req);
+      end
+      if((delay==0 && fence!=1) || request=='1)begin // if not a fence instruction
+        $display($time,"\tTB: Enquiing request: %h",req);
+        ff_req.enq(req);
+        `ifdef pysimulate
+          ff_meta.enq(e_meta.sub(truncate(index)));
+        `endif
+      end
     end
   endrule
 
   rule end_sim;
-    if(ff_req.first==0)begin
+    Bit#(TAdd#(`addr_width ,  8)) request = truncate(ff_req.first());
+    if(request==0)begin
     `ifdef perf
       for(Integer i=0;i<5;i=i+1)
         $display($time,"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
     `endif
-      $display($time,"\tTB: ********** Test:%d PASSED\
-********",rg_test_count);
+      $display($time, "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
       $finish(0);
     end
-    $display("\n");
   endrule
 
-  rule core_resp;
+  rule checkout_request(ff_req.first[39:0]=='1);
+    ff_req.deq;
+    `ifdef pysimulate
+      ff_meta.deq;
+    `endif
+    rg_test_count<=rg_test_count+1;
+    $display($time,"\tTB: ********** Test:%d PASSED****",rg_test_count);
+  endrule
+
+
+  rule core_resp(ff_req.first[39:0]!='1);
     let resp <- icache.core_resp.get();
-
     let req = ff_req.first;
-    let expected_data=data.sub(truncate(req));
-    Bool metafail=False;
-    Bool datafail=False;
-  
-    ff_req.deq();
-
-    `ifdef simulate
+    `ifdef pysimulate  
       let meta <- icache.meta.get();
       let expected_meta=ff_meta.first();
       ff_meta.deq();
-      if(expected_meta!=meta)begin
-        $display($time,"\tTB: Meta does not match for Req: %h",req);
-        $display($time,"\tTB: Expected Meta: %b Received Meta:%b", expected_meta,meta);
-        metafail=True;
-    end
     `endif
-    if(expected_data!=tpl_1(resp))begin
-        $display($time,"\tTB: Output from cache is wrong for Req: %h",req);
-        $display($time,"\tTB: Expected: %h, Received: %h",expected_data,resp);
-        datafail=True;
-    end
+    ff_req.deq();
+    Bit#(8) control = req[`addr_width + 7: `addr_width ];
+    Bit#(2) readwrite=control[7:6];
+    Bit#(3) size=control[5:3];
+    Bit#(1) delay=control[2];
+    Bit#(1) fence=control[1];
+    Bit#(TMul#(`word_size, 8)) writedata=truncateLSB(req);
 
-    if(metafail||datafail)begin
-      $display($time,"\tTB: Test: %d Failed",rg_test_count);
-      $finish(0);
-    end
-    else
-      $display($time,"\tTB: Core received correct response: ",fshow(resp)," For req: %h",req);
+    if(fence==0)begin
+      let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,writedata);
+      Bool metafail=False;
+      Bool datafail=False;
+  
+      `ifdef pysimulate
+       if(expected_meta!=meta)begin
+         $display($time,"\tTB: Meta does not match for Req: %h",req);
+         $display($time,"\tTB: Expected Meta: %b Received Meta:%b", expected_meta,meta);
+         metafail=True;
+       end
+      `endif
+      if(expected_data!=tpl_1(resp))begin
+          $display($time,"\tTB: Output from cache is wrong for Req: %h",req);
+          $display($time,"\tTB: Expected: %h, Received: %h",expected_data,tpl_1(resp));
+          datafail=True;
+      end
 
-  endrule
-
-  rule mem_request(mem_req matches tagged Invalid);
-    let req<- icache.mem_req.get;
-    mem_req<=tagged Valid req;
-    $display($time,"\tTB: Memory request",fshow(req));
-  endrule
-
-  rule mem_resp(mem_req matches tagged Valid .req);
-    let {addr, burst, size}=req;
-    if(rg_burst_count == burst) begin
-      rg_burst_count<=0;
-      mem_req<=tagged Invalid;
+      if(metafail||datafail)begin
+        $display($time,"\tTB: Test: %d Failed",rg_test_count);
+        $finish(0);
+      end
+      else
+        $display($time,"\tTB: Core received correct response: ",fshow(resp)," For req: %h",req);
     end
     else begin
-      rg_burst_count<=rg_burst_count+1;
-      mem_req <= tagged Valid tuple3(axi4burst_addrgen(burst,size,2,addr),burst,size); // parameterize
+      $display($time,"\tTB: Response from Cache:",fshow(resp));
     end
-    let dat=data.sub(truncate(addr));
-    icache.mem_resp.put(tuple2(dat,False));
-    $display($time,"\tTB: Memory responding with: %h ",dat);
+  endrule
+
+  rule read_mem_request(read_mem_req matches tagged Invalid);
+    let req<- icache.read_mem_req.get;
+    read_mem_req<=tagged Valid req;
+    $display($time,"\tTB: Memory Read request",fshow(req));
+  endrule
+
+  rule read_mem_resp(read_mem_req matches tagged Valid .req);
+    let {addr, burst, size}=req;
+    if(rg_read_burst_count == burst) begin
+      rg_read_burst_count<=0;
+      read_mem_req<=tagged Invalid;
+    end
+    else begin
+      rg_read_burst_count<=rg_read_burst_count+1;
+      read_mem_req <= tagged Valid tuple3(axi4burst_addrgen(burst,size,2,addr),burst,size); // parameterize
+    end
+    let v_wordbits = valueOf(TLog#(`word_size));
+    Bit#(19) index = truncate(addr>>v_wordbits);
+    let dat=data.sub(truncate(index));
+    icache.read_mem_resp.put(tuple3(dat,rg_read_burst_count==burst,False));
+    $display($time,"\tTB: Memory Read index: %d responding with: %h ",index,dat);
+  endrule
+  
+  rule extra_line;
+    $display("\n",$time);
   endrule
 
 endmodule
