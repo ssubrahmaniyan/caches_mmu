@@ -461,7 +461,7 @@ package l1icache;
     // It is not possible at any point of time for rg_fbmissallocate and rg_fbbeingfilled to update
     // the same entry in the FB.
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                                                                        &&!fb_full);
+                                          && wr_nc_response!=Hit &&!fb_full);
                                                                                         
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
       if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
