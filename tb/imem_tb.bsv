@@ -35,8 +35,7 @@ package imem_tb;
   `define ways 4
   `define repl RROBIN
 
-  import l1icache_vipt::*;
-  import itlb_rv64_array::*;
+  import imem::*;
   import cache_types::*;
   import mem_config::*;
   import GetPut::*;
@@ -50,48 +49,24 @@ package imem_tb;
   import Connectable::*;
   import test_caches::*;
 
+
   (*synthesize*)
-  module mktest(Ifc_test_caches#(`word_size , `block_size , `sets , `ways ,32,`addr_width));
+  module mktest(Ifc_test_caches#(`iwords , `iblocks , `isets , `iways ,32,`paddr ));
     let ifc();
     mktest_caches _temp(ifc);
     return (ifc);
   endmodule
  
-  function Bool isIO(Bit#(32) addr, Bool cacheable);
-    if(!cacheable)
-      return True;
-    else if( addr < 4096)
-      return True;
-    else
-      return False;    
-  endfunction
-
-
-  (*synthesize*)
-  module mkicache(Ifc_l1icache#(`word_size , `block_size , `sets , `ways ,32,64,8,2));
-    let ifc();
-    mkl1icache#(isIO,"RROBIN") _temp(ifc);
-    return (ifc);
-  endmodule
-
-  (*synthesize*)
-  module mkitlb(Ifc_itlb_rv64_array#(32,8,8,8,1,1,1,9));
-    let ifc();
-    mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
-    return (ifc);
-  endmodule
-
   (*synthesize*)
   module mkimem_tb(Empty);
 
-  let icache <- mkicache();
-  let itlb <- mkitlb();
+  Ifc_imem imem <- mkimem;
   let testcache<- mktest();
 
-  RegFile#(Bit#(10), Bit#(TAdd#(TAdd#(TMul#(`word_size, 8), 8), `addr_width ) )) stim <- 
+  RegFile#(Bit#(10), Bit#(TAdd#(TAdd#(TMul#(`iwords, 8), 8), `paddr ) )) stim <- 
                                                                       mkRegFileFullLoad("test.mem");
   RegFile#(Bit#(10), Bit#(1))  e_meta <- mkRegFileFullLoad("gold.mem");
-  RegFile#(Bit#(19), Bit#(TMul#(`word_size, 8))) data <- mkRegFileFullLoad("data.mem");
+  RegFile#(Bit#(19), Bit#(TMul#(`iwords, 8))) data <- mkRegFileFullLoad("data.mem");
 
   Reg#(Bit#(32)) index<- mkReg(0);
   Reg#(Bit#(32)) e_index<- mkReg(0);
@@ -99,12 +74,11 @@ package imem_tb;
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 
-  FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`word_size, 8), 8), `addr_width ) )) ff_req <- mkSizedFIFOF(32);
+  FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`iwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
   `ifdef pysimulate
     FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(32);
   `endif
 
-  mkConnection(itlb.core_resp,icache.pa_from_tlb);
     
   let verbosity=`VERBOSITY;
 
@@ -122,12 +96,12 @@ package imem_tb;
   `endif
 
   rule enable_disable_cache;
-    icache.cache_enable(True);
+    imem.cache_enable(True);
   endrule
 
   rule tlb_csr_info;
-    itlb.satp_from_csr.put(0);
-    itlb.curr_priv.put('d3);
+    imem.satp_from_csr.put(0);
+    imem.curr_priv.put('d3);
   endrule
 
   rule core_req;
@@ -135,19 +109,17 @@ package imem_tb;
     if(stime>=(20)) begin
       let req=stim.sub(truncate(index));
       // read/write : delay/nodelay : Fence/noFence : Null 
-      Bit#(8) control = req[`addr_width + 7: `addr_width ];
+      Bit#(8) control = req[`paddr + 7: `paddr ];
       Bit#(2) readwrite=control[7:6];
       Bit#(3) size=control[5:3];
       Bit#(1) delay=control[2];
       Bit#(1) fence=control[1];
-      Bit#(TAdd#(`addr_width ,  8)) request = truncate(req);
-      Bit#(TMul#(`word_size, 8)) writedata=truncateLSB(req);
+      Bit#(TAdd#(`paddr ,  8)) request = truncate(req);
+      Bit#(TMul#(`iwords, 8)) writedata=truncateLSB(req);
 
       if(request!=0) begin // // not end of simulation
         if(request!='1 && delay==0) begin
-          icache.core_req.put(tuple4(zeroExtend(req[31:0]),unpack(fence),0,False));
-          if(fence!=1)
-            itlb.core_req.put(zeroExtend(req[31:0]));
+          imem.core_req.put(tuple4(zeroExtend(req[31:0]),unpack(fence),0,False));
         end
         index<=index+1;
         $display($time,"\tTB: Sending core request for addr: %h",req);
@@ -163,7 +135,7 @@ package imem_tb;
   endrule
 
   rule end_sim;
-    Bit#(TAdd#(`addr_width ,  8)) request = truncate(ff_req.first());
+    Bit#(TAdd#(`paddr ,  8)) request = truncate(ff_req.first());
     if(request==0)begin
     `ifdef perf
       for(Integer i=0;i<5;i=i+1)
@@ -185,20 +157,15 @@ package imem_tb;
 
 
   rule core_resp(ff_req.first[39:0]!='1);
-    let resp <- icache.core_resp.get();
+    let resp <- imem.core_resp.get();
     let req = ff_req.first;
-    `ifdef pysimulate  
-      let meta <- icache.meta.get();
-      let expected_meta=ff_meta.first();
-      ff_meta.deq();
-    `endif
     ff_req.deq();
-    Bit#(8) control = req[`addr_width + 7: `addr_width ];
+    Bit#(8) control = req[`paddr + 7: `paddr ];
     Bit#(2) readwrite=control[7:6];
     Bit#(3) size=control[5:3];
     Bit#(1) delay=control[2];
     Bit#(1) fence=control[1];
-    Bit#(TMul#(`word_size, 8)) writedata=truncateLSB(req);
+    Bit#(TMul#(`iwords, 8)) writedata=truncateLSB(req);
 
     if(fence==0)begin
       let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,writedata);
@@ -231,7 +198,7 @@ package imem_tb;
   endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid);
-    let req<- icache.read_mem_req.get;
+    let req<- imem.read_mem_req.get;
     read_mem_req<=tagged Valid req;
     $display($time,"\tTB: Memory Read request",fshow(req));
   endrule
@@ -246,10 +213,10 @@ package imem_tb;
       rg_read_burst_count<=rg_read_burst_count+1;
       read_mem_req <= tagged Valid tuple3(axi4burst_addrgen(burst,size,2,addr),burst,size); // parameterize
     end
-    let v_wordbits = valueOf(TLog#(`word_size));
+    let v_wordbits = valueOf(TLog#(`iwords));
     Bit#(19) index = truncate(addr>>v_wordbits);
     let dat=data.sub(truncate(index));
-    icache.read_mem_resp.put(tuple3(dat,rg_read_burst_count==burst,False));
+    imem.read_mem_resp.put(tuple3(dat,rg_read_burst_count==burst,False));
     $display($time,"\tTB: Memory Read index: %d responding with: %h ",index,dat);
   endrule
 

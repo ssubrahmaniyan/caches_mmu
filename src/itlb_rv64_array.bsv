@@ -103,6 +103,7 @@ package itlb_rv64_array;
     let v_asid_width = valueOf(asid_width);
     let verbosity=`VERBOSITY;
 
+  `ifdef pmp
     function Tuple2#(Bool,Bit#(6)) pmp_check (Array#(Bit#(8)) cfg, Array#(Bit#(paddr)) pmpaddr,
                                 Bit#(paddr) phy_addr, Bit#(2) priv);
       Bool sucess=True;
@@ -126,7 +127,7 @@ package itlb_rv64_array;
       end
       return (tuple2(!sucess,cause));
     endfunction
-
+  `endif
     // defining the tlb entries and virtual tags for regular pages.
     Reg#(Bit#(54)) tlb_pte_reg [v_reg_ways][v_reg_size];
     Reg#(Bit#(TAdd#(asid_width,27))) tlb_vtag_reg [v_reg_ways][v_reg_size];
