@@ -253,6 +253,10 @@ package l1icache_vipt;
     Bit#(tagbits) writetag=fb_addr[rg_fbwriteback][v_paddr-1:v_paddr-v_tagbits];
     Bit#(linewidth) writedata=fb_dataline[rg_fbwriteback];
     // ------------------------------------------------------------------------------------------//
+    // ----------------------------- Structures for MMU support ---------------------------------//
+    Wire#(Bool) wr_trap_from_tlb <- mkDWire(False);
+    // ------------------------------------------------------------------------------------------//
+
 
     rule display_stuff;
       if(verbosity!=0)begin
@@ -285,8 +289,10 @@ package l1icache_vipt;
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
+    rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit ||
+                                                                                  wr_trap_from_tlb);
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
+      let {phy_addr,trap,cause} = ff_from_tlb.first;
       Bit#(respwidth) word=0;
       Bool err=False;
       let set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -321,7 +327,11 @@ package l1icache_vipt;
       // truncated if necessary.
       if(verbosity!=0)
         $display($time,"\tICACHE: Sending response to core. Word: %h for address: %h",word,addr);
-      ff_core_response.enq(tuple4(word,err,`Inst_access_fault ,epoch));
+      if(!trap && err)begin
+        cause=`Inst_access_fault;
+        trap=True;
+      end
+      ff_core_response.enq(tuple4(word, trap, cause, epoch));
       ff_core_request.deq;
       ff_from_tlb.deq;
       `ifdef pysimulate
@@ -381,7 +391,10 @@ package l1icache_vipt;
       Bool cache_hit=unpack(|(hit));
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(cache_hit)begin
+      if(trap) begin
+        wr_trap_from_tlb<=True;
+      end
+      else if(cache_hit)begin
         wr_ram_response<=Hit;
         wr_ram_hitword<=response_word;
       end
@@ -475,7 +488,7 @@ package l1icache_vipt;
     // It is not possible at any point of time for rg_fbmissallocate and rg_fbbeingfilled to update
     // the same entry in the FB.
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                          && wr_nc_response!=Hit &&!fb_full);
+                                          && wr_nc_response!=Hit &&!fb_full && !wr_trap_from_tlb);
                                                                                         
       // TODO: The address in the FB should come from TLB
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
