@@ -108,8 +108,12 @@ package imem_tb;
     
   let verbosity=`VERBOSITY;
 
+  rule extra_line;
+    $display("\n",$time);
+  endrule
   `ifdef perf
   Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
+  
   rule performance_counters;
     Bit#(5) incr = icache.perf_counters;
     for(Integer i=0;i<5;i=i+1)
@@ -247,10 +251,6 @@ package imem_tb;
     let dat=data.sub(truncate(index));
     icache.read_mem_resp.put(tuple3(dat,rg_read_burst_count==burst,False));
     $display($time,"\tTB: Memory Read index: %d responding with: %h ",index,dat);
-  endrule
-  
-  rule extra_line;
-    $display("\n",$time);
   endrule
 
 endmodule
