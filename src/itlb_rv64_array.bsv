@@ -184,9 +184,10 @@ package itlb_rv64_array;
     Bit#(4) satp_mode = wr_satp[63:60];
 
     // FIFO to hold the next input
-    FIFOF#(Bit#(64)) ff_req_queue <- mkBypassFIFOF();
+    FIFOF#(Bit#(64)) ff_req_queue <- mkSizedFIFOF(1);
+    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
     FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkSizedFIFOF(2);
+    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
 
@@ -199,7 +200,7 @@ package itlb_rv64_array;
     end
   `endif
 
-    rule initialize(rg_init && !ff_req_queue.notEmpty);
+    rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
       $display($time,"\tITLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
@@ -215,17 +216,25 @@ package itlb_rv64_array;
       rg_init<=False;
     endrule
 
-    rule access_tlb_on_request(!rg_tlb_miss && !rg_init);
+    rule perform_pmp_check;
+      $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
+      // TODO: perform PMP check here
+      ff_core_resp.enq(ff_translated.first);
+      ff_translated.deq;
+    endrule
 
+    interface core_req=interface Put
+      method Action put (Bit#(64) va) if(!rg_init && !rg_tlb_miss);
+        $display($time,"\tITLB: Recieved Request for VA %h",va);
       // capture input vpns for regular and mega pages.
-      Bit#(27) inp_vpn_reg=ff_req_queue.first()[38:12];
-      Bit#(18) inp_vpn_mega=ff_req_queue.first()[38:21];
-      Bit#(9) inp_vpn_giga=ff_req_queue.first()[38:30];
+      Bit#(27) inp_vpn_reg=va[38:12];
+      Bit#(18) inp_vpn_mega=va[38:21];
+      Bit#(9) inp_vpn_giga=va[38:30];
 
-      Bit#(9) vpn0=ff_req_queue.first()[20:12];
-      Bit#(9) vpn1=ff_req_queue.first()[29:21];
-      Bit#(9) vpn2=ff_req_queue.first()[38:30];
-      Bit#(12) page_offset = ff_req_queue.first()[11:0];
+      Bit#(9) vpn0=va[20:12];
+      Bit#(9) vpn1=va[29:21];
+      Bit#(9) vpn2=va[38:30];
+      Bit#(12) page_offset = va[11:0];
 
       // find if there is a hit in the regular page tlb
       Bit#(54) pte_reg [v_reg_ways];
@@ -348,19 +357,17 @@ package itlb_rv64_array;
       Bit#(26) ppn2=physical_address[43:18];
       // Check for instruction page-fault conditions
       Bool page_fault=False;
-      Bit#(25) unused_va=ff_req_queue.first()[63:39];
+      Bit#(25) unused_va=va[63:39];
       // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
-      if(unused_va!=signExtend(ff_req_queue.first()[38])) begin
+      if(unused_va!=signExtend(va[38])) begin
         if(verbosity!=0)
           $display($time,"\tITLB: Page Fault - 1");
-        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-        ff_req_queue.deq;
+        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
       end
       // transparent translation
       else if(satp_mode==0 || wr_priv==3)begin
-        Bit#(paddr) coreresp = truncate(ff_req_queue.first);
-        ff_core_resp.enq(tuple3(signExtend(coreresp),False,?));
-        ff_req_queue.deq();
+        Bit#(paddr) coreresp = truncate(va);
+        ff_translated.enq(tuple3(signExtend(coreresp),False,?));
         if(verbosity!=0)
           $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
@@ -380,23 +387,16 @@ package itlb_rv64_array;
         else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
           page_fault=True;
 
-        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-        ff_req_queue.deq;
+        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
         if(verbosity!=0)
           $display($time,"\tITLB: Page Fault - 2");
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
-        ff_ptw_req.enq(tuple2(ff_req_queue.first(), 0));
+        ff_ptw_req.enq(tuple2(va, 0));
         rg_tlb_miss<=True;
-      end
-    endrule
-
-    interface core_req=interface Put
-      method Action put (Bit#(64) va) if(!rg_init);
-        Bit#(12) page_offset=va[11:0];
-        $display($time,"\tITLB: Recieved Request for VA %h",va);
         ff_req_queue.enq(va);
+      end
       endmethod
     endinterface;
 
@@ -466,7 +466,7 @@ package itlb_rv64_array;
           physical_address={pte[53:19],vpn0};
         else
           physical_address={pte[53:28],vpn1,vpn0};
-        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),trap_taken,cause));
+        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),trap_taken,cause));
         ff_req_queue.deq;
         if(verbosity!=0)
           $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
