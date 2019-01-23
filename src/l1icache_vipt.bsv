@@ -36,7 +36,7 @@ TODO: rg_latest_index will not be required since a write-operation to the RAMs b
 should not cause a change in the read-output-port of the RAMs.
 --------------------------------------------------------------------------------------------------
 */
-package l1icache;
+package l1icache_vipt;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
@@ -56,16 +56,18 @@ package l1icache;
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
+                           numeric type vaddr,
                            numeric type fbsize,
                            numeric type esize 
                            );
 
-    interface Put#(ICore_request#(paddr,esize)) core_req;
+    interface Put#(ICore_request#(vaddr,esize)) core_req;
     interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(IMem_request#(paddr)) read_mem_req;
     interface Put#(IMem_response#(TMul#(wordsize,8))) read_mem_resp;
     interface Get#(IMem_request#(paddr)) nc_read_req;
     interface Put#(IMem_response#(TMul#(wordsize,8))) nc_read_resp;
+    interface Put#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) pa_from_tlb;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -81,7 +83,7 @@ package l1icache;
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize,esize)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -102,6 +104,7 @@ package l1icache;
           Add#(c__, 16, respwidth),
           Add#(d__, 8, respwidth),
           Add#(TAdd#(tagbits, setbits), g__, paddr),
+          Add#(TAdd#(tagbits, setbits), l__, vaddr),
           Add#(h__, 1, blocksize),
 
           Add#(i__, TLog#(ways), 4),
@@ -141,7 +144,7 @@ package l1icache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(ICore_request#(paddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(ICore_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
     // this fifo stores the read request that needs to be sent to the next memory level.
@@ -152,6 +155,11 @@ package l1icache;
     FIFOF#(IMem_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
     FIFOF#(IMem_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+
+    // The following wire holds the physical address from TLB
+    //Wire#(Tuple3#(Bit#(paddr),Bool,Bit#(6))) wr_from_tlb <- mkWire();
+    FIFOF#(Tuple3#(Bit#(paddr),Bool,Bit#(6))) ff_from_tlb <- mkBypassFIFOF();
+    
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
     `ifdef pysimulate
@@ -265,11 +273,14 @@ package l1icache;
       for(Integer i=0;i<v_fbsize;i=i+1)
         fb_valid[i]<=False;
       rg_fence_stall<=False;
-      ff_core_request.deq; // TODO depends on how fence should be handled.
+      ff_core_request.deq; 
       replacement.reset_repl;
       if(verbosity!=0)begin
         $display($time,"\tICACHE: Fence operation in progress");
+        $display($time,"\tICACHE: Wordbits: %2d blockbits: %2d tagbits: %2d setbits: %2d", 
+                                                    v_wordbits, v_blockbits, v_tagbits, v_setbits);
       end
+
     endrule
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
@@ -283,7 +294,7 @@ package l1icache;
         word=wr_ram_hitword;
         if(alg=="PLRU") begin
           wr_ram_hitindex<=tagged Valid set_index;
-          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); // TODO update for PLRU should happen here
+          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
         end
         `ifdef perf
           wr_total_cache_hits<=1;
@@ -312,6 +323,7 @@ package l1icache;
         $display($time,"\tICACHE: Sending response to core. Word: %h for address: %h",word,addr);
       ff_core_response.enq(tuple4(word,err,`Inst_access_fault ,epoch));
       ff_core_request.deq;
+      ff_from_tlb.deq;
       `ifdef pysimulate
         if(wr_ram_response==Hit)
           ff_meta.enq(1);
@@ -336,7 +348,9 @@ package l1icache;
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= addr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(tagbits) request_tag = addr[v_paddr-1:v_paddr-v_tagbits];
+      // TODO The request tag will come from TLB
+      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      Bit#(tagbits) request_tag = phy_addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       Bit#(linewidth) dataline[v_ways];
@@ -376,7 +390,8 @@ package l1icache;
       end
 
       if(verbosity!=0)begin
-        $display($time,"\tICACHE: TAGMATCH: addr:%h hit: %b hitline: %h",addr,hit,hitline);
+        $display($time,"\tICACHE: TAGMATCH: vaddr:%h paddr:%h hit:%b hitline:%h",addr, phy_addr, 
+                                                                                hit, hitline);
       end
 
       `ifdef ASSERT
@@ -392,11 +407,12 @@ package l1icache;
     rule check_fb_for_corerequest(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       Bool wordhit=False;
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
-      Bit#(tagbits) read_tag = addr[v_paddr-1:v_paddr-v_tagbits];
+      // TODO request tag will come from TLB
+      let {phy_addr,trap,cause} = ff_from_tlb.first;
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index=addr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(addr);
+      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(phy_addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
       Bit#(1) fberr = 0;
@@ -439,8 +455,8 @@ package l1icache;
       wr_fb_err <= fberr;
 
       if(verbosity!=0)begin
-        $display($time,"\tICACHE: Polling addr: %h linehit: %b wordhit: %b rg_polling: %b",
-            addr,linehit,wordhit,rg_polling);
+        $display($time,"\tICACHE: Polling vaddr:%h paddr:%h linehit: %b wordhit: %b rg_polling: %b",
+            addr,phy_addr,linehit,wordhit,rg_polling);
       end
 
       `ifdef ASSERT
@@ -461,23 +477,25 @@ package l1icache;
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
                                           && wr_nc_response!=Hit &&!fb_full);
                                                                                         
+      // TODO: The address in the FB should come from TLB
       let {addr, fence, epoch, prefetch} =ff_core_request.first();
-      if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
-        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      if(isNonCacheable(phy_addr,wr_cache_enable))begin // TODO make this programmable;
+        ff_nc_read_request.enq(tuple3(phy_addr,0,fromInteger(v_wordbits)));
         if(verbosity!=0)begin
-          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
+          $display($time,"\tICACHE: Sending IO memory request. Addr: %h",phy_addr);
         end
       end
       else begin
         if(verbosity!=0)begin
-          $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",addr);
+          $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",phy_addr);
           $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
         addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-        ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+        ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
-        fb_addr[rg_fbmissallocate]<=addr;
+        fb_addr[rg_fbmissallocate]<=phy_addr;
         fb_enables[rg_fbmissallocate]<=0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
       end
@@ -588,7 +606,7 @@ addr:%h way: %d",
     endrule
 
     interface core_req=interface Put
-      method Action put(ICore_request#(paddr,esize) req)if( ff_core_response.notFull &&
+      method Action put(ICore_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                                 !rg_replaylatest &&  !rg_fence_stall && !fb_full);
         `ifdef perf
           wr_total_access<=1;
@@ -609,6 +627,12 @@ addr:%h way: %d",
         rg_latest_index<=set_index;
       endmethod
     endinterface;
+    interface pa_from_tlb = interface Put
+      method Action put(Tuple3#(Bit#(paddr),Bool,Bit#(6)) t);
+        ff_from_tlb.enq(t);
+      endmethod
+    endinterface;
+
 
     interface core_resp = interface Get
       method ActionValue#(ICore_response#(respwidth,esize)) get();

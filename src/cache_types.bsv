@@ -32,8 +32,8 @@ package cache_types;
                   // addr, Fence, epoch, prefetch
   typedef Tuple4#(Bit#(addr), Bool, Bit#(esize), Bool) ICore_request#(numeric type addr, 
                                                                           numeric type esize);
-                 // word , err , epoch
-  typedef Tuple3#(Bit#(data), Bool, Bit#(esize)) ICore_response#(numeric type data, 
+                 // word , trap, cause , epoch
+  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) ICore_response#(numeric type data, 
                                                                           numeric type esize);
                 // addr ,  burst len, burst_size 
   typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) IMem_request#(numeric type addr);

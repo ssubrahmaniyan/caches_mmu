@@ -49,23 +49,10 @@ package itlb_rv64_array;
 
   import mem_config::*;
   import replacement::*;
-
-  `define Inst_addr_misaligned  0 
-  `define Inst_access_fault     1 
-  `define Illegal_inst          2 
-  `define Breakpoint            3 
-  `define Load_addr_misaligned  4 
-  `define Load_access_fault     5 
-  `define Store_addr_misaligned 6 
-  `define Store_access_fault    7 
-  `define Ecall_from_user       8 
-  `define Ecall_from_supervisor 9 
-  `define Ecall_from_machine    11
-  `define Inst_pagefault        12
-  `define Load_pagefault        13
-  `define Store_pagefault       15
+  `include "cache.defines"
 
   interface Ifc_itlb_rv64_array#(
+      numeric type paddr,
       numeric type reg_size, 
       numeric type mega_size,
       numeric type giga_size,
@@ -75,7 +62,7 @@ package itlb_rv64_array;
       numeric type asid_width);
     interface Put#(Bit#(64)) core_req;
                           // physical-addr, exception, cause
-    interface Get#(Tuple3#(Bit#(44), Bool, Bit#(6))) core_resp;
+    interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
     interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
@@ -84,16 +71,22 @@ package itlb_rv64_array;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
+  `ifdef pmp
+    method Action pmp_cfg (Array#(Bit#(8)) pmpcfg);
+    method Action pmp_addr(Array#(Bit#(paddr)) pmpadr);
+  `endif
   endinterface
 
 
 
   module mkitlb_rv64_array#(parameter String alg_reg, parameter String alg_mega) 
-    (Ifc_itlb_rv64_array#(reg_size,mega_size,giga_size,reg_ways,mega_ways,giga_ways,asid_width))
+    (Ifc_itlb_rv64_array#(paddr,reg_size,mega_size,giga_size,reg_ways,mega_ways,giga_ways,asid_width))
     provisos(
       Add#(a__, TLog#(reg_size), 27),
       Add#(b__, TLog#(mega_size), 18),
       Add#(c__, TLog#(giga_size), 9),
+      Add#(g__, paddr, 56),
+      Add#(h__, paddr, 64),
 
       // for replacement
       Add#(d__, TLog#(reg_ways), 4),
@@ -109,6 +102,31 @@ package itlb_rv64_array;
     let v_giga_size=valueOf(giga_size);    
     let v_asid_width = valueOf(asid_width);
     let verbosity=`VERBOSITY;
+    let cachelinebytes=valueOf(TMul#(`IWORDS ,TMul#(`IBLOCKS, 8)));
+
+    function Tuple2#(Bool,Bit#(6)) pmp_check (Array#(Bit#(8)) cfg, Array#(Bit#(paddr)) pmpaddr,
+                                Bit#(paddr) phy_addr, Bit#(2) priv);
+      Bool sucess=True;
+      Bit#(6) cause = 0;
+      //Bit#(TSub#(paddr,2)) comp_addr = truncateLSB(paddr);
+      for(Integer i=0;i<valueOf(`PMPSIZE ); i=i+1)begin
+        Bit#(1) x = cfg[i][2];
+        Bit#(2) a = cfg[i][4:3];
+        Bit#(1) l = cfg[i][7];
+        Bool valid_acess = (l==0 && (priv==3 || x==1)) || (l==1 && x==1);
+
+        Bit#(paddr) tor_top = pmpaddr[i];
+        Bit#(paddr) tor_base = (i==0)?0:pmpaddr[i-1];
+        if(a==1)begin // TOR:
+          if(tor_base<=phy_addr && phy_addr<tor_top)
+            sucess=valid_acess&&sucess;
+        end
+        else if(a==3)begin // NAPOT
+          
+        end
+      end
+      return (tuple2(!sucess,cause));
+    endfunction
 
     // defining the tlb entries and virtual tags for regular pages.
     Reg#(Bit#(54)) tlb_pte_reg [v_reg_ways][v_reg_size];
@@ -166,11 +184,20 @@ package itlb_rv64_array;
     Bit#(4) satp_mode = wr_satp[63:60];
 
     // FIFO to hold the next input
-    FIFOF#(Bit#(64)) ff_req_queue <- mkSizedFIFOF(2);
+    FIFOF#(Bit#(64)) ff_req_queue <- mkBypassFIFOF();
     FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(44),Bool, Bit#(6))) ff_core_resp<- mkSizedFIFOF(2);
+    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkSizedFIFOF(2);
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
+
+  `ifdef pmp
+    Wire#(Bit#(8)) wr_pmp_cfg[`PMPSIZE ];
+    Wire#(Bit#(paddr))wr_pmp_addr[`PMPSIZE ];
+    for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)begin
+      wr_pmp_cfg[i]<-mkWire;
+      wr_pmp_addr[i]<-mkWire;
+    end
+  `endif
 
     rule initialize(rg_init && !ff_req_queue.notEmpty);
       $display($time,"\tITLB: Initiliazing TLB");
@@ -198,6 +225,7 @@ package itlb_rv64_array;
       Bit#(9) vpn0=ff_req_queue.first()[20:12];
       Bit#(9) vpn1=ff_req_queue.first()[29:21];
       Bit#(9) vpn2=ff_req_queue.first()[38:30];
+      Bit#(12) page_offset = ff_req_queue.first()[11:0];
 
       // find if there is a hit in the regular page tlb
       Bit#(54) pte_reg [v_reg_ways];
@@ -323,13 +351,18 @@ package itlb_rv64_array;
       Bit#(25) unused_va=ff_req_queue.first()[63:39];
       // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
       if(unused_va!=signExtend(ff_req_queue.first()[38])) begin
-        ff_core_resp.enq(tuple3(physical_address,True,`Inst_pagefault ));
+        if(verbosity!=0)
+          $display($time,"\tITLB: Page Fault - 1");
+        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
         ff_req_queue.deq;
       end
       // transparent translation
       else if(satp_mode==0 || wr_priv==3)begin
-        ff_core_resp.enq(tuple3(signExtend(ff_req_queue.first()[38:12]),False,?));
+        Bit#(paddr) coreresp = truncate(ff_req_queue.first);
+        ff_core_resp.enq(tuple3(signExtend(coreresp),False,?));
         ff_req_queue.deq();
+        if(verbosity!=0)
+          $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
         // pte.x == 0
@@ -347,8 +380,10 @@ package itlb_rv64_array;
         else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
           page_fault=True;
 
-        ff_core_resp.enq(tuple3(physical_address,True,`Inst_pagefault ));
+        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
         ff_req_queue.deq;
+        if(verbosity!=0)
+          $display($time,"\tITLB: Page Fault - 2");
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
@@ -360,7 +395,7 @@ package itlb_rv64_array;
     interface core_req=interface Put
       method Action put (Bit#(64) va) if(!rg_init);
         Bit#(12) page_offset=va[11:0];
-
+        $display($time,"\tITLB: Recieved Request for VA %h",va);
         ff_req_queue.enq(va);
       endmethod
     endinterface;
@@ -424,14 +459,17 @@ package itlb_rv64_array;
         Bit#(9) vpn0=va[20:12];
         Bit#(9) vpn1=va[29:21];
         Bit#(9) vpn2=va[38:30];
+        Bit#(12) page_offset = va[11:0];
         if(levels==0)
           physical_address=truncateLSB(pte);
         else if(levels==1)
           physical_address={pte[53:19],vpn0};
         else
           physical_address={pte[53:28],vpn1,vpn0};
-        ff_core_resp.enq(tuple3(physical_address,trap_taken,cause));
+        ff_core_resp.enq(tuple3(truncate({physical_address,page_offset}),trap_taken,cause));
         ff_req_queue.deq;
+        if(verbosity!=0)
+          $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
         rg_tlb_miss<=True;
       endmethod
     endinterface;
@@ -442,18 +480,22 @@ package itlb_rv64_array;
     endinterface;
 
     interface core_resp= interface Get
-      method ActionValue#(Tuple3#(Bit#(44),Bool, Bit#(6))) get;
+      method ActionValue#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) get;
         ff_core_resp.deq;
         return ff_core_resp.first();
       endmethod
     endinterface;
-  endmodule
-  
-  (*synthesize*)
-  module mkitlb(Ifc_itlb_rv64_array#(8,8,8,1,1,1,9));
-    let ifc();
-    mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
-    return (ifc);
+  `ifdef pmp
+    method Action pmp_cfg (Array#(Bit#(8)) pmpcfg);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_cfg[i] <= pmpcfg[i];
+    endmethod
+    method Action pmp_addr(Array#(Bit#(paddr)) pmpadr);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_addr[i] <= pmpadr[i];
+    endmethod
+  `endif
+
   endmodule
 endpackage
 
