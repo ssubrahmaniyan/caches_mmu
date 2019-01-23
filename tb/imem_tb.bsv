@@ -74,7 +74,7 @@ package imem_tb;
     return (ifc);
   endmodule
 
-  
+  (*synthesize*)
   module mkitlb(Ifc_itlb_rv64_array#(32,8,8,8,1,1,1,9));
     let ifc();
     mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);

@@ -72,8 +72,8 @@ package itlb_rv64_array;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
   `ifdef pmp
-    method Action pmp_cfg (Array#(Bit#(8)) pmpcfg);
-    method Action pmp_addr(Array#(Bit#(paddr)) pmpadr);
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
   `endif
   endinterface
 
@@ -102,7 +102,6 @@ package itlb_rv64_array;
     let v_giga_size=valueOf(giga_size);    
     let v_asid_width = valueOf(asid_width);
     let verbosity=`VERBOSITY;
-    let cachelinebytes=valueOf(TMul#(`IWORDS ,TMul#(`IBLOCKS, 8)));
 
     function Tuple2#(Bool,Bit#(6)) pmp_check (Array#(Bit#(8)) cfg, Array#(Bit#(paddr)) pmpaddr,
                                 Bit#(paddr) phy_addr, Bit#(2) priv);
@@ -192,12 +191,8 @@ package itlb_rv64_array;
     // -------------------------------------------------------------------------- //
 
   `ifdef pmp
-    Wire#(Bit#(8)) wr_pmp_cfg[`PMPSIZE ];
-    Wire#(Bit#(paddr))wr_pmp_addr[`PMPSIZE ];
-    for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)begin
-      wr_pmp_cfg[i]<-mkWire;
-      wr_pmp_addr[i]<-mkWire;
-    end
+    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
+    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
   `endif
 
     rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
@@ -486,11 +481,11 @@ package itlb_rv64_array;
       endmethod
     endinterface;
   `ifdef pmp
-    method Action pmp_cfg (Array#(Bit#(8)) pmpcfg);
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
       for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
         wr_pmp_cfg[i] <= pmpcfg[i];
     endmethod
-    method Action pmp_addr(Array#(Bit#(paddr)) pmpadr);
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
       for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
         wr_pmp_addr[i] <= pmpadr[i];
     endmethod
