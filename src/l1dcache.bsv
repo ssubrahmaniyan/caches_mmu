@@ -797,7 +797,7 @@ package l1dcache;
       end
       else if(access==0 `ifdef atomic || access==2 `endif )begin
         rg_miss_ongoing<=True;
-        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+        ff_nc_read_request.enq(tuple3(addr,0,size));
         if(verbosity!=0)begin
           $display($time,"\tDCACHE: Sending IO memory request. Addr: %h",addr);
         end
