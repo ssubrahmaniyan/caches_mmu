@@ -275,7 +275,7 @@ package l1icache;
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
     rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
-      let {addr, fence, epoch, prefetch} =ff_core_request.first();
+      let {addr, fence, epoch} =ff_core_request.first();
       Bit#(respwidth) word=0;
       Bool err=False;
       let set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -333,7 +333,7 @@ package l1icache;
     // address is forwarded to the rule request_to_memory;
     rule tag_match(ff_core_response.notFull && !rg_miss_ongoing && !rg_polling &&
           !tpl_2(ff_core_request.first()) );
-      let {addr, fence, epoch, prefetch} =ff_core_request.first();
+      let {addr, fence, epoch} =ff_core_request.first();
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= addr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(tagbits) request_tag = addr[v_paddr-1:v_paddr-v_tagbits];
@@ -391,7 +391,7 @@ package l1icache;
     // is being filled by the lower level memory.
     rule check_fb_for_corerequest(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       Bool wordhit=False;
-      let {addr, fence, epoch, prefetch} =ff_core_request.first();
+      let {addr, fence, epoch} =ff_core_request.first();
       Bit#(tagbits) read_tag = addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
@@ -461,7 +461,7 @@ package l1icache;
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
                                           && wr_nc_response!=Hit &&!fb_full);
                                                                                         
-      let {addr, fence, epoch, prefetch} =ff_core_request.first();
+      let {addr, fence, epoch} =ff_core_request.first();
       if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
         ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
         if(verbosity!=0)begin
@@ -593,7 +593,7 @@ addr:%h way: %d",
         `ifdef perf
           wr_total_access<=1;
         `endif
-        let {addr, fence, epoch, prefetch} =req;
+        let {addr, fence, epoch} =req;
         Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
         rg_fence_stall<=fence;
