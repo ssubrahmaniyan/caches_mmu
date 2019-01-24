@@ -60,7 +60,7 @@ package itlb_rv64_array;
       numeric type mega_ways,
       numeric type giga_ways,
       numeric type asid_width);
-    interface Put#(Bit#(64)) core_req;
+    interface Put#(Tuple2#(Bool,Bit#(64))) core_req;
                           // physical-addr, exception, cause
     interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
 
@@ -70,7 +70,6 @@ package itlb_rv64_array;
     interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
@@ -197,7 +196,8 @@ package itlb_rv64_array;
   `endif
 
     rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
-      $display($time,"\tITLB: Initiliazing TLB");
+      if(verbosity>0)
+        $display($time,"\tITLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
           tlb_vtag_reg[i][j]<='d0;
@@ -213,186 +213,196 @@ package itlb_rv64_array;
     endrule
 
     rule perform_pmp_check;
-      $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
+      if(verbosity>0)
+        $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
       // TODO: perform PMP check here
       ff_core_resp.enq(ff_translated.first);
       ff_translated.deq;
     endrule
 
     interface core_req=interface Put
-      method Action put (Bit#(64) va) if(!rg_init && !rg_tlb_miss);
-        $display($time,"\tITLB: Recieved Request for VA %h",va);
-      // capture input vpns for regular and mega pages.
-      Bit#(27) inp_vpn_reg=va[38:12];
-      Bit#(18) inp_vpn_mega=va[38:21];
-      Bit#(9) inp_vpn_giga=va[38:30];
+      method Action put (Tuple2#(Bool,Bit#(64)) req) if(!rg_init && !rg_tlb_miss);
+        let {sfence,va}=req;
+        if(verbosity>0)
+          $display($time,"\tITLB: Recieved Request for VA %h",va);
+        // capture input vpns for regular and mega pages.
+        if(!sfence)begin
+          Bit#(27) inp_vpn_reg=va[38:12];
+          Bit#(18) inp_vpn_mega=va[38:21];
+          Bit#(9) inp_vpn_giga=va[38:30];
 
-      Bit#(9) vpn0=va[20:12];
-      Bit#(9) vpn1=va[29:21];
-      Bit#(9) vpn2=va[38:30];
-      Bit#(12) page_offset = va[11:0];
+          Bit#(9) vpn0=va[20:12];
+          Bit#(9) vpn1=va[29:21];
+          Bit#(9) vpn2=va[38:30];
+          Bit#(12) page_offset = va[11:0];
 
-      // find if there is a hit in the regular page tlb
-      Bit#(54) pte_reg [v_reg_ways];
-      Bit#(27) pte_vpn_reg [v_reg_ways];
-      Bit#(asid_width) pte_asid_reg [v_reg_ways];
-      Bit#(reg_ways) pte_vpn_valid_reg=0;
-      Bit#(reg_ways) hit_reg=0;
-      Bit#(54) temp1_reg [v_reg_ways];
-      Bit#(54) temp2_reg [v_reg_ways];
-      Bit#(54) final_reg_pte=0;
-      Bit#(1) global_reg [v_reg_ways];
+          // find if there is a hit in the regular page tlb
+          Bit#(54) pte_reg [v_reg_ways];
+          Bit#(27) pte_vpn_reg [v_reg_ways];
+          Bit#(asid_width) pte_asid_reg [v_reg_ways];
+          Bit#(reg_ways) pte_vpn_valid_reg=0;
+          Bit#(reg_ways) hit_reg=0;
+          Bit#(54) temp1_reg [v_reg_ways];
+          Bit#(54) temp2_reg [v_reg_ways];
+          Bit#(54) final_reg_pte=0;
+          Bit#(1) global_reg [v_reg_ways];
 
-      Bit#(TLog#(reg_size)) index_reg=truncate(inp_vpn_reg);
-      for(Integer i=0;i<v_reg_ways;i=i+1) begin
-        pte_reg[i]=tlb_pte_reg[i][index_reg];
-        let x=tlb_vtag_reg[i][index_reg];
-        pte_vpn_reg[i]=truncate(x);
-        pte_asid_reg[i]=x[27+v_asid_width-1:27];
-        pte_vpn_valid_reg[i]=pte_reg[i][0];
-        global_reg[i]=pte_reg[i][5];
-      end
-      for(Integer i=0;i<v_reg_ways;i=i+1)begin
-        hit_reg[i]=pack(pte_vpn_valid_reg[i]==1 && pte_vpn_reg[i]==inp_vpn_reg &&
-            (pte_asid_reg[i]==satp_asid || global_reg[i]==1)); 
-        temp1_reg[i]=duplicate(hit_reg[i]);
-        temp2_reg[i]=temp1_reg[i]&pte_reg[i];
-      end
-      for(Integer i=0;i<v_reg_ways;i=i+1)
-        final_reg_pte=temp2_reg[i]|final_reg_pte;
-      if(v_reg_ways>1)begin
-        let reg_linereplace<-reg_replacement.line_replace(truncate(inp_vpn_reg),pte_vpn_valid_reg);
-        reg_replaceway<=reg_linereplace;
-      end
-      else
-        reg_replaceway<=0;
-      
-      // find if there is a hit in the mega pages.
-      Bit#(54) pte_mega [v_mega_ways];
-      Bit#(18) pte_vpn_mega [v_mega_ways];
-      Bit#(asid_width) pte_asid_mega [v_mega_ways];
-      Bit#(mega_ways) pte_vpn_valid_mega=0;
-      Bit#(mega_ways) hit_mega=0;
-      Bit#(54) temp1_mega [v_mega_ways];
-      Bit#(54) temp2_mega [v_mega_ways];
-      Bit#(54) final_mega_pte=0;
-      Bit#(1) global_mega [v_mega_ways];
-      Bit#(TLog#(mega_size)) index_mega=truncate(inp_vpn_mega);
-      for(Integer i=0;i<v_mega_ways;i=i+1) begin
-        pte_mega[i]=tlb_pte_mega[i][index_mega];
-        let y=tlb_vtag_mega[i][index_mega];
-        pte_vpn_mega[i]=truncate(y);
-        pte_asid_mega[i]=y[18+v_asid_width-1:18];
-        pte_vpn_valid_mega[i]=pte_mega[i][0];
-        global_mega[i]=pte_mega[i][5];
-      end
-      for(Integer i=0;i<v_mega_ways;i=i+1)begin
-        hit_mega[i]=pack(pte_vpn_valid_mega[i]==1 && pte_vpn_mega[i]==inp_vpn_mega &&
-            (pte_asid_mega[i]==satp_asid || global_mega[i]==1)); 
-        temp1_mega[i]=duplicate(hit_mega[i]);
-        temp2_mega[i]=temp1_mega[i]&pte_mega[i];
-      end
-      for(Integer i=0;i<v_mega_ways;i=i+1)
-        final_mega_pte=temp2_mega[i]|final_mega_pte;
-      if(v_mega_ways>1)begin
-        let mega_linereplace<-mega_replacement.line_replace(truncate(inp_vpn_mega),pte_vpn_valid_mega);
-        mega_replaceway<=mega_linereplace;
-      end
-      else
-        mega_replaceway<=0;
+          Bit#(TLog#(reg_size)) index_reg=truncate(inp_vpn_reg);
+          for(Integer i=0;i<v_reg_ways;i=i+1) begin
+            pte_reg[i]=tlb_pte_reg[i][index_reg];
+            let x=tlb_vtag_reg[i][index_reg];
+            pte_vpn_reg[i]=truncate(x);
+            pte_asid_reg[i]=x[27+v_asid_width-1:27];
+            pte_vpn_valid_reg[i]=pte_reg[i][0];
+            global_reg[i]=pte_reg[i][5];
+          end
+          for(Integer i=0;i<v_reg_ways;i=i+1)begin
+            hit_reg[i]=pack(pte_vpn_valid_reg[i]==1 && pte_vpn_reg[i]==inp_vpn_reg &&
+                (pte_asid_reg[i]==satp_asid || global_reg[i]==1)); 
+            temp1_reg[i]=duplicate(hit_reg[i]);
+            temp2_reg[i]=temp1_reg[i]&pte_reg[i];
+          end
+          for(Integer i=0;i<v_reg_ways;i=i+1)
+            final_reg_pte=temp2_reg[i]|final_reg_pte;
+          if(v_reg_ways>1)begin
+            let reg_linereplace<-reg_replacement.line_replace(truncate(inp_vpn_reg),pte_vpn_valid_reg);
+            reg_replaceway<=reg_linereplace;
+          end
+          else
+            reg_replaceway<=0;
+          
+          // find if there is a hit in the mega pages.
+          Bit#(54) pte_mega [v_mega_ways];
+          Bit#(18) pte_vpn_mega [v_mega_ways];
+          Bit#(asid_width) pte_asid_mega [v_mega_ways];
+          Bit#(mega_ways) pte_vpn_valid_mega=0;
+          Bit#(mega_ways) hit_mega=0;
+          Bit#(54) temp1_mega [v_mega_ways];
+          Bit#(54) temp2_mega [v_mega_ways];
+          Bit#(54) final_mega_pte=0;
+          Bit#(1) global_mega [v_mega_ways];
+          Bit#(TLog#(mega_size)) index_mega=truncate(inp_vpn_mega);
+          for(Integer i=0;i<v_mega_ways;i=i+1) begin
+            pte_mega[i]=tlb_pte_mega[i][index_mega];
+            let y=tlb_vtag_mega[i][index_mega];
+            pte_vpn_mega[i]=truncate(y);
+            pte_asid_mega[i]=y[18+v_asid_width-1:18];
+            pte_vpn_valid_mega[i]=pte_mega[i][0];
+            global_mega[i]=pte_mega[i][5];
+          end
+          for(Integer i=0;i<v_mega_ways;i=i+1)begin
+            hit_mega[i]=pack(pte_vpn_valid_mega[i]==1 && pte_vpn_mega[i]==inp_vpn_mega &&
+                (pte_asid_mega[i]==satp_asid || global_mega[i]==1)); 
+            temp1_mega[i]=duplicate(hit_mega[i]);
+            temp2_mega[i]=temp1_mega[i]&pte_mega[i];
+          end
+          for(Integer i=0;i<v_mega_ways;i=i+1)
+            final_mega_pte=temp2_mega[i]|final_mega_pte;
+          if(v_mega_ways>1)begin
+            let mega_linereplace<-mega_replacement.line_replace(truncate(inp_vpn_mega),pte_vpn_valid_mega);
+            mega_replaceway<=mega_linereplace;
+          end
+          else
+            mega_replaceway<=0;
 
-      // find if there is a hit in the giga pages.
-      Bit#(54) pte_giga [v_giga_ways];
-      Bit#(9) pte_vpn_giga [v_giga_ways];
-      Bit#(asid_width) pte_asid_giga [v_giga_ways];
-      Bit#(giga_ways) pte_vpn_valid_giga=0;
-      Bit#(giga_ways) hit_giga=0;
-      Bit#(54) temp1_giga [v_giga_ways];
-      Bit#(54) temp2_giga [v_giga_ways];
-      Bit#(54) final_giga_pte=0;
-      Bit#(1) global_giga [v_giga_ways];
-      Bit#(TLog#(giga_size)) index_giga=truncate(inp_vpn_giga);
-      for(Integer i=0;i<v_giga_ways;i=i+1) begin
-        pte_giga[i]=tlb_pte_giga[i][index_giga];
-        let y=tlb_vtag_giga[i][index_giga];
-        pte_vpn_giga[i]=truncate(y);
-        pte_asid_giga[i]=y[9+v_asid_width-1:9];
-        pte_vpn_valid_giga[i]=pte_giga[i][0];
-        global_giga[i]=pte_giga[i][5];
-      end
-      for(Integer i=0;i<v_giga_ways;i=i+1)begin
-        hit_giga[i]=pack(pte_vpn_valid_giga[i]==1 && pte_vpn_giga[i]==inp_vpn_giga &&
-            (pte_asid_giga[i]==satp_asid || global_giga[i]==1)); 
-        temp1_giga[i]=duplicate(hit_giga[i]);
-        temp2_giga[i]=temp1_giga[i]&pte_giga[i];
-      end
-      for(Integer i=0;i<v_giga_ways;i=i+1)
-        final_giga_pte=temp2_giga[i]|final_giga_pte;
-      if(v_giga_ways>1)begin
-        let giga_linereplace<-giga_replacement.line_replace(truncate(inp_vpn_giga),pte_vpn_valid_giga);
-        giga_replaceway<=giga_linereplace;
-      end
-      else
-        giga_replaceway<=0;
-      // capture the permissions of the hit entry from the TLBs
-      // 7 6 5 4 3 2 1 0
-      // D A G U X W R V
-      Bit#(8) permissions=|(hit_reg)==1?final_reg_pte[7:0]:|(hit_mega)==1?final_mega_pte[7:0]:
-                                                                          final_giga_pte[7:0];
+          // find if there is a hit in the giga pages.
+          Bit#(54) pte_giga [v_giga_ways];
+          Bit#(9) pte_vpn_giga [v_giga_ways];
+          Bit#(asid_width) pte_asid_giga [v_giga_ways];
+          Bit#(giga_ways) pte_vpn_valid_giga=0;
+          Bit#(giga_ways) hit_giga=0;
+          Bit#(54) temp1_giga [v_giga_ways];
+          Bit#(54) temp2_giga [v_giga_ways];
+          Bit#(54) final_giga_pte=0;
+          Bit#(1) global_giga [v_giga_ways];
+          Bit#(TLog#(giga_size)) index_giga=truncate(inp_vpn_giga);
+          for(Integer i=0;i<v_giga_ways;i=i+1) begin
+            pte_giga[i]=tlb_pte_giga[i][index_giga];
+            let y=tlb_vtag_giga[i][index_giga];
+            pte_vpn_giga[i]=truncate(y);
+            pte_asid_giga[i]=y[9+v_asid_width-1:9];
+            pte_vpn_valid_giga[i]=pte_giga[i][0];
+            global_giga[i]=pte_giga[i][5];
+          end
+          for(Integer i=0;i<v_giga_ways;i=i+1)begin
+            hit_giga[i]=pack(pte_vpn_valid_giga[i]==1 && pte_vpn_giga[i]==inp_vpn_giga &&
+                (pte_asid_giga[i]==satp_asid || global_giga[i]==1)); 
+            temp1_giga[i]=duplicate(hit_giga[i]);
+            temp2_giga[i]=temp1_giga[i]&pte_giga[i];
+          end
+          for(Integer i=0;i<v_giga_ways;i=i+1)
+            final_giga_pte=temp2_giga[i]|final_giga_pte;
+          if(v_giga_ways>1)begin
+            let giga_linereplace<-giga_replacement.line_replace(truncate(inp_vpn_giga),pte_vpn_valid_giga);
+            giga_replaceway<=giga_linereplace;
+          end
+          else
+            giga_replaceway<=0;
+          // capture the permissions of the hit entry from the TLBs
+          // 7 6 5 4 3 2 1 0
+          // D A G U X W R V
+          Bit#(8) permissions=|(hit_reg)==1?final_reg_pte[7:0]:|(hit_mega)==1?final_mega_pte[7:0]:
+                                                                              final_giga_pte[7:0];
 
-      Bit#(44) physical_address=0;
-      if(|(hit_reg)==1)
-        physical_address=truncateLSB(final_reg_pte);
-      else if(|(hit_mega)==1)
-        physical_address={final_mega_pte[53:19],vpn0};
-      else
-        physical_address={final_giga_pte[53:28],vpn1,vpn0};
+          Bit#(44) physical_address=0;
+          if(|(hit_reg)==1)
+            physical_address=truncateLSB(final_reg_pte);
+          else if(|(hit_mega)==1)
+            physical_address={final_mega_pte[53:19],vpn0};
+          else
+            physical_address={final_giga_pte[53:28],vpn1,vpn0};
 
-      Bit#(9) ppn0=physical_address[8:0];
-      Bit#(9) ppn1=physical_address[17:9];
-      Bit#(26) ppn2=physical_address[43:18];
-      // Check for instruction page-fault conditions
-      Bool page_fault=False;
-      Bit#(25) unused_va=va[63:39];
-      // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
-      if(unused_va!=signExtend(va[38])) begin
-        if(verbosity!=0)
-          $display($time,"\tITLB: Page Fault - 1");
-        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-      end
-      // transparent translation
-      else if(satp_mode==0 || wr_priv==3)begin
-        Bit#(paddr) coreresp = truncate(va);
-        ff_translated.enq(tuple3(signExtend(coreresp),False,?));
-        if(verbosity!=0)
-          $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
-      end
-      else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
-        // pte.x == 0
-        if(permissions[3]==0)
-          page_fault=True;
-        // pte.a == 0
-        else if(permissions[6]==0)
-          page_fault=True;
-        // pte.u==0 for user mode
-        else if(permissions[4]==0 && wr_priv==0)
-          page_fault=True;
-        // pte.u=1 for supervisor
-        else if(permissions[4]==1 && wr_priv==1)
-          page_fault=True;
-        else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
-          page_fault=True;
+          Bit#(9) ppn0=physical_address[8:0];
+          Bit#(9) ppn1=physical_address[17:9];
+          Bit#(26) ppn2=physical_address[43:18];
+          // Check for instruction page-fault conditions
+          Bool page_fault=False;
+          Bit#(25) unused_va=va[63:39];
+          // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
+          if(unused_va!=signExtend(va[38])) begin
+            if(verbosity!=0)
+              $display($time,"\tITLB: Page Fault - 1");
+            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
+          end
+          // transparent translation
+          else if(satp_mode==0 || wr_priv==3)begin
+            Bit#(paddr) coreresp = truncate(va);
+            ff_translated.enq(tuple3(signExtend(coreresp),False,?));
+            if(verbosity!=0)
+              $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
+          end
+          else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
+            // pte.x == 0
+            if(permissions[3]==0)
+              page_fault=True;
+            // pte.a == 0
+            else if(permissions[6]==0)
+              page_fault=True;
+            // pte.u==0 for user mode
+            else if(permissions[4]==0 && wr_priv==0)
+              page_fault=True;
+            // pte.u=1 for supervisor
+            else if(permissions[4]==1 && wr_priv==1)
+              page_fault=True;
+            else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
+              page_fault=True;
 
-        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-        if(verbosity!=0)
-          $display($time,"\tITLB: Page Fault - 2");
-      end
-      else begin
-        // Send virtual-address and indicate it is an instruction access to the PTW
-        ff_ptw_req.enq(tuple2(va, 0));
-        rg_tlb_miss<=True;
-        ff_req_queue.enq(va);
-      end
+            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
+            if(verbosity!=0)
+              $display($time,"\tITLB: Page Fault - 2");
+          end
+          else begin
+            // Send virtual-address and indicate it is an instruction access to the PTW
+            ff_ptw_req.enq(tuple2(va, 0));
+            rg_tlb_miss<=True;
+            ff_req_queue.enq(va);
+          end
+        end
+        else begin
+          if(verbosity>1)
+            $display($time,"\tITLB: Recived SFence with VA: %h",va);
+          rg_init<=True;
+        end
       endmethod
     endinterface;
 
@@ -469,12 +479,6 @@ package itlb_rv64_array;
         rg_tlb_miss<=True;
       endmethod
     endinterface;
-    interface  fence_tlb=interface Put
-      method Action put(Tuple2#(Bit#(64),Bit#(64)) req) if(!rg_init);
-        rg_init<=True;
-      endmethod
-    endinterface;
-
     interface core_resp= interface Get
       method ActionValue#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) get;
         ff_core_resp.deq;
