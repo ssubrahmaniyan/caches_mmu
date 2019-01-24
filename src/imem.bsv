@@ -78,12 +78,12 @@ package imem;
 `endif
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(ICore_request#(`vaddr,`iesize)) core_req;
+    interface Put#(IMem_request#(`vaddr,`iesize)) core_req;
     interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
-    interface Get#(IMem_request#(`paddr)) read_mem_req;
-    interface Put#(IMem_response#(TMul#(`iwords, 8))) read_mem_resp;
-    interface Get#(IMem_request#(`paddr)) nc_read_req;
-    interface Put#(IMem_response#(TMul#(`iwords, 8))) nc_read_resp;
+    interface Get#(ICache_read_request#(`paddr)) read_mem_req;
+    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) read_mem_resp;
+    interface Get#(ICache_read_request#(`paddr)) nc_read_req;
+    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) nc_read_resp;
     method Action cache_enable(Bool c);
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
@@ -109,12 +109,15 @@ package imem;
     mkConnection(itlb.core_resp,icache.pa_from_tlb);
   `endif
     interface core_req = interface Put
-      method Action put (ICore_request#(`vaddr,`iesize) req);
-        let {addr, fence, epoch, prefetch} =req;
-        icache.core_req.put(req);
+      method Action put (IMem_request#(`vaddr,`iesize) req);
       `ifdef mmu
+        let {addr, fence, sfence, epoch} =req;
+        if(!sfence)
+          icache.core_req.put(tuple3(addr, fence, epoch));
         if(!fence)
-          itlb.core_req.put(addr);
+          itlb.core_req.put(tuple2(sfence,addr));
+      `else
+        icache.core_req.put(req);
       `endif
       endmethod
     endinterface;

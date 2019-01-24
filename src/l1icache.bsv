@@ -62,10 +62,10 @@ package l1icache;
 
     interface Put#(ICore_request#(paddr,esize)) core_req;
     interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(IMem_request#(paddr)) read_mem_req;
-    interface Put#(IMem_response#(TMul#(wordsize,8))) read_mem_resp;
-    interface Get#(IMem_request#(paddr)) nc_read_req;
-    interface Put#(IMem_response#(TMul#(wordsize,8))) nc_read_resp;
+    interface Get#(ICache_read_request#(paddr)) read_mem_req;
+    interface Put#(ICache_read_response#(TMul#(wordsize,8))) read_mem_resp;
+    interface Get#(ICache_read_request#(paddr)) nc_read_req;
+    interface Put#(ICache_read_response#(TMul#(wordsize,8))) nc_read_resp;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -145,13 +145,13 @@ package l1icache;
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
     // this fifo stores the read request that needs to be sent to the next memory level.
-    FIFOF#(IMem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
+    FIFOF#(ICache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(IMem_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
     
-    FIFOF#(IMem_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
+    FIFOF#(ICache_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(IMem_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
     `ifdef pysimulate
@@ -618,27 +618,27 @@ addr:%h way: %d",
     endinterface;
     
     interface read_mem_req = interface Get
-      method ActionValue#(IMem_request#(paddr)) get;
+      method ActionValue#(ICache_read_request#(paddr)) get;
         ff_read_mem_request.deq;
         return ff_read_mem_request.first;
       endmethod
     endinterface;
 
     interface read_mem_resp= interface Put
-     method Action put(IMem_response#(respwidth) resp);
+     method Action put(ICache_read_response#(respwidth) resp);
         ff_read_mem_response.enq(resp);
      endmethod
     endinterface;
     
     interface nc_read_req = interface Get
-      method ActionValue#(IMem_request#(paddr)) get;
+      method ActionValue#(ICache_read_request#(paddr)) get;
         ff_nc_read_request.deq;
         return ff_nc_read_request.first;
       endmethod
     endinterface;
 
     interface nc_read_resp= interface Put
-     method Action put(IMem_response#(respwidth) resp);
+     method Action put(ICache_read_response#(respwidth) resp);
         ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
