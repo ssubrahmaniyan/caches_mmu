@@ -29,19 +29,36 @@ Details:
 --------------------------------------------------------------------------------------------------
 */
 package cache_types;
-                  // addr, Fence, epoch, prefetch
-  typedef Tuple4#(Bit#(addr), Bool, Bit#(esize), Bool) ICore_request#(numeric type addr, 
+
+    // ----------------- Instruction Memory subsystem types ----------------------------------//
+`ifdef mmu
+                  // addr, Fence, SFence, epoch
+  typedef Tuple4#(Bit#(addr), Bool, Bool, Bit#(esize)) IMem_request#(numeric type addr, 
+                                                                          numeric type esize);
+`else                                                                          
+                  // addr, Fence, epoch
+  typedef Tuple3#(Bit#(addr), Bool, Bit#(esize)) IMem_request#(numeric type addr, 
+                                                                          numeric type esize);
+`endif
+  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) IMem_response#(numeric type data, 
+                                                                          numeric type esize);
+// --------------------------------------------------------------------------------------------//
+
+// ---------------------- Instruction Cache types ---------------------------------------------//
+                  // addr, Fence, epoch
+  typedef Tuple3#(Bit#(addr), Bool, Bit#(esize)) ICore_request#(numeric type addr, 
                                                                           numeric type esize);
                  // word , trap, cause , epoch
   typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) ICore_response#(numeric type data, 
                                                                           numeric type esize);
                 // addr ,  burst len, burst_size 
-  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) IMem_request#(numeric type addr);
+  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) ICache_read_request#(numeric type addr);
                     // data,  last , err
-  typedef Tuple3#(Bit#(data), Bool, Bool) IMem_response#(numeric type data);
+  typedef Tuple3#(Bit#(data), Bool, Bool) ICache_read_response#(numeric type data);
+// -------------------------------------------------------------------------------------------//
 
-  typedef enum {Hit, Miss, None} RespState deriving(Eq,Bits,FShow);
 
+// ---------------------- Data Cache types ---------------------------------------------//
 `ifdef atomic
                   // addr, Fence, epoch, access_type, access_size data,  atomic_op
   typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
@@ -62,7 +79,10 @@ package cache_types;
   typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(2), Bit#(linewidth)) DMem_write_request#(
                                     numeric type addr, numeric type linewidth);
   typedef Bool DMem_write_response;
+// -------------------------------------------------------------------------------------------//
 
+// --------------------------- Common Structs ---------------------------------------------------//
+  typedef enum {Hit, Miss, None} RespState deriving(Eq,Bits,FShow);
   function String countName (Integer cntr);
     case (cntr)
       'd0: return "Total accesses";
@@ -73,6 +93,8 @@ package cache_types;
       default: return "Null";
     endcase
   endfunction
+// -------------------------------------------------------------------------------------------//
+// -------------------------- TLB Structs ----------------------------------------------------//
   typedef struct {
   	Bool v;					//valid
   	Bool r;					//allow reads
@@ -94,4 +116,5 @@ package cache_types;
 														 a : unpack(perms[6]),
 														 d : unpack(perms[7])};
 	endfunction
+// -------------------------------------------------------------------------------------------//
 endpackage
