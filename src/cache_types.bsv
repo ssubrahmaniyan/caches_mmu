@@ -80,6 +80,31 @@ package cache_types;
                                     numeric type addr, numeric type linewidth);
   typedef Bool DCache_write_response;
 // -------------------------------------------------------------------------------------------//
+    // ----------------- Data Memory subsystem types ----------------------------------//
+`ifdef mmu
+  `ifdef atomic
+                  // addr, Fence, sFence, epoch, access_type, access_size data,  atomic_op
+    typedef Tuple8#(Bit#(addr), Bool, Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
+                    DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  `else
+                  // addr, Fence, sFence epoch, access_type, access_size data,  atomic_op
+    typedef Tuple7#(Bit#(addr), Bool, Bool, Bit#(esize), Bit#(1), Bit#(3), Bit#(data)) 
+                    DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  `endif
+`else                                                                          
+  `ifdef atomic
+                    // addr, Fence, epoch, access_type, access_size data,  atomic_op
+    typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
+                      DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  `else
+                    // addr, Fence, epoch, access_type, access_size data,  atomic_op
+    typedef Tuple6#(Bit#(addr), Bool, Bit#(esize), Bit#(1), Bit#(3), Bit#(data)) 
+                      DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  `endif
+`endif
+  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) DMem_response#(numeric type data, 
+                                                                          numeric type esize);
+// --------------------------------------------------------------------------------------------//
 
 // --------------------------- Common Structs ---------------------------------------------------//
   typedef enum {Hit, Miss, None} RespState deriving(Eq,Bits,FShow);

@@ -28,7 +28,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package imem;
+package dmem;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
@@ -41,14 +41,14 @@ package imem;
   import cache_types::*;
   `include "cache.defines"
 `ifdef mmu
-  import l1icache_vipt::*;
+  import l1dcache_vipt::*;
   `ifdef RV64
-    import itlb_rv64_array::*;
+    import dtlb_rv64_array::*;
   `elsif RV32
-    import itlb_rv32_array::*;
+    import dtlb_rv32_array::*;
   `endif
 `else
-  import l1icache::*;
+  import l1dcache::*;
 `endif
 
     function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
@@ -61,38 +61,45 @@ package imem;
     endfunction
 
   (*synthesize*)
-  module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `ifdef mmu `vaddr, `endif
-                                                                            `ifbsize, `iesize ));
+  module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `ifdef mmu `vaddr, `endif
+                                                                    `dfbsize, `dsbsize, `desize ));
     let ifc();
-    mkl1icache#(isIO,"RROBIN") _temp(ifc);
+    mkl1dcache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);
   endmodule
 
 `ifdef mmu
   (*synthesize*)
 `ifdef RV64
-  module mkitlb(Ifc_itlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
+  module mkdtlb(Ifc_dtlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
     let ifc();
-    mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
+    mkdtlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
   endmodule
 `else
-  module mkitlb(Ifc_itlb_rv32_array#(`paddr,8,8,1,1,9));
+  module mkdtlb(Ifc_dtlb_rv32_array#(`paddr,8,8,1,1,9));
     let ifc();
-    mkitlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
+    mkdtlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
   endmodule
 `endif
 `endif
-  interface Ifc_imem;
+  interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(IMem_request#(`vaddr,`iesize)) core_req;
-    interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
-    interface Get#(ICache_read_request#(`paddr)) read_mem_req;
-    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) read_mem_resp;
-    interface Get#(ICache_read_request#(`paddr)) nc_read_req;
-    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) nc_read_resp;
+    interface Put#(DMem_request#(`vaddr, TMul#( `dwords ,8),`desize )) core_req;
+    interface Get#(ICore_response#(TMul#(`dwords, 8), `desize )) core_resp;
+    interface Get#(DCache_read_request#(`paddr)) read_mem_req;
+    interface Put#(DCache_read_response#(TMul#(`dwords, 8))) read_mem_resp;
+    interface Get#(DCache_read_request#(`paddr)) nc_read_req;
+    interface Put#(DCache_read_response#(TMul#(`dwords, 8))) nc_read_resp;
     method Action cache_enable(Bool c);
+    interface Get#(DCache_write_request#(`paddr,TMul#( `dblocks ,TMul#(`dwords ,8)))) write_mem_req;
+    interface Put#(DCache_write_response) write_mem_resp;
+    interface Get#(DCache_write_request#(`paddr ,TMul#( `dwords ,8))) nc_write_req;
+    method Action perform_store(Bit#(`desize ) currepoch);
+    method Bool cacheable_store;
+    method Bool cache_available;
+    method Bool storebuffer_empty;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef mmu
@@ -100,6 +107,7 @@ package imem;
     interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
+    interface Put#(Bit#(32)) mstatus_from_csr;
   `endif
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
@@ -109,44 +117,62 @@ package imem;
   endinterface
 
   (*synthesize*)
-  module mkimem(Ifc_imem);
-    let icache<-mkicache;
+  module mkdmem(Ifc_dmem);
+    let dcache<-mkdcache;
   `ifdef mmu
-    let itlb <- mkitlb;
-    mkConnection(itlb.core_resp,icache.pa_from_tlb);
+    let dtlb <- mkdtlb;
+    mkConnection(dtlb.core_resp,dcache.pa_from_tlb);
   `endif
     interface core_req = interface Put
-      method Action put (IMem_request#(`vaddr,`iesize) req);
+      method Action put (DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ) req);
       `ifdef mmu
-        let {addr, fence, sfence, epoch} =req;
+        `ifdef atomic
+          let {addr, fence, sfence, epoch, access, size, data, atomicop} =req;
+        `else
+          let {addr, fence, sfence, epoch, access, size, data} =req;
+        `endif
         if(!sfence)
-          icache.core_req.put(tuple3(addr, fence, epoch));
+          `ifdef atomic
+            dcache.core_req.put(tuple7(addr, fence, epoch, access, size, data, atomicop));
+          `else
+            dcache.core_req.put(tuple6(addr, fence, epoch, access, size, data));
+          `endif
         if(!fence)
-          itlb.core_req.put(tuple2(sfence,addr));
+          dtlb.core_req.put(tuple3(sfence,addr,access));
       `else
-        icache.core_req.put(req);
+        dcache.core_req.put(req);
       `endif
       endmethod
     endinterface;
-    interface core_resp = icache.core_resp;
-    interface read_mem_req= icache.read_mem_req;
-    interface read_mem_resp = icache.read_mem_resp;
-    interface nc_read_req = icache.nc_read_req;
-    interface nc_read_resp = icache.nc_read_resp;
+    interface core_resp = dcache.core_resp;
+    interface read_mem_req= dcache.read_mem_req;
+    interface read_mem_resp = dcache.read_mem_resp;
+    interface nc_read_req = dcache.nc_read_req;
+    interface nc_read_resp = dcache.nc_read_resp;
     method Action cache_enable (Bool c);
-      icache.cache_enable(c);
+      dcache.cache_enable(c);
     endmethod
+    interface write_mem_req = dcache.write_mem_req;
+    interface write_mem_resp=dcache.write_mem_resp;
+    interface nc_write_req=dcache.nc_write_req;
+    method Action perform_store(Bit#(`desize ) currepoch);
+      dcache.perform_store(currepoch);
+    endmethod
+    method cacheable_store    =dcache.cacheable_store;
+    method cache_available    =dcache.cache_available;
+    method storebuffer_empty  =dcache.storebuffer_empty;
 `ifdef mmu
-    interface req_to_ptw = itlb.req_to_ptw;
-    interface resp_from_ptw = itlb.resp_from_ptw;
-    interface satp_from_csr = itlb.satp_from_csr;
-    interface curr_priv = itlb.curr_priv;
+    interface req_to_ptw = dtlb.req_to_ptw;
+    interface resp_from_ptw = dtlb.resp_from_ptw;
+    interface satp_from_csr = dtlb.satp_from_csr;
+    interface curr_priv = dtlb.curr_priv;
+    interface mstatus_from_csr=dtlb.mstatus_from_csr;
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      itlb.pmp_cfg(pmpcfg);
+      dtlb.pmp_cfg(pmpcfg);
     endmethod
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#( `paddr )) pmpadr);
-      itlb.pmp_addr(pmpadr);
+      dtlb.pmp_addr(pmpadr);
     endmethod
   `endif
 `endif

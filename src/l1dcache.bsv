@@ -65,7 +65,6 @@ package l1dcache;
     interface Get#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
     interface Put#(DMem_write_response) write_mem_resp;
     interface Get#(DMem_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
-    interface Put#(DMem_write_response) nc_write_resp;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -77,7 +76,6 @@ package l1dcache;
     method Bool cacheable_store;
     method Bool cache_available;
     method Bool storebuffer_empty;
-    method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
   endinterface
 
   (*conflict_free="request_to_memory,update_fb_with_memory_response"*)
@@ -196,7 +194,6 @@ package l1dcache;
     FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
     
     FIFOF#(DMem_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
-    FIFOF#(DMem_write_response) ff_nc_write_response  <- mkSizedFIFOF(2);
     
     FIFOF#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
                                                                               <- mkSizedFIFOF(2);
@@ -958,10 +955,6 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
       end
     endrule
 
-    rule receive_nc_write_response;
-      ff_nc_write_response.deq;
-    endrule
-
 
     interface core_req=interface Put
       method Action put(DCore_request#(paddr,respwidth,esize) req)if( ff_core_response.notFull &&
@@ -1112,18 +1105,9 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       endmethod
     endinterface;
 
-    interface nc_write_resp= interface Put
-     method Action put(DMem_write_response resp);
-        ff_nc_write_response.enq(resp);
-     endmethod
-    endinterface;
-
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
                   !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty;
     method storebuffer_empty = sb_empty;
-    method Tuple2#(Bool,Bit#(paddr)) nc_store_response;
-      return tuple2(ff_nc_write_response.first(),store_addr[rg_storehead-1]); 
-    endmethod
 
   endmodule
  
