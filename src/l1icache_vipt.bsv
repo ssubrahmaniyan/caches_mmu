@@ -420,7 +420,6 @@ package l1icache_vipt;
     rule check_fb_for_corerequest(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       Bool wordhit=False;
       let {addr, fence, epoch} =ff_core_request.first();
-      // TODO request tag will come from TLB
       let {phy_addr,trap,cause} = ff_from_tlb.first;
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
@@ -490,7 +489,6 @@ package l1icache_vipt;
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
                                           && wr_nc_response!=Hit &&!fb_full && !wr_trap_from_tlb);
                                                                                         
-      // TODO: The address in the FB should come from TLB
       let {addr, fence, epoch} =ff_core_request.first();
       let {phy_addr,trap,cause} = ff_from_tlb.first;
       if(isNonCacheable(phy_addr,wr_cache_enable))begin // TODO make this programmable;
@@ -504,7 +502,7 @@ package l1icache_vipt;
           $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",phy_addr);
           $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
-        addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
+        phy_addr= (phy_addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
         ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
