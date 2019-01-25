@@ -69,16 +69,16 @@ package cache_types;
                     DCore_request#(numeric type addr, numeric type data, numeric type esize);
 `endif
                  // word , err , epoch
-  typedef Tuple3#(Bit#(data), Bit#(2), Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
+  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
                 // addr ,  burst len, burst_size 
-  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) DMem_read_request#(numeric type addr);
+  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) DCache_read_request#(numeric type addr);
                   // data , last, err
-  typedef Tuple3#(Bit#(data), Bool, Bool) DMem_read_response#(numeric type data);
+  typedef Tuple3#(Bit#(data), Bool, Bool) DCache_read_response#(numeric type data);
                 
                 // addr ,  burst len, burst_size, data
-  typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(2), Bit#(linewidth)) DMem_write_request#(
+  typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(2), Bit#(linewidth)) DCache_write_request#(
                                     numeric type addr, numeric type linewidth);
-  typedef Bool DMem_write_response;
+  typedef Bool DCache_write_response;
 // -------------------------------------------------------------------------------------------//
 
 // --------------------------- Common Structs ---------------------------------------------------//
