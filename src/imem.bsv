@@ -42,11 +42,11 @@ package imem;
   `include "cache.defines"
 `ifdef mmu
   import l1icache_vipt::*;
-`ifdef RV64
-  import itlb_rv64_array::*;
-`elsif RV32
-  import itlb_rv32_array::*;
-`endif
+  `ifdef RV64
+    import itlb_rv64_array::*;
+  `elsif RV32
+    import itlb_rv32_array::*;
+  `endif
 `else
   import l1icache::*;
 `endif
@@ -70,11 +70,19 @@ package imem;
 
 `ifdef mmu
   (*synthesize*)
+`ifdef RV64
   module mkitlb(Ifc_itlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
     let ifc();
     mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
   endmodule
+`else
+  module mkitlb(Ifc_itlb_rv32_array#(`paddr,8,8,1,1,9));
+    let ifc();
+    mkitlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
+    return (ifc);
+  endmodule
+`endif
 `endif
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
@@ -88,11 +96,10 @@ package imem;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef mmu
-    interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
-    interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
-    interface Put#(Bit#(64)) satp_from_csr;
+    interface Get#(Tuple2#(Bit#(`vaddr ),Bit#(2))) req_to_ptw;
+    interface Put#(Tuple4#(Bit#(`vaddr ),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
+    interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
   `endif
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);

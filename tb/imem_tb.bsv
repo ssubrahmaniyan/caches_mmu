@@ -70,7 +70,7 @@ package imem_tb;
 
   Reg#(Bit#(32)) index<- mkReg(0);
   Reg#(Bit#(32)) e_index<- mkReg(0);
-  Reg#(Maybe#(IMem_request#(32))) read_mem_req<- mkReg(tagged Invalid);
+  Reg#(Maybe#(ICache_read_request#(`paddr))) read_mem_req<- mkReg(tagged Invalid);
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 
@@ -119,7 +119,7 @@ package imem_tb;
 
       if(request!=0) begin // // not end of simulation
         if(request!='1 && delay==0) begin
-          imem.core_req.put(tuple4(zeroExtend(req[31:0]),unpack(fence),0,False));
+          imem.core_req.put(tuple4(zeroExtend(req[31:0]),unpack(fence),False,0));
         end
         index<=index+1;
         $display($time,"\tTB: Sending core request for addr: %h",req);

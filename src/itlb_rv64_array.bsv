@@ -67,7 +67,7 @@ package itlb_rv64_array;
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
     interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
                           // ppn   , levels , trap
-    interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
+    interface Put#(Tuple4#(Bit#(64),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
   `ifdef pmp
