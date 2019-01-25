@@ -48,11 +48,12 @@ package dtlb_rv64_array;
   import BUtils::*;
 
   import mem_config::*;
-  import common_types::*;
-  import cache_types::*;
   import replacement::*;
+  import cache_types::*;
+  `include "cache.defines"
 
   interface Ifc_dtlb_rv64_array#(
+      numeric type paddr,
       numeric type reg_size, 
       numeric type mega_size,
       numeric type giga_size,
@@ -60,27 +61,32 @@ package dtlb_rv64_array;
       numeric type mega_ways,
       numeric type giga_ways,
       numeric type asid_width);
-    interface Put#(Tuple2#(Bit#(64), Bit#(2))) core_req;
-    interface Get#(Tuple2#(Bit#(44), Trap_type)) core_resp;
+    interface Put#(Tuple3#(Bool, Bit#(64), Bit#(2))) core_req;
+    interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
     interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
                           // ppn   , levels , trap
-    interface Put#(Tuple3#(Bit#(54),Bit#(2),Trap_type)) resp_from_ptw;
+    interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(32)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Tuple2#(Bit#(64),Bit#(64))) fence_tlb;
+  `ifdef pmp
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+  `endif
   endinterface
 
 
 
   module mkdtlb_rv64_array#(parameter String alg_reg, parameter String alg_mega) 
-    (Ifc_dtlb_rv64_array#(reg_size,mega_size,giga_size,reg_ways,mega_ways,giga_ways,asid_width))
+    (Ifc_dtlb_rv64_array#(paddr,reg_size,mega_size,giga_size,reg_ways,mega_ways,giga_ways,asid_width))
     provisos(
       Add#(a__, TLog#(reg_size), 27),
       Add#(b__, TLog#(mega_size), 18),
       Add#(c__, TLog#(giga_size), 9),
+      Add#(g__, paddr, 56),
+      Add#(h__, paddr, 64),
 
       // for replacement
       Add#(d__, TLog#(reg_ways), 4),
@@ -97,6 +103,31 @@ package dtlb_rv64_array;
     let v_asid_width = valueOf(asid_width);
     let verbosity=`VERBOSITY;
 
+  `ifdef pmp
+    function Tuple2#(Bool,Bit#(6)) pmp_check (Array#(Bit#(8)) cfg, Array#(Bit#(paddr)) pmpaddr,
+                                Bit#(paddr) phy_addr, Bit#(2) priv);
+      Bool sucess=True;
+      Bit#(6) cause = 0;
+      //Bit#(TSub#(paddr,2)) comp_addr = truncateLSB(paddr);
+      for(Integer i=0;i<valueOf(`PMPSIZE ); i=i+1)begin
+        Bit#(1) x = cfg[i][2];
+        Bit#(2) a = cfg[i][4:3];
+        Bit#(1) l = cfg[i][7];
+        Bool valid_acess = (l==0 && (priv==3 || x==1)) || (l==1 && x==1);
+
+        Bit#(paddr) tor_top = pmpaddr[i];
+        Bit#(paddr) tor_base = (i==0)?0:pmpaddr[i-1];
+        if(a==1)begin // TOR:
+          if(tor_base<=phy_addr && phy_addr<tor_top)
+            sucess=valid_acess&&sucess;
+        end
+        else if(a==3)begin // NAPOT
+          
+        end
+      end
+      return (tuple2(!sucess,cause));
+    endfunction
+  `endif
     // defining the tlb entries and virtual tags for regular pages.
     Reg#(Bit#(54)) tlb_pte_reg [v_reg_ways][v_reg_size];
     Reg#(Bit#(TAdd#(asid_width,27))) tlb_vtag_reg [v_reg_ways][v_reg_size];
@@ -156,13 +187,20 @@ package dtlb_rv64_array;
     Bit#(1) sum = wr_mstatus[18];
 
     // FIFO to hold the next input
-    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(2);
+    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(1);
+    FIFOF#(Tuple4#(Bit#(paddr), Bit#(2),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
     FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(44),Trap_type)) ff_core_resp<- mkSizedFIFOF(2);
+    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
 
-    rule initialize(rg_init && !ff_req_queue.notEmpty);
+  `ifdef pmp
+    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
+    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
+  `endif
+
+    rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
+      if(verbosity>0)
       $display($time,"\tITLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
@@ -178,9 +216,22 @@ package dtlb_rv64_array;
       rg_init<=False;
     endrule
 
-    rule access_tlb_on_request(!rg_tlb_miss && !rg_init);
-      let {va,access}=ff_req_queue.first();
+    rule perform_pmp_check;
+      if(verbosity>0)
+        $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
+      let {pa,access,trap,cause} = ff_translated.first;
+      // TODO: perform PMP check here
+      ff_core_resp.enq(tuple3(pa,trap,cause));
+      ff_translated.deq;
+    endrule
+
+    interface core_req=interface Put
+      method Action put ((Tuple3#(Bool, Bit#(64), Bit#(2))) req) if(!rg_init && !rg_tlb_miss);
+        let {sfence,va,access}=req;
+        if(verbosity>0)
+          $display($time,"\tITLB: Recieved Request for VA %h",va);
       // capture input vpns for regular and mega pages.
+        if(!sfence)begin
       Bit#(27) inp_vpn_reg=va[38:12];
       Bit#(18) inp_vpn_mega=va[38:21];
       Bit#(9) inp_vpn_giga=va[38:30];
@@ -188,6 +239,7 @@ package dtlb_rv64_array;
       Bit#(9) vpn0=va[20:12];
       Bit#(9) vpn1=va[29:21];
       Bit#(9) vpn2=va[38:30];
+          Bit#(12) page_offset = va[11:0];
 
       // find if there is a hit in the regular page tlb
       Bit#(54) pte_reg [v_reg_ways];
@@ -309,20 +361,21 @@ package dtlb_rv64_array;
       Bit#(9) ppn0=physical_address[8:0];
       Bit#(9) ppn1=physical_address[17:9];
       Bit#(26) ppn2=physical_address[43:18];
-
       // Check for instruction page-fault conditions
       Bool page_fault=False;
       Bit#(25) unused_va=va[63:39];
       // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
       if(unused_va!=signExtend(va[38])) begin
-        Trap_type exception=tagged Exception Inst_pagefault; 
-        ff_core_resp.enq(tuple2(physical_address,exception));
-        ff_req_queue.deq;
+            if(verbosity!=0)
+              $display($time,"\tITLB: Page Fault - 1");
+            ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,True,`Inst_pagefault ));
       end
       // transparent translation
       else if(satp_mode==0 || wr_priv==3)begin
-        ff_core_resp.enq(tuple2(signExtend(va[38:12]),tagged None));
-        ff_req_queue.deq();
+            Bit#(paddr) coreresp = truncate(va);
+            ff_translated.enq(tuple4(signExtend(coreresp),access,False,?));
+            if(verbosity!=0)
+              $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
         // pte.a==0 || pte.d==0 and access!=Load
@@ -342,25 +395,22 @@ package dtlb_rv64_array;
         if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
           page_fault=True;
 
-        Trap_type exception=page_fault?(access==1)?tagged Exception Load_pagefault:
-                                                  tagged Exception Store_pagefault
-                                      :tagged None; 
-        ff_core_resp.enq(tuple2(physical_address,exception));
-        ff_req_queue.deq;
+        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,True,`Inst_pagefault ));
+            if(verbosity!=0)
+              $display($time,"\tITLB: Page Fault - 2");
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
         ff_ptw_req.enq(tuple2(va, access));
         rg_tlb_miss<=True;
+        ff_req_queue.enq(tuple2(va,access));
       end
-    endrule
-
-    interface core_req=interface Put
-      method Action put (Tuple2#(Bit#(64),Bit#(2)) req) if(!rg_init);
-        let {va,access}=req;
-        Bit#(12) page_offset=va[11:0];
-
-        ff_req_queue.enq(req);
+        end
+        else begin
+          if(verbosity>1)
+            $display($time,"\tITLB: Recived SFence with VA: %h",va);
+          rg_init<=True;
+        end
       endmethod
     endinterface;
 
@@ -389,11 +439,11 @@ package dtlb_rv64_array;
       endmethod
     endinterface;
     interface resp_from_ptw = interface Put
-      method Action put(Tuple3#(Bit#(54),Bit#(2),Trap_type) resp)if(rg_tlb_miss && !rg_init);
+      method Action put(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6)) resp)if(rg_tlb_miss && !rg_init);
         // This will then cause the rule access_tlb_on_request to fire again
         // which cause a hit in the tlb now and thus respond back to the core.
+        let {pte, levels, trap_taken, cause}=resp;
         let {va,access}=ff_req_queue.first();
-        let {pte, levels, trap}=resp;
         Bit#(27) vpn_reg=va[38:12];
         Bit#(TLog#(reg_size)) index_reg=truncate(vpn_reg);
         
@@ -403,7 +453,7 @@ package dtlb_rv64_array;
         Bit#(9) vpn_giga=va[38:30];
         Bit#(TLog#(giga_size)) index_giga=truncate(vpn_giga);
       
-        if(trap matches tagged None)begin
+        if(!trap_taken)begin
           if(levels==0) begin
               tlb_pte_reg[reg_replaceway][index_reg]<=pte;
               tlb_vtag_reg[reg_replaceway][index_reg]<={satp_asid,vpn_reg};
@@ -429,29 +479,37 @@ package dtlb_rv64_array;
         Bit#(9) vpn0=va[20:12];
         Bit#(9) vpn1=va[29:21];
         Bit#(9) vpn2=va[38:30];
+        Bit#(12) page_offset = va[11:0];
         if(levels==0)
           physical_address=truncateLSB(pte);
         else if(levels==1)
           physical_address={pte[53:19],vpn0};
         else
           physical_address={pte[53:28],vpn1,vpn0};
-        ff_core_resp.enq(tuple2(physical_address,trap));
+        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,trap_taken,cause));
         ff_req_queue.deq;
+        if(verbosity!=0)
+          $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
         rg_tlb_miss<=True;
       endmethod
     endinterface;
-    interface  fence_tlb=interface Put
-      method Action put(Tuple2#(Bit#(64),Bit#(64)) req) if(!rg_init);
-        rg_init<=True;
-      endmethod
-    endinterface;
-
     interface core_resp= interface Get
-      method ActionValue#(Tuple2#(Bit#(44),Trap_type)) get;
+      method ActionValue#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) get;
         ff_core_resp.deq;
         return ff_core_resp.first();
       endmethod
     endinterface;
+  `ifdef pmp
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_cfg[i] <= pmpcfg[i];
+    endmethod
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_addr[i] <= pmpadr[i];
+    endmethod
+  `endif
+
   endmodule
 endpackage
 
