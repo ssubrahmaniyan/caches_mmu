@@ -1157,21 +1157,21 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
 
   endmodule
  
-  function Bool isIO(Bit#(32) addr, Bool cacheable);
-    if(!cacheable)
-      return True;
-    else if( addr < 4096)
-      return True;
-    else
-      return False;    
-  endfunction
-
-
-  (*synthesize*)
-  module mkdcache(Ifc_l1dcache#(8, 4, 64, 4 ,32,64,8,2,1));
-    let ifc();
-    mkl1dcache#(isIO, "PLRU") _temp(ifc);
-    return (ifc);
-  endmodule
+//  function Bool isIO(Bit#(32) addr, Bool cacheable);
+//    if(!cacheable)
+//      return True;
+//    else if( addr < 4096)
+//      return True;
+//    else
+//      return False;    
+//  endfunction
+//
+//
+//  (*synthesize*)
+//  module mkdcache(Ifc_l1dcache#(8, 4, 64, 4 ,32,64,8,2,1));
+//    let ifc();
+//    mkl1dcache#(isIO, "PLRU") _temp(ifc);
+//    return (ifc);
+//  endmodule
 endpackage
 
