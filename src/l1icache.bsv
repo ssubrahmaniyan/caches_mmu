@@ -56,11 +56,12 @@ package l1icache;
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
+                           numeric type vaddr,
                            numeric type fbsize,
                            numeric type esize 
                            );
 
-    interface Put#(ICore_request#(paddr,esize)) core_req;
+    interface Put#(ICore_request#(vaddr,esize)) core_req;
     interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(ICache_read_request#(paddr)) read_mem_req;
     interface Put#(ICache_read_response#(TMul#(wordsize,8))) read_mem_resp;
@@ -81,7 +82,7 @@ package l1icache;
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,fbsize,esize)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -103,6 +104,7 @@ package l1icache;
           Add#(d__, 8, respwidth),
           Add#(TAdd#(tagbits, setbits), g__, paddr),
           Add#(h__, 1, blocksize),
+          Add#(l__, paddr, vaddr),
 
           Add#(i__, TLog#(ways), 4),
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
@@ -141,7 +143,7 @@ package l1icache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(ICore_request#(paddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(ICore_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
     // this fifo stores the read request that needs to be sent to the next memory level.
@@ -190,6 +192,7 @@ package l1icache;
     Reg#(Bool) rg_fence_stall <- mkReg(False);
     Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkReg(0);
     Reg#(Bool) rg_replaylatest<-mkReg(False);
+    Wire#(Bool) wr_access_fault <- mkDWire(False);
     // ----------------------------------------------------------------------------------------- //
 
     // -------------------------------- None Cacheable Strcutures ------------------------------ //
@@ -274,10 +277,12 @@ package l1icache;
     
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
+    rule respond_to_core(wr_ram_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit || 
+                                                                        wr_access_fault);
       let {addr, fence, epoch} =ff_core_request.first();
+      Bit#(paddr) phy_addr=truncate(addr);
       Bit#(respwidth) word=0;
-      Bool err=False;
+      Bool err=wr_access_fault;
       let set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       if(wr_ram_response==Hit)begin
         word=wr_ram_hitword;
@@ -334,9 +339,11 @@ package l1icache;
     rule tag_match(ff_core_response.notFull && !rg_miss_ongoing && !rg_polling &&
           !tpl_2(ff_core_request.first()) );
       let {addr, fence, epoch} =ff_core_request.first();
+      Bit#(paddr) phy_addr=truncate(addr);
+      Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(addr);
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= addr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(tagbits) request_tag = addr[v_paddr-1:v_paddr-v_tagbits];
+      Bit#(tagbits) request_tag = phy_addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       Bit#(linewidth) dataline[v_ways];
@@ -367,7 +374,9 @@ package l1icache;
       Bool cache_hit=unpack(|(hit));
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(cache_hit)begin
+      if(|upper_bits==1)
+        wr_access_fault<=True;
+      else if(cache_hit)begin
         wr_ram_response<=Hit;
         wr_ram_hitword<=response_word;
       end
@@ -392,11 +401,11 @@ package l1icache;
     rule check_fb_for_corerequest(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       Bool wordhit=False;
       let {addr, fence, epoch} =ff_core_request.first();
-      Bit#(tagbits) read_tag = addr[v_paddr-1:v_paddr-v_tagbits];
+      Bit#(paddr) phy_addr=truncate(addr);
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index=addr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(addr);
+      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(phy_addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
       Bit#(1) fberr = 0;
@@ -459,11 +468,12 @@ package l1icache;
     // It is not possible at any point of time for rg_fbmissallocate and rg_fbbeingfilled to update
     // the same entry in the FB.
     rule request_to_memory(wr_ram_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                          && wr_nc_response!=Hit &&!fb_full);
+                                          && wr_nc_response!=Hit &&!fb_full && !wr_access_fault);
                                                                                         
       let {addr, fence, epoch} =ff_core_request.first();
-      if(isNonCacheable(addr,wr_cache_enable))begin // TODO make this programmable;
-        ff_nc_read_request.enq(tuple3(addr,0,fromInteger(v_wordbits)));
+      Bit#(paddr) phy_addr = truncate(addr);
+      if(isNonCacheable(phy_addr,wr_cache_enable))begin // TODO make this programmable;
+        ff_nc_read_request.enq(tuple3(phy_addr,0,fromInteger(v_wordbits)));
         if(verbosity!=0)begin
           $display($time,"\tICACHE: Sending IO memory request. Addr: %h",addr);
         end
@@ -473,11 +483,11 @@ package l1icache;
           $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",addr);
           $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
-        addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-        ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+        phy_addr= (phy_addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
+        ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
-        fb_addr[rg_fbmissallocate]<=addr;
+        fb_addr[rg_fbmissallocate]<=phy_addr;
         fb_enables[rg_fbmissallocate]<=0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
       end
@@ -542,7 +552,6 @@ package l1icache;
       // if line is valid and is completely filled.
       let addr=fb_addr[rg_fbwriteback];
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-      Bit#(tagbits) tag = addr[v_paddr-1:v_paddr-v_tagbits];
       if(fb_err[rg_fbwriteback]==0)begin
         let waynum<-replacement.line_replace(set_index, rg_valid[set_index]);
         if(&(rg_valid[set_index])==1)begin
@@ -588,7 +597,7 @@ addr:%h way: %d",
     endrule
 
     interface core_req=interface Put
-      method Action put(ICore_request#(paddr,esize) req)if( ff_core_response.notFull &&
+      method Action put(ICore_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                                 !rg_replaylatest &&  !rg_fence_stall && !fb_full);
         `ifdef perf
           wr_total_access<=1;

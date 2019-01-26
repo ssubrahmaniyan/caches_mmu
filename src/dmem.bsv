@@ -61,8 +61,8 @@ package dmem;
     endfunction
 
   (*synthesize*)
-  module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `ifdef mmu `vaddr, `endif
-                                                                    `dfbsize, `dsbsize, `desize ));
+  module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,`dfbsize, 
+                                                                              `dsbsize, `desize ));
     let ifc();
     mkl1dcache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);

@@ -42,6 +42,7 @@ package l1dcache;
   import ConfigReg::*;
 
   import cache_types::*;
+  `include "cache.defines"
   import mem_config::*;
   import replacement_dcache::*;
   
@@ -50,12 +51,13 @@ package l1dcache;
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
+                           numeric type vaddr,
                            numeric type fbsize,
                            numeric type sbsize,
                            numeric type esize
                            );
 
-    interface Put#(DCore_request#(paddr,TMul#(wordsize,8),esize)) core_req;
+    interface Put#(DCore_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DCore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(DCache_read_request#(paddr)) read_mem_req;
     interface Put#(DCache_read_response#(TMul#(wordsize,8))) read_mem_resp;
@@ -91,7 +93,7 @@ package l1dcache;
   (*conflict_free="allocate_storebuffer,respond_to_core"*)
   (*conflict_free="allocate_storebuffer,request_to_memory"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,fbsize,sbsize,esize)) 
+    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,sbsize,esize)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -115,6 +117,7 @@ package l1dcache;
           Add#(TAdd#(tagbits, setbits), g__, paddr),
           Add#(h__, 1, blocksize),
           Add#(e__, 3, TLog#(respwidth)),
+          Add#(q__, paddr, vaddr),
 
           Add#(i__, TLog#(ways), 4),
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
@@ -181,7 +184,7 @@ package l1dcache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(DCore_request#(paddr,respwidth,esize)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(DCore_request#(vaddr,respwidth,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
@@ -282,6 +285,7 @@ package l1dcache;
     Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <-mkReg(0);
     Reg#(Bit#(blocksize))     rg_fbfillenable <- mkReg(0);
     Reg#(Bool) rg_readdone <-mkDReg(False);
+    Wire#(Bool) wr_access_fault <- mkDWire(False);
     
     Bit#(tagbits) writetag=fb_addr[rg_fbwriteback][v_paddr-1:v_paddr-v_tagbits];
     Bit#(linewidth) writedata=fb_dataline[rg_fbwriteback];
@@ -412,7 +416,7 @@ package l1dcache;
         ff_core_request.deq;
         rg_globaldirty<=False;
         repl.reset_repl;
-        ff_core_response.enq(tuple3(?,0,tpl_3(ff_core_request.first)));
+        ff_core_response.enq(tuple4(?,False,?,tpl_3(ff_core_request.first)));
         `ifdef pysimulate
           ff_meta.enq(0);
         `endif
@@ -446,6 +450,8 @@ package l1dcache;
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
+      Bit#(paddr) phy_addr = truncate(addr);
+      Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(addr);
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= addr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(tagbits) request_tag = addr[v_paddr-1:v_paddr-v_tagbits];
@@ -480,7 +486,9 @@ package l1dcache;
       wr_hitway<=truncate(pack(countZerosLSB(hit)));
       wr_hitline<=hitline;
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(cache_hit)begin
+      if(|upper_bits==1)
+        wr_access_fault<=True;
+      else if(cache_hit)begin
         wr_cache_response<=Hit;
         wr_cache_hitword<=response_word;
       end
@@ -510,11 +518,11 @@ package l1dcache;
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
-      Bit#(tagbits) read_tag = addr[v_paddr-1:v_paddr-v_tagbits];
+      Bit#(paddr) phy_addr = truncate(addr);
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index=addr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(addr);
+      Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(phy_addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
       Bit#(1) fberr =0;
@@ -575,12 +583,13 @@ package l1dcache;
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
+      Bit#(paddr) phy_addr = truncate(addr);
       Bit#(TLog#(respwidth)) shiftamt1 = {store_addr[rg_storetail-1][v_wordbits-1:0],3'b0}; // parameterize for XLEN
       Bit#(respwidth) storemask1 = 0;
       Bit#(respwidth) storemask2 = 0;
       Bool validm1 = store_valid[rg_storetail-1];
       Bool valid = store_valid[rg_storetail];
-      Bit#(TSub#(paddr,wordbits)) wordaddr = truncateLSB(addr);
+      Bit#(TSub#(paddr,wordbits)) wordaddr = truncateLSB(phy_addr);
 
       Bit#(TSub#(paddr,wordbits)) compareaddr1=truncateLSB(store_addr[rg_storetail-1]);
       Bit#(TSub#(paddr,wordbits)) compareaddr2=truncateLSB(store_addr[rg_storetail]);
@@ -623,6 +632,7 @@ package l1dcache;
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
+      Bit#(paddr) phy_addr = truncate(addr);
       Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
       Bit#(TLog#(sbsize)) sbindex = rg_storetail;
     `ifdef atomic
@@ -639,7 +649,7 @@ package l1dcache;
       store_data[sbindex]<=data;
       store_valid[sbindex]<=True;
       store_size[sbindex]<=truncate(size);
-      store_addr[sbindex]<=addr;
+      store_addr[sbindex]<=phy_addr;
       store_fbindex[sbindex]<=fbindex;
       store_io[sbindex]<=pack(wr_allocate_storebuffer);
       store_epoch[sbindex]<=epoch;
@@ -651,14 +661,16 @@ package l1dcache;
 
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit);
+    rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit
+      || wr_access_fault);
     `ifdef atomic
       let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
+      Bit#(paddr) phy_addr = truncate(addr);
       Bit#(respwidth) word=0;
-      Bool err=False;
+      Bool err=wr_access_fault;
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       let offset = (v_respwidth==64)?2:1;
       Bit#(TLog#(respwidth)) loadoffset = {addr[v_wordbits-1:0],3'b0}; // parameterize for XLEN
@@ -703,7 +715,7 @@ package l1dcache;
       if(access!=0 && wr_cache_response==Hit)begin
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
-        fb_addr[rg_fbmissallocate]<=addr;
+        fb_addr[rg_fbmissallocate]<=phy_addr;
         fb_enables[rg_fbmissallocate]<='1;
         fb_dataline[rg_fbmissallocate]<=wr_hitline;
         fb_dirty[rg_fbmissallocate]<=rg_dirty[set_index][wr_hitway];
@@ -728,7 +740,8 @@ package l1dcache;
         endcase;
       if(verbosity!=0)
         $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h access: %d",word,addr,access);
-      ff_core_response.enq(tuple3(word,{1'b0,pack(err)},epoch));
+      Bit#(6) cause = access==0?`Load_access_fault:`Store_access_fault;
+      ff_core_response.enq(tuple4(word,err,cause,epoch));
       ff_core_request.deq;
       `ifdef ASSERT
         Bit#(3) temp=0;
@@ -767,20 +780,21 @@ package l1dcache;
     // the line to be filled is further enqued into the ff_fb_fillindex which is used to identify
     // which line is the memory response to fill in the FB
     rule request_to_memory(wr_cache_response==Miss && !rg_miss_ongoing && wr_fb_response==Miss
-                                         && wr_nc_response!=Hit &&!fb_full);
+                                         && wr_nc_response!=Hit &&!fb_full &&!wr_access_fault);
                                                                                         
     `ifdef atomic
       let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
     `else
       let {addr, fence, epoch, access, size, data} =ff_core_request.first();
     `endif
-      if(!isNonCacheable(addr,wr_cache_enable)) begin
-        addr= (addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-        ff_read_mem_request.enq(tuple3(addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+      Bit#(paddr) phy_addr = truncate(addr);
+      if(!isNonCacheable(phy_addr,wr_cache_enable)) begin
+        phy_addr= (phy_addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
+        ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
         rg_miss_ongoing<=True;
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
-        fb_addr[rg_fbmissallocate]<=addr;
+        fb_addr[rg_fbmissallocate]<=phy_addr;
         fb_enables[rg_fbmissallocate]<=0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
         
@@ -794,14 +808,14 @@ package l1dcache;
       end
       else if(access==0 `ifdef atomic || access==2 `endif )begin
         rg_miss_ongoing<=True;
-        ff_nc_read_request.enq(tuple3(addr,0,size));
+        ff_nc_read_request.enq(tuple3(phy_addr,0,size));
         if(verbosity!=0)begin
           $display($time,"\tDCACHE: Sending IO memory request. Addr: %h",addr);
         end
       end
       else if(access==1)begin
         wr_allocate_storebuffer<=True;
-        ff_core_response.enq(tuple3(?,0,epoch));
+        ff_core_response.enq(tuple4(?,False,?,epoch));
         ff_core_request.deq;
         wr_resp_word<= data;
         if(verbosity!=0)begin
@@ -957,7 +971,7 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
 
 
     interface core_req=interface Put
-      method Action put(DCore_request#(paddr,respwidth,esize) req)if( ff_core_response.notFull &&
+      method Action put(DCore_request#(vaddr,respwidth,esize) req)if( ff_core_response.notFull &&
                  !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty);
         `ifdef perf
           wr_total_access<=1;
