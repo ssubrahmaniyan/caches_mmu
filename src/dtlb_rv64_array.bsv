@@ -364,20 +364,19 @@ package dtlb_rv64_array;
       // Check for instruction page-fault conditions
       Bool page_fault=False;
       Bit#(25) unused_va=va[63:39];
-      // if the upper bits of the virtual address are not signextend versions of bit 38 then fault.
-      if(unused_va!=signExtend(va[38])) begin
-            if(verbosity!=0)
-              $display($time,"\tITLB: Page Fault - 1");
-            ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,True,`Inst_pagefault ));
-      end
       // transparent translation
-      else if(satp_mode==0 || wr_priv==3)begin
-            Bit#(paddr) coreresp = truncate(va);
-            ff_translated.enq(tuple4(signExtend(coreresp),access,False,?));
-            if(verbosity!=0)
-              $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
+      if(satp_mode==0 || wr_priv==3)begin
+        Bit#(paddr) coreresp = truncate(va);
+        Bit#(TSub#(64,paddr)) upper_bits = truncateLSB(va);
+        Bool trap = |upper_bits==1;
+        ff_translated.enq(tuple4(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
+                                                                            `Store_access_fault ));
+        if(verbosity!=0)
+          $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
+        if(unused_va!=signExtend(va[38])) 
+          page_fault=True;
         // pte.a==0 || pte.d==0 and access!=Load
         if(!permissions.a || (!permissions.d && access!=1))
           page_fault=True;
