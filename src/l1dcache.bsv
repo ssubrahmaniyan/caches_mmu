@@ -57,14 +57,14 @@ package l1dcache;
 
     interface Put#(DCore_request#(paddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DCore_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(DMem_read_request#(paddr)) read_mem_req;
-    interface Put#(DMem_read_response#(TMul#(wordsize,8))) read_mem_resp;
-    interface Get#(DMem_read_request#(paddr)) nc_read_req;
-    interface Put#(DMem_read_response#(TMul#(wordsize,8))) nc_read_resp;
+    interface Get#(DCache_read_request#(paddr)) read_mem_req;
+    interface Put#(DCache_read_response#(TMul#(wordsize,8))) read_mem_resp;
+    interface Get#(DCache_read_request#(paddr)) nc_read_req;
+    interface Put#(DCache_read_response#(TMul#(wordsize,8))) nc_read_resp;
     
-    interface Get#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
-    interface Put#(DMem_write_response) write_mem_resp;
-    interface Get#(DMem_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
+    interface Get#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
+    interface Put#(DCache_write_response) write_mem_resp;
+    interface Get#(DCache_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -185,19 +185,19 @@ package l1dcache;
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
-    FIFOF#(DMem_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
+    FIFOF#(DCache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(DMem_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
+    FIFOF#(DCache_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
     
-    FIFOF#(DMem_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
+    FIFOF#(DCache_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(DMem_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
+    FIFOF#(DCache_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
     
-    FIFOF#(DMem_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
+    FIFOF#(DCache_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
     
-    FIFOF#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
+    FIFOF#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
                                                                               <- mkSizedFIFOF(2);
-    FIFOF#(DMem_write_response) ff_write_mem_response  <- mkBypassFIFOF();
+    FIFOF#(DCache_write_response) ff_write_mem_response  <- mkBypassFIFOF();
 
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
@@ -991,27 +991,27 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     endinterface;
     
     interface read_mem_req = interface Get
-      method ActionValue#(DMem_read_request#(paddr)) get;
+      method ActionValue#(DCache_read_request#(paddr)) get;
         ff_read_mem_request.deq;
         return ff_read_mem_request.first;
       endmethod
     endinterface;
 
     interface read_mem_resp= interface Put
-     method Action put(DMem_read_response#(respwidth) resp);
+     method Action put(DCache_read_response#(respwidth) resp);
         ff_read_mem_response.enq(resp);
      endmethod
     endinterface;
     
     interface nc_read_req = interface Get
-      method ActionValue#(DMem_read_request#(paddr)) get;
+      method ActionValue#(DCache_read_request#(paddr)) get;
         ff_nc_read_request.deq;
         return ff_nc_read_request.first;
       endmethod
     endinterface;
 
     interface nc_read_resp= interface Put
-     method Action put(DMem_read_response#(respwidth) resp);
+     method Action put(DCache_read_response#(respwidth) resp);
         ff_nc_read_response.enq(resp);
      endmethod
     endinterface;
@@ -1086,20 +1086,20 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       endmethod
     `endif
     interface write_mem_req = interface Get
-      method ActionValue#(DMem_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) get;
+      method ActionValue#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) get;
         ff_write_mem_request.deq;
         return ff_write_mem_request.first;
       endmethod
     endinterface;
 
     interface write_mem_resp= interface Put
-     method Action put(DMem_write_response resp);
+     method Action put(DCache_write_response resp);
         ff_write_mem_response.enq(resp);
      endmethod
     endinterface;
     
     interface nc_write_req = interface Get
-      method ActionValue#(DMem_write_request#(paddr,TMul#(wordsize,8))) get;
+      method ActionValue#(DCache_write_request#(paddr,TMul#(wordsize,8))) get;
         ff_nc_write_request.deq;
         return ff_nc_write_request.first;
       endmethod
