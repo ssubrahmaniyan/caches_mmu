@@ -40,7 +40,7 @@ package dmem;
 
   import cache_types::*;
   `include "cache.defines"
-`ifdef mmu
+`ifdef supervisor
   import l1dcache_vipt::*;
   `ifdef RV64
     import dtlb_rv64_array::*;
@@ -68,7 +68,7 @@ package dmem;
     return (ifc);
   endmodule
 
-`ifdef mmu
+`ifdef supervisor
   (*synthesize*)
 `ifdef RV64
   module mkdtlb(Ifc_dtlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
@@ -102,16 +102,16 @@ package dmem;
     method Bool storebuffer_empty;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
-  `ifdef mmu
+  `ifdef supervisor
     interface Get#(Tuple2#(Bit#(`vaddr ),Bit#(2))) req_to_ptw;
     interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Bit#(32)) mstatus_from_csr;
-  `endif
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
+  `endif
   `endif
       // ---------------------------------------------------------//
   endinterface
@@ -119,13 +119,13 @@ package dmem;
   (*synthesize*)
   module mkdmem(Ifc_dmem);
     let dcache<-mkdcache;
-  `ifdef mmu
+  `ifdef supervisor
     let dtlb <- mkdtlb;
     mkConnection(dtlb.core_resp,dcache.pa_from_tlb);
   `endif
     interface core_req = interface Put
       method Action put (DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ) req);
-      `ifdef mmu
+      `ifdef supervisor
         `ifdef atomic
           let {addr, fence, sfence, epoch, access, size, data, atomicop} =req;
         `else
@@ -161,7 +161,7 @@ package dmem;
     method cacheable_store    =dcache.cacheable_store;
     method cache_available    =dcache.cache_available;
     method storebuffer_empty  =dcache.storebuffer_empty;
-`ifdef mmu
+`ifdef supervisor
     interface req_to_ptw = dtlb.req_to_ptw;
     interface resp_from_ptw = dtlb.resp_from_ptw;
     interface satp_from_csr = dtlb.satp_from_csr;

@@ -40,7 +40,7 @@ package imem;
 
   import cache_types::*;
   `include "cache.defines"
-`ifdef mmu
+`ifdef supervisor
   import l1icache_vipt::*;
   `ifdef RV64
     import itlb_rv64_array::*;
@@ -68,7 +68,7 @@ package imem;
     return (ifc);
   endmodule
 
-`ifdef mmu
+`ifdef supervisor
   (*synthesize*)
 `ifdef RV64
   module mkitlb(Ifc_itlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
@@ -86,7 +86,7 @@ package imem;
 `endif
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(IMem_request#(`vaddr,`iesize)) core_req;
+    interface Put#(IMem_request#(`vaddr ,`iesize)) core_req;
     interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
     interface Get#(ICache_read_request#(`paddr)) read_mem_req;
     interface Put#(ICache_read_response#(TMul#(`iwords, 8))) read_mem_resp;
@@ -95,15 +95,15 @@ package imem;
     method Action cache_enable(Bool c);
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
-  `ifdef mmu
+  `ifdef supervisor
     interface Get#(Tuple2#(Bit#(`vaddr ),Bit#(2))) req_to_ptw;
     interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-  `endif
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
+  `endif
   `endif
       // ---------------------------------------------------------//
   endinterface
@@ -111,13 +111,13 @@ package imem;
   (*synthesize*)
   module mkimem(Ifc_imem);
     let icache<-mkicache;
-  `ifdef mmu
+  `ifdef supervisor
     let itlb <- mkitlb;
     mkConnection(itlb.core_resp,icache.pa_from_tlb);
   `endif
     interface core_req = interface Put
-      method Action put (IMem_request#(`vaddr,`iesize) req);
-      `ifdef mmu
+      method Action put (IMem_request#(`vaddr ,`iesize) req);
+      `ifdef supervisor
         let {addr, fence, sfence, epoch} =req;
         if(!sfence)
           icache.core_req.put(tuple3(addr, fence, epoch));
@@ -136,7 +136,7 @@ package imem;
     method Action cache_enable (Bool c);
       icache.cache_enable(c);
     endmethod
-`ifdef mmu
+`ifdef supervisor
     interface req_to_ptw = itlb.req_to_ptw;
     interface resp_from_ptw = itlb.resp_from_ptw;
     interface satp_from_csr = itlb.satp_from_csr;

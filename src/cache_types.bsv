@@ -31,7 +31,7 @@ Details:
 package cache_types;
 
     // ----------------- Instruction Memory subsystem types ----------------------------------//
-`ifdef mmu
+`ifdef supervisor
                   // addr, Fence, SFence, epoch
   typedef Tuple4#(Bit#(addr), Bool, Bool, Bit#(esize)) IMem_request#(numeric type addr, 
                                                                           numeric type esize);
@@ -81,7 +81,7 @@ package cache_types;
   typedef Bool DCache_write_response;
 // -------------------------------------------------------------------------------------------//
     // ----------------- Data Memory subsystem types ----------------------------------//
-`ifdef mmu
+`ifdef supervisor
   `ifdef atomic
                   // addr, Fence, sFence, epoch, access_type, access_size data,  atomic_op
     typedef Tuple8#(Bit#(addr), Bool, Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
