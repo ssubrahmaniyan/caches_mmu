@@ -337,7 +337,7 @@ package l1dcache;
     Bool sb_empty=!(any(isTrue,readVReg(store_valid)));
     Wire#(Bool) wr_store_in_progress <- mkDWire(False);
     // ------------------------------------------------------------------------------------------//
-    Bool fill_oppurtunity=(!ff_core_request.notEmpty || !wr_takingrequest) && !fb_empty &&
+    Bool fill_oppurtunity=(!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex!=rg_latest_index) && !wr_store_in_progress;
 
     rule display_stuff;

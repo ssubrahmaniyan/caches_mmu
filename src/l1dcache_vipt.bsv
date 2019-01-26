@@ -340,7 +340,7 @@ package l1dcache_vipt;
     Bool sb_empty=!(any(isTrue,readVReg(store_valid)));
     Wire#(Bool) wr_store_in_progress <- mkDWire(False);
     // ------------------------------------------------------------------------------------------//
-    Bool fill_oppurtunity=(!ff_core_request.notEmpty || !wr_takingrequest) && !fb_empty &&
+    Bool fill_oppurtunity=(!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex!=rg_latest_index) && !wr_store_in_progress;
     // ------------------------------------------------------------------------------------------//
     // ----------------------------- Structures for MMU support ---------------------------------//
@@ -827,6 +827,7 @@ package l1dcache_vipt;
         wr_allocate_storebuffer<=True;
         ff_core_response.enq(tuple4(?,False,?,epoch));
         ff_core_request.deq;
+        ff_from_tlb.deq;
         wr_resp_word<= data;
         if(verbosity!=0)begin
           $display($time,"\tDCACHE: Allocating IO Write in SB for Addr: %h",phy_addr);
@@ -953,9 +954,9 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
           if(verbosity!=0)begin
             $display($time,"\tDCACHE: release from FB firing");
             $display($time,"\tDCACHE: rg_fbwriteback: %d fb_valid: %b fb_enables: %b setindex: %d \
- addr:   %h way: %d fb_dataline: %h fb_dirty: %b",
+ writetag:%h way: %d fb_dirty:%b",
              rg_fbwriteback,fb_valid[rg_fbwriteback],fb_enables[rg_fbwriteback],set_index,
-             fb_addr[rg_fbwriteback], waynum,fb_dataline[rg_fbwriteback],fb_dirty[rg_fbwriteback]);
+             writetag, waynum,fb_dirty[rg_fbwriteback]);
           end
         end
       end
