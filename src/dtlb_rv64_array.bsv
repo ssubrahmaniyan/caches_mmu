@@ -201,7 +201,7 @@ package dtlb_rv64_array;
 
     rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
       if(verbosity>0)
-      $display($time,"\tITLB: Initiliazing TLB");
+      $display($time,"\tDTLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
           tlb_vtag_reg[i][j]<='d0;
@@ -218,7 +218,7 @@ package dtlb_rv64_array;
 
     rule perform_pmp_check;
       if(verbosity>0)
-        $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
+        $display($time,"\tDTLB: Sending Physical Address: ",fshow(ff_translated.first)," to DCACHE");
       let {pa,access,trap,cause} = ff_translated.first;
       // TODO: perform PMP check here
       ff_core_resp.enq(tuple3(pa,trap,cause));
@@ -229,7 +229,7 @@ package dtlb_rv64_array;
       method Action put ((Tuple3#(Bool, Bit#(64), Bit#(2))) req) if(!rg_init && !rg_tlb_miss);
         let {sfence,va,access}=req;
         if(verbosity>0)
-          $display($time,"\tITLB: Recieved Request for VA %h",va);
+          $display($time,"\tDTLB: Recieved Request for VA %h",va);
       // capture input vpns for regular and mega pages.
         if(!sfence)begin
       Bit#(27) inp_vpn_reg=va[38:12];
@@ -372,7 +372,7 @@ package dtlb_rv64_array;
         ff_translated.enq(tuple4(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
                                                                             `Store_access_fault ));
         if(verbosity!=0)
-          $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
+          $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
         if(unused_va!=signExtend(va[38])) 
@@ -396,7 +396,7 @@ package dtlb_rv64_array;
 
         ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,True,`Inst_pagefault ));
             if(verbosity!=0)
-              $display($time,"\tITLB: Page Fault - 2");
+              $display($time,"\tDTLB: Page Fault - 2");
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
@@ -407,7 +407,7 @@ package dtlb_rv64_array;
         end
         else begin
           if(verbosity>1)
-            $display($time,"\tITLB: Recived SFence with VA: %h",va);
+            $display($time,"\tDTLB: Recived SFence with VA: %h",va);
           rg_init<=True;
         end
       endmethod
@@ -488,7 +488,7 @@ package dtlb_rv64_array;
         ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,trap_taken,cause));
         ff_req_queue.deq;
         if(verbosity!=0)
-          $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
+          $display($time,"\tDTLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
         rg_tlb_miss<=True;
       endmethod
     endinterface;
