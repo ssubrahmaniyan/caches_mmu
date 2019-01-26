@@ -91,10 +91,10 @@ package replacement_dcache;
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
         if (verbosity>1)
-          $display("valid: %b index: %d",valid,index);
+          $display("\tDREPL: valid: %b index: %d",valid,index);
         if (&(valid)==1 && &(dirty)==1)begin // if all lines are valid choose one to randomly replace
           if (verbosity>1)
-            $display("replacing line :%d ",readVReg(v_count)[index]);
+            $display("\tDREPL: replacing line :%d ",readVReg(v_count)[index]);
           return readVReg(v_count)[index];
         end
         else if(&(valid)!=1) begin // if any line empty then send that
@@ -118,7 +118,7 @@ package replacement_dcache;
       endmethod
       method Action update_set (Bit#(TLog#(sets)) index, Bit#(TLog#(ways)) way);
         if (verbosity>1)
-          $display("REPL: Updating index: %d",index);
+          $display("DREPL: Updating index: %d",index);
         v_count[index]<=v_count[index]-1;
       endmethod
       method Action reset_repl;
@@ -132,10 +132,10 @@ package replacement_dcache;
             index, Bit#(ways) valid, Bit#(ways) dirty);
         if (&(valid)==1)begin // if all lines are valid choose one to randomly replace
           case (v_count[index]) matches
-            'b?00: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 0"); return 0;end 
-            'b?10: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 1"); return 1;end
-            'b0?1: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 2"); return 2;end
-            default: begin if(verbosity>1) $display($time,"\tREPL: Replacing line: 3"); return 3; end
+            'b?00: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 0"); return 0;end 
+            'b?10: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 1"); return 1;end
+            'b0?1: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 2"); return 2;end
+            default: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 3"); return 3; end
           endcase
         end
         else begin // if any line empty then send that
