@@ -69,7 +69,7 @@ package dtlb_rv64_array;
                           // ppn   , levels , trap
     interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
-    interface Put#(Bit#(32)) mstatus_from_csr;
+    interface Put#(Bit#(64)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
@@ -176,7 +176,7 @@ package dtlb_rv64_array;
 
     // wire which hold the inputs from csr
     Wire#(Bit#(64)) wr_satp <- mkWire();
-    Wire#(Bit#(32)) wr_mstatus <- mkWire();
+    Wire#(Bit#(64)) wr_mstatus <- mkWire();
     Wire#(Bit#(2)) wr_priv <- mkWire();
 
     // local variables extracted from csrs
@@ -420,7 +420,7 @@ package dtlb_rv64_array;
     endinterface;
     
     interface mstatus_from_csr=interface Put
-      method Action put (Bit#(32) mstatus);
+      method Action put (Bit#(64) mstatus);
         wr_mstatus<=mstatus;
       endmethod
     endinterface;

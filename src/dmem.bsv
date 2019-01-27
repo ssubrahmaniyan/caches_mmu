@@ -107,7 +107,7 @@ package dmem;
     interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Bit#(32)) mstatus_from_csr;
+    interface Put#(Bit#(`vaddr )) mstatus_from_csr;
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
