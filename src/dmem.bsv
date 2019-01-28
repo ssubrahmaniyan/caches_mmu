@@ -159,7 +159,7 @@ package dmem;
       dcache.perform_store(currepoch);
     endmethod
     method cacheable_store    =dcache.cacheable_store;
-    method cache_available    =dcache.cache_available;
+      method cache_available    =dcache.cache_available `ifdef supervisor && dtlb.tlb_available `endif ;
     method storebuffer_empty  =dcache.storebuffer_empty;
 `ifdef supervisor
     interface req_to_ptw = dtlb.req_to_ptw;
