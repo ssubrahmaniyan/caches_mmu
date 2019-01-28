@@ -631,7 +631,7 @@ package l1dcache_vipt;
 
     rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
           wr_allocate_storebuffer|| wr_nc_response==Hit) &&  tpl_4(ff_core_request.first)!=0 && 
-          !tpl_2(ff_core_request.first) );
+          !tpl_2(ff_core_request.first) && !wr_trap_from_tlb);
       wr_store_in_progress<=True;
     `ifdef atomic
       let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
@@ -1071,6 +1071,8 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits))) block_offset=
                                     {addr[v_blockbits+v_wordbits-1:0],3'b0};
       mask=mask<<block_offset;
+      if(verbosity>1)
+        $display($time,"\tDCACHE: Performing Store. sbhead:%d",rg_storehead);
       if(epoch==currepoch)begin
         if(io==1)begin
           if(verbosity!=0)begin
@@ -1084,11 +1086,11 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
             wr_upd_fillingmask<=mask;
             wr_upd_fillingdata<=duplicate(data);
             if(verbosity!=0)
-              $display($time,"\tDCACHE: Store to FB being filled. mask: %h data: %h",mask,data);
+              $display($time,"\tDCACHE: Store to FB being filled. Addr:%h Data: %h",addr,data);
           end
           else begin
             if(verbosity!=0)
-              $display($time,"\tDCACHE: Store to FB index: %d. mask: %h data: %h",fbindex,mask,data);
+              $display($time,"\tDCACHE: Store to FB index: %d. addr:%h data: %h",fbindex,addr,data);
             fb_dataline[fbindex]<= (mask&duplicate(data)) |(~mask&fb_dataline[fbindex]);
           end
           fb_dirty[fbindex]<=1'b1;
