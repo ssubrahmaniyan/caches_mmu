@@ -146,15 +146,15 @@ package l1icache_vipt;
     // This fifo stores the request from the core.
     FIFOF#(ICore_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
+    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(ICache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
     
     FIFOF#(ICache_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
 
     // The following wire holds the physical address from TLB
     //Wire#(Tuple3#(Bit#(paddr),Bool,Bit#(6))) wr_from_tlb <- mkWire();
