@@ -71,13 +71,13 @@ package imem;
 `ifdef supervisor
   (*synthesize*)
 `ifdef RV64
-  module mkitlb(Ifc_itlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
+  module mkitlb(Ifc_itlb_rv64_array#(`paddr,8,8,8,1,1,1,`asidwidth));
     let ifc();
     mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
   endmodule
 `else
-  module mkitlb(Ifc_itlb_rv32_array#(`paddr,8,8,1,1,9));
+  module mkitlb(Ifc_itlb_rv32_array#(`paddr,8,8,1,1,`asidwidth));
     let ifc();
     mkitlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);

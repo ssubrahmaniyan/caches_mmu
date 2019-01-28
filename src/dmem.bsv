@@ -71,13 +71,13 @@ package dmem;
 `ifdef supervisor
   (*synthesize*)
 `ifdef RV64
-  module mkdtlb(Ifc_dtlb_rv64_array#(`paddr,8,8,8,1,1,1,9));
+  module mkdtlb(Ifc_dtlb_rv64_array#(`paddr,8,8,8,1,1,1,`asidwidth));
     let ifc();
     mkdtlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
   endmodule
 `else
-  module mkdtlb(Ifc_dtlb_rv32_array#(`paddr,8,8,1,1,9));
+  module mkdtlb(Ifc_dtlb_rv32_array#(`paddr,8,8,1,1,`asidwidth));
     let ifc();
     mkdtlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
     return (ifc);
