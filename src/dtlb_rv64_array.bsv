@@ -75,6 +75,7 @@ package dtlb_rv64_array;
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
   `endif
+    method Bool tlb_available;
   endinterface
 
 
@@ -508,6 +509,7 @@ package dtlb_rv64_array;
         wr_pmp_addr[i] <= pmpadr[i];
     endmethod
   `endif
+    method tlb_available=!rg_tlb_miss && ff_translated.notFull;
 
   endmodule
 endpackage
