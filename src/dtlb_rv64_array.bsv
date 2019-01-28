@@ -499,7 +499,7 @@ package dtlb_rv64_array;
         ff_req_queue.deq;
         if(verbosity!=0)
           $display($time,"\tDTLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
-        rg_tlb_miss<=True;
+        rg_tlb_miss<=False;
       endmethod
     endinterface;
     interface core_resp= interface Get
