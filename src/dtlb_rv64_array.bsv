@@ -215,6 +215,7 @@ package dtlb_rv64_array;
         for(Integer n=0;n<v_giga_size;n=n+1)
           tlb_vtag_giga[m][n]<='d0;
       rg_init<=False;
+      ff_req_queue.deq;
     endrule
 
     rule perform_pmp_check;
@@ -376,32 +377,39 @@ package dtlb_rv64_array;
           $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
-        if(unused_va!=signExtend(va[38])) 
+        if(unused_va!=signExtend(va[38]))begin
           page_fault=True;
+        end
         // pte.a==0 || pte.d==0 and access!=Load
-        if(!permissions.a || (!permissions.d && access!=1))
+        if(!permissions.a || (!permissions.d && access!=0))begin
           page_fault=True;
-        if(access == 1 && !permissions.r && (!permissions.x || mxr==0)) // if not readable and not mxr  executable
+        end
+        if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
           page_fault=True;
-        if(wr_priv==1 && permissions.u && sum==0) // supervisor accessing user
+        end
+        if(wr_priv==1 && permissions.u && sum==0)begin // supervisor accessing user
           page_fault=True;
-        if(!permissions.u && wr_priv==0)
+        end
+        if(!permissions.u && wr_priv==0)begin
           page_fault=True;
+        end
         
         // for Store access
-        if(access == 2 && !permissions.w) // if not readable and not mxr  executable
+        if(access != 0 && !permissions.w)begin // if not readable and not mxr  executable
           page_fault=True;
-        
-        if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
-          page_fault=True;
+        end
 
-        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,True,`Inst_pagefault ));
-            if(verbosity!=0)
+        Bit#(6) cause=access==0?`Load_pagefault:`Store_pagefault;
+        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,page_fault,cause));
+        if(verbosity!=0 && page_fault)
               $display($time,"\tDTLB: Page Fault - 2");
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
-        ff_ptw_req.enq(tuple2(va, access));
+        Bit#(2) ptw_access = access==0?1:2;
+        if(verbosity>1)
+          $display($time,"\tDTLB: DTLBMiss. Sending Address to PTW:%h",va);
+        ff_ptw_req.enq(tuple2(va, ptw_access));
         rg_tlb_miss<=True;
         ff_req_queue.enq(tuple2(va,access));
       end
@@ -410,6 +418,7 @@ package dtlb_rv64_array;
           if(verbosity>1)
             $display($time,"\tDTLB: Recived SFence with VA: %h",va);
           rg_init<=True;
+          ff_req_queue.enq(tuple2(va,access));
         end
       endmethod
     endinterface;

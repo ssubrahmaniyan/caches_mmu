@@ -210,6 +210,7 @@ package itlb_rv64_array;
         for(Integer n=0;n<v_giga_size;n=n+1)
           tlb_vtag_giga[m][n]<='d0;
       rg_init<=False;
+      ff_req_queue.deq;
     endrule
 
     rule perform_pmp_check;
@@ -368,8 +369,9 @@ package itlb_rv64_array;
               $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
           end
           else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
-            if(unused_va!=signExtend(va[38]))
+            if(unused_va!=signExtend(va[38]))begin
               page_fault=True;
+            end
             // pte.x == 0
             if(permissions[3]==0)
               page_fault=True;
@@ -382,15 +384,15 @@ package itlb_rv64_array;
             // pte.u=1 for supervisor
             else if(permissions[4]==1 && wr_priv==1)
               page_fault=True;
-            else if( (|(hit_mega)==1 && ppn0!=0) || (|(hit_giga)==1 && {ppn1,ppn0}!=0) )
-              page_fault=True;
 
-            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-            if(verbosity!=0)
+            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),page_fault,`Inst_pagefault ));
+            if(verbosity!=0 && page_fault)
               $display($time,"\tITLB: Page Fault - 2");
           end
           else begin
             // Send virtual-address and indicate it is an instruction access to the PTW
+            if(verbosity>1)
+              $display($time,"\tITLB: TLBMiss. Sending Address to PTW:%h",va);
             ff_ptw_req.enq(tuple2(va, 0));
             rg_tlb_miss<=True;
             ff_req_queue.enq(va);
@@ -400,6 +402,7 @@ package itlb_rv64_array;
           if(verbosity>1)
             $display($time,"\tITLB: Recived SFence with VA: %h",va);
           rg_init<=True;
+          ff_req_queue.enq(va);
         end
       endmethod
     endinterface;
