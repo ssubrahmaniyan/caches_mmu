@@ -39,29 +39,31 @@ package ptwalk_rv64;
 
   import common_types::*;
   import cache_types::*;
+  `include "cache.defines"
 
   interface Ifc_ptwalk_rv64#(numeric type asid_width);
     interface Put#(Tuple2#(Bit#(64),Bit#(2))) from_tlb;
                           // ppn   , levels , trap
-    interface Get#(Tuple3#(Bit#(64),Bit#(2),Trap_type)) to_tlb;
+    interface Get#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) to_tlb;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(64)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Get#(Bit#(56)) request_to_cache;
-                          // data , err, epoch
-    interface Put#(Tuple3#(Bit#(64),Bit#(1),Bit#(1))) response_frm_cache;
+                          // data , err
+    interface Put#(Tuple2#(Bit#(64),Bit#(1))) response_frm_cache;
   endinterface
 
   typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits,Eq,FShow);
 
   module mkptwalk_rv64(Ifc_ptwalk_rv64#(asid_width));
+    let verbosity=`VERBOSITY;
     let v_asid_width = valueOf(asid_width);
     let pagesize=12;
 
     FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue<-mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(64),Bit#(2),Trap_type)) ff_response<-mkSizedFIFOF(2);
+    FIFOF#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) ff_response<-mkSizedFIFOF(2);
     FIFOF#(Bit#(56)) ff_memory_req<-mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(64),Bit#(1),Bit#(1))) ff_memory_response<-mkSizedFIFOF(2);
+    FIFOF#(Tuple2#(Bit#(64),Bit#(1))) ff_memory_response<-mkSizedFIFOF(2);
 
     // wire which hold the inputs from csr
     Wire#(Bit#(64)) wr_satp <- mkWire();
@@ -84,6 +86,8 @@ package ptwalk_rv64;
 
     rule generate_pte(rg_state==GeneratePTE);
       let {va,access}=ff_req_queue.first();
+      if(verbosity>2)
+        $display($time,"\tPTW: Recieved Request: ",fshow(ff_req_queue.first));
 
       Bit#(9) vpn[3];
       vpn[2]=va[38:30];
@@ -94,6 +98,8 @@ package ptwalk_rv64;
       Bit#(56) a = rg_levels==max_levels?{satp_ppn,12'b0}:rg_a;
 
       Bit#(56) pte_address=a+zeroExtend({vpn[rg_levels],3'b0});
+      if(verbosity>2)
+        $display($time,"\tPTW: Sending PTE-Address to Mem:%h",pte_address);
       ff_memory_req.enq(pte_address);
       rg_state<=WaitForMemory;
     endrule
@@ -105,22 +111,26 @@ package ptwalk_rv64;
       vpn[1]=va[29:21];
       vpn[0]=va[20:12];
 
-      let {pte,err,epoch}=ff_memory_response.first();
+      if(verbosity>2)
+        $display($time,"\tPTW: Received Memory response: ",fshow(ff_memory_response.first),
+        " for VA:%h Access:%d Curr_priv:%d",va,access,wr_priv);
+
+      let {pte,err}=ff_memory_response.first();
       ff_memory_response.deq;
       Bit#(9) ppn0=pte[18:10];
       Bit#(9) ppn1=pte[27:19];
       Bit#(9) ppn2=pte[36:28];
       
       Bool fault=False;
-      Trap_type exception=tagged None;
+      Bit#(6) cause=0;
+      Bool trap=False;
       // capture the permissions of the hit entry from the TLBs
       // 7 6 5 4 3 2 1 0
       // D A G U X W R V
       TLB_permissions permissions=bits_to_permission(truncate(pte));
-      if(err ==1) begin
-        fault=True;
-      end
-      else if (permissions.v || (!permissions.r && permissions.w))begin // access fault generated while doing PTWALK
+      if(verbosity>2)
+        $display($time,"\tPTW. Permissions: ",fshow(permissions));
+      if (!permissions.v || (!permissions.r && permissions.w))begin // access fault generated while doing PTWALK
         fault=True;
       end
       else if(rg_levels==0 && !permissions.r && !permissions.x) begin // level=0 and not leaf PTE
@@ -158,26 +168,32 @@ package ptwalk_rv64;
       end
 
       if(fault || err==1) begin  
+        trap=True;
         if(err==1)
-          exception = access==0?tagged Exception Inst_access_fault: 
-                    access==1?tagged Exception Load_access_fault:
-                    tagged Exception Store_access_fault;
+          cause = access==0?`Inst_access_fault :
+                  access==1?`Load_access_fault :`Store_access_fault;
         else if(fault)
-          exception = access==0?tagged Exception Inst_pagefault: 
-                    access==1?tagged Exception Load_pagefault:
-                    tagged Exception Store_pagefault;
-
-        ff_response.enq(tuple3(pte,rg_levels,exception));
+          cause = access==0?`Inst_pagefault : 
+                      access==1?`Load_pagefault : `Store_pagefault;
+        if(verbosity>2)
+          $display($time,"\tPTW: Generated Error. Cause:%d",cause);
+        ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
         ff_req_queue.deq();
+        rg_state<=GeneratePTE;
         rg_levels<=satp_mode==8?2:3;
       end
       else if (!permissions.r && !permissions.x)begin // this pointer to next level
         rg_levels<=rg_levels-1;
         rg_a<={pte[53:10],12'b0};
         rg_state<=GeneratePTE;
+        if(verbosity>2)
+          $display($time,"\tPTW: Pointer to NextLevel:%h Level:%d",{pte[53:10],12'b0},rg_levels);
       end
       else begin // Leaf PTE found
-        ff_response.enq(tuple3(pte,rg_levels,exception));
+        ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
+        if(verbosity>2)
+          $display($time,"\tPTW: Found Leaf PTE:%h levels: %d",pte,rg_levels);
+        rg_state<=GeneratePTE;
         ff_req_queue.deq();
         rg_levels<=satp_mode==8?2:3;
       end
@@ -190,7 +206,7 @@ package ptwalk_rv64;
     endinterface;
 
     interface to_tlb=interface Get
-      method ActionValue#(Tuple3#(Bit#(64),Bit#(2),Trap_type)) get;
+      method ActionValue#(Tuple4#(Bit#(54),Bit#(2),Bool,Bit#(6))) get;
         ff_response.deq;
         return ff_response.first();
       endmethod
@@ -215,7 +231,7 @@ package ptwalk_rv64;
     endinterface;
 
     interface response_frm_cache=interface Put
-      method Action put (Tuple3#(Bit#(64),Bit#(1),Bit#(1)) resp);
+      method Action put (Tuple2#(Bit#(64),Bit#(1)) resp);
         ff_memory_response.enq(resp);
       endmethod
     endinterface;
