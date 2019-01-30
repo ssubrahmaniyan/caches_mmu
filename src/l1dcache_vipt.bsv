@@ -59,11 +59,12 @@ package l1dcache_vipt;
 
     interface Put#(DCore_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DCore_response#(TMul#(wordsize,8),esize)) core_resp;
+    interface Get#(DCore_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Get#(DCache_read_request#(paddr)) read_mem_req;
     interface Put#(DCache_read_response#(TMul#(wordsize,8))) read_mem_resp;
     interface Get#(DCache_read_request#(paddr)) nc_read_req;
     interface Put#(DCache_read_response#(TMul#(wordsize,8))) nc_read_resp;
-    interface Put#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) pa_from_tlb;
+    interface Put#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) pa_from_tlb;
     
     interface Get#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
     interface Put#(DCache_write_response) write_mem_resp;
@@ -187,6 +188,8 @@ package l1dcache_vipt;
     FIFOF#(DCore_request#(vaddr,respwidth,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(DCore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
+    // This fifo stores the response that needs to be sent back to the PTW.
+    FIFOF#(DCore_response#(respwidth,esize))ff_ptw_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(DCache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
@@ -204,7 +207,7 @@ package l1dcache_vipt;
 
 
     // The following wire holds the physical address from TLB
-    FIFOF#(Tuple3#(Bit#(paddr),Bool,Bit#(6))) ff_from_tlb <- mkBypassFIFOF();
+    FIFOF#(Tuple4#(Bit#(paddr),Bool,Bit#(6), Bool)) ff_from_tlb <- mkBypassFIFOF();
 
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
@@ -452,11 +455,11 @@ package l1dcache_vipt;
     rule tag_match(ff_core_response.notFull && !rg_miss_ongoing && !rg_polling &&
           !tpl_2(ff_core_request.first()) && !fb_full && !rg_replaylatest);
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       Bit#(tagbits) request_tag = phy_addr[v_paddr-1:v_paddr-v_tagbits];
       //Bit#(tagbits) request_tag = addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
@@ -492,7 +495,7 @@ package l1dcache_vipt;
       wr_hitway<=truncate(pack(countZerosLSB(hit)));
       wr_hitline<=hitline;
       Bit#(respwidth) response_word=truncate(hitline>>block_offset);
-      if(trap)begin
+      if(trap || miss)begin
         wr_trap_from_tlb<=True;
       end
       else if(cache_hit)begin
@@ -521,11 +524,11 @@ package l1dcache_vipt;
     rule check_fb_for_corerequest(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       Bool wordhit=False;
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       Bit#(setbits) read_set = addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index=addr[v_blockbits+v_wordbits-1:v_wordbits];
@@ -585,11 +588,11 @@ package l1dcache_vipt;
     rule check_hit_in_storebuffer(ff_core_response.notFull && !tpl_2(ff_core_request.first));
       let offset = (v_respwidth==64)?2:1;
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       Bit#(TLog#(respwidth)) shiftamt1 = {store_addr[rg_storetail-1][v_wordbits-1:0],3'b0}; // parameterize for XLEN
       Bit#(respwidth) storemask1 = 0;
       Bit#(respwidth) storemask2 = 0;
@@ -634,11 +637,11 @@ package l1dcache_vipt;
           !tpl_2(ff_core_request.first) && !wr_trap_from_tlb);
       wr_store_in_progress<=True;
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       Bit#(TLog#(fbsize)) fbindex = (wr_fb_response==Hit)?wr_fbindexhit:rg_fbmissallocate;
       Bit#(TLog#(sbsize)) sbindex = rg_storetail;
     `ifdef atomic
@@ -670,11 +673,11 @@ package l1dcache_vipt;
     rule respond_to_core(wr_cache_response==Hit || wr_fb_response==Hit || wr_nc_response==Hit || 
       wr_trap_from_tlb);
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       Bit#(respwidth) word=0;
       Bool err=False;
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -750,7 +753,10 @@ package l1dcache_vipt;
         cause=`Load_access_fault;
         trap=True;
       end
-      ff_core_response.enq(tuple4(word,trap,cause,epoch));
+      if(trap || (!core_ptw && !miss))
+        ff_core_response.enq(tuple4(word,trap,cause,epoch));
+      else if(core_ptw && !miss)
+        ff_ptw_response.enq(tuple4(word,trap,cause,epoch));
       ff_from_tlb.deq;
       ff_core_request.deq;
       `ifdef ASSERT
@@ -793,11 +799,11 @@ package l1dcache_vipt;
                                          && wr_nc_response!=Hit && !wr_trap_from_tlb &&!fb_full);
                                                                                         
     `ifdef atomic
-      let {addr, fence, epoch, access, size, data, atomicop} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, atomicop, core_ptw} =ff_core_request.first();
     `else
-      let {addr, fence, epoch, access, size, data} =ff_core_request.first();
+      let {addr, fence, epoch, access, size, data, core_ptw} =ff_core_request.first();
     `endif
-      let {phy_addr,trap,cause} = ff_from_tlb.first;
+      let {phy_addr,trap,cause, miss} = ff_from_tlb.first;
       if(!isNonCacheable(phy_addr,wr_cache_enable)) begin
         phy_addr= (phy_addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
         ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
@@ -987,9 +993,9 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
           wr_total_access<=1;
         `endif
       `ifdef atomic
-        let {addr, fence, epoch, access, size, data, atomicop} =req;
+        let {addr, fence, epoch, access, size, data, atomicop,core_ptw} =req;
       `else
-        let {addr, fence, epoch, access, size, data} =req;
+        let {addr, fence, epoch, access, size, data, core_ptw} =req;
       `endif
         Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
@@ -1011,6 +1017,13 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       method ActionValue#(DCore_response#(respwidth,esize)) get();
         ff_core_response.deq;
         return ff_core_response.first;
+      endmethod
+    endinterface;
+    
+    interface ptw_resp = interface Get
+      method ActionValue#(DCore_response#(respwidth,esize)) get();
+        ff_ptw_response.deq;
+        return ff_ptw_response.first;
       endmethod
     endinterface;
     
@@ -1048,7 +1061,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
       endinterface;
     `endif 
     interface pa_from_tlb = interface Put
-      method Action put(Tuple3#(Bit#(paddr),Bool,Bit#(6)) t);
+      method Action put(Tuple4#(Bit#(paddr),Bool,Bit#(6),Bool) t);
         ff_from_tlb.enq(t);
       endmethod
     endinterface;

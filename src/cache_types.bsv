@@ -60,12 +60,12 @@ package cache_types;
 
 // ---------------------- Data Cache types ---------------------------------------------//
 `ifdef atomic
-                  // addr, Fence, epoch, access_type, access_size data,  atomic_op
-  typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
+                  // addr, Fence, epoch, access_type, access_size data,  atomic_op core_ptw
+  typedef Tuple8#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5), Bool) 
                     DCore_request#(numeric type addr, numeric type data, numeric type esize);
 `else
-                  // addr, Fence, epoch, access_type, access_size data,  atomic_op
-  typedef Tuple6#(Bit#(addr), Bool, Bit#(esize), Bit#(1), Bit#(3), Bit#(data)) 
+                  // addr, Fence, epoch, access_type, access_size data,  atomic_op, core_ptw
+  typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(1), Bit#(3), Bit#(data), Bool) 
                     DCore_request#(numeric type addr, numeric type data, numeric type esize);
 `endif
                  // word , err , epoch

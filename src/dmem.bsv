@@ -70,6 +70,7 @@ package dmem;
 
 `ifdef supervisor
   (*synthesize*)
+  (*conflict_free="resp_from_ptw_put,core_req_put"*)
 `ifdef RV64
   module mkdtlb(Ifc_dtlb_rv64_array#(`paddr,8,8,8,1,1,1,`asidwidth));
     let ifc();
@@ -86,8 +87,9 @@ package dmem;
 `endif
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(DMem_request#(`vaddr, TMul#( `dwords ,8),`desize )) core_req;
+    interface Put#(Tuple2#(DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ), Bool)) core_req;
     interface Get#(ICore_response#(TMul#(`dwords, 8), `desize )) core_resp;
+    interface Get#(DCore_response#(TMul#(`dwords,8), `desize)) ptw_resp;
     interface Get#(DCache_read_request#(`paddr)) read_mem_req;
     interface Put#(DCache_read_response#(TMul#(`dwords, 8))) read_mem_resp;
     interface Get#(DCache_read_request#(`paddr)) nc_read_req;
@@ -103,7 +105,7 @@ package dmem;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
-    interface Get#(Tuple2#(Bit#(`vaddr ),Bit#(2))) req_to_ptw;
+    interface Get#(DCore_request#(64, 64, `desize )) req_to_ptw;
     interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
@@ -124,27 +126,34 @@ package dmem;
     mkConnection(dtlb.core_resp,dcache.pa_from_tlb);
   `endif
     interface core_req = interface Put
-      method Action put (DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ) req);
+      method Action put (Tuple2#(DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ),Bool) r);
+        // core_ptw:False=Core True=PTW
+        let {req, core_ptw} = r;
       `ifdef supervisor
         `ifdef atomic
           let {addr, fence, sfence, epoch, access, size, data, atomicop} =req;
         `else
           let {addr, fence, sfence, epoch, access, size, data} =req;
         `endif
-        if(!sfence)
+        if(core_ptw || !sfence)
           `ifdef atomic
-            dcache.core_req.put(tuple7(addr, fence, epoch, access, size, data, atomicop));
+            dcache.core_req.put(tuple8(addr, fence, epoch, access, size, data, atomicop, core_ptw));
           `else
-            dcache.core_req.put(tuple6(addr, fence, epoch, access, size, data));
+            dcache.core_req.put(tuple6(addr, fence, epoch, access, size, data, core_ptw));
           `endif
         if(!fence)
-          dtlb.core_req.put(tuple3(sfence,addr,access));
+          `ifdef atomic
+            dtlb.core_req.put(tuple8(addr, sfence, epoch, access, size, data, atomicop, core_ptw));
+          `else
+            dtlb.core_req.put(tuple6(addr, sfence, epoch, access, size, data, core_ptw));
+          `endif
       `else
         dcache.core_req.put(req);
       `endif
       endmethod
     endinterface;
     interface core_resp = dcache.core_resp;
+    interface ptw_resp = dcache.ptw_resp;
     interface read_mem_req= dcache.read_mem_req;
     interface read_mem_resp = dcache.read_mem_resp;
     interface nc_read_req = dcache.nc_read_req;

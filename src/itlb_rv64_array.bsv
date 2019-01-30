@@ -50,6 +50,7 @@ package itlb_rv64_array;
   import mem_config::*;
   import replacement::*;
   `include "cache.defines"
+  import cache_types::*;
 
   interface Ifc_itlb_rv64_array#(
       numeric type paddr,
@@ -65,7 +66,7 @@ package itlb_rv64_array;
     interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
-    interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
+    interface Get#(DCore_request#(64, 64, `desize )) req_to_ptw;
                           // ppn   , levels , trap
     interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
@@ -185,7 +186,7 @@ package itlb_rv64_array;
     // FIFO to hold the next input
     FIFOF#(Bit#(64)) ff_req_queue <- mkSizedFIFOF(1);
     FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(64, 64, `desize )) ff_ptw_req <- mkSizedFIFOF(2);
     FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
@@ -393,7 +394,11 @@ package itlb_rv64_array;
             // Send virtual-address and indicate it is an instruction access to the PTW
             if(verbosity>1)
               $display($time,"\tITLB: TLBMiss. Sending Address to PTW:%h",va);
-            ff_ptw_req.enq(tuple2(va, 0));
+          `ifdef atomic
+            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, ?, True));
+          `else
+            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, True));
+          `endif
             rg_tlb_miss<=True;
             ff_req_queue.enq(va);
           end
@@ -420,7 +425,7 @@ package itlb_rv64_array;
     endinterface;
 
     interface req_to_ptw = interface Get
-      method ActionValue#(Tuple2#(Bit#(64),Bit#(2))) get;
+      method ActionValue#(DCore_request#(64, 64, `desize )) get;
         ff_ptw_req.deq;
         return ff_ptw_req.first;
       endmethod

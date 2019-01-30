@@ -42,28 +42,28 @@ package ptwalk_rv64;
   `include "cache.defines"
 
   interface Ifc_ptwalk_rv64#(numeric type asid_width);
-    interface Put#(Tuple2#(Bit#(64),Bit#(2))) from_tlb;
+    interface Put#(DCore_request#(64, 64, `desize )) from_tlb;
                           // ppn   , levels , trap
     interface Get#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) to_tlb;
     interface Put#(Bit#(64)) satp_from_csr;
     interface Put#(Bit#(64)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Get#(Bit#(56)) request_to_cache;
+    interface Get#(DCore_request#(64, 64, `desize )) request_to_cache;
                           // data , err
-    interface Put#(Tuple2#(Bit#(64),Bit#(1))) response_frm_cache;
+    interface Put#(DCore_response#(TMul#(`dwords,8), `desize )) response_frm_cache;
   endinterface
 
-  typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits,Eq,FShow);
+  typedef enum {ReSendReq, WaitForMemory, GeneratePTE} State deriving(Bits,Eq,FShow);
 
   module mkptwalk_rv64(Ifc_ptwalk_rv64#(asid_width));
     let verbosity=`VERBOSITY;
     let v_asid_width = valueOf(asid_width);
     let pagesize=12;
 
-    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue<-mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(64, 64, `desize )) ff_req_queue<-mkSizedFIFOF(2);
     FIFOF#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) ff_response<-mkSizedFIFOF(2);
-    FIFOF#(Bit#(56)) ff_memory_req<-mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(64),Bit#(1))) ff_memory_response<-mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(64, 64, `desize )) ff_memory_req<-mkSizedFIFOF(2);
+    FIFOF#(DCore_response#(TMul#(`dwords,8), `desize )) ff_memory_response<-mkSizedFIFOF(2);
 
     // wire which hold the inputs from csr
     Wire#(Bit#(64)) wr_satp <- mkWire();
@@ -84,8 +84,29 @@ package ptwalk_rv64;
 
     Reg#(State) rg_state<- mkReg(GeneratePTE);
 
+    rule resend_core_req_to_cache(rg_state==ReSendReq);
+      if(verbosity>2)
+       $display($time,"\tPTW: Resending core request: ",fshow(ff_req_queue.first));
+      `ifdef atomic
+        let {va, sfence, epoch, access, size, data, atomicop,core_ptw} =ff_req_queue.first;
+      `else
+        let {va, sfence, epoch, access, size, data, core_ptw} =ff_req_queue.first;
+      `endif
+      `ifdef atomic
+        ff_memory_req.enq(tuple8(va, False ,epoch, access, size, data, atomicop, False));
+      `else
+        ff_memory_req.enq(tuple8(va, False ,epoch, access, size, data, False));
+      `endif
+        ff_req_queue.deq();
+        rg_state<=GeneratePTE;
+    endrule
+
     rule generate_pte(rg_state==GeneratePTE);
-      let {va,access}=ff_req_queue.first();
+      `ifdef atomic
+        let {va, sfence, epoch, access, size, data, atomicop,core_ptw} =ff_req_queue.first;
+      `else
+        let {va, sfence, epoch, access, size, data, core_ptw} =ff_req_queue.first;
+      `endif
       if(verbosity>2)
         $display($time,"\tPTW: Recieved Request: ",fshow(ff_req_queue.first));
 
@@ -100,12 +121,21 @@ package ptwalk_rv64;
       Bit#(56) pte_address=a+zeroExtend({vpn[rg_levels],3'b0});
       if(verbosity>2)
         $display($time,"\tPTW: Sending PTE-Address to Mem:%h",pte_address);
-      ff_memory_req.enq(pte_address);
+      //ff_memory_req.enq(pte_address);
+      `ifdef atomic
+        ff_memory_req.enq(tuple8(signExtend(pte_address), False,epoch, 0, 3, ?, ?, True));
+      `else
+        ff_memory_req.enq(tuple8(signExtend(pte_address), False,epoch, 0, 3, ?, True));
+      `endif
       rg_state<=WaitForMemory;
     endrule
 
     rule check_pte(rg_state==WaitForMemory);
-      let {va,access}=ff_req_queue.first();
+      `ifdef atomic
+        let {va, sfence, epoch, access, size, data, atomicop,core_ptw} =ff_req_queue.first;
+      `else
+        let {va, sfence, epoch, access, size, data, core_ptw} =ff_req_queue.first;
+      `endif
       Bit#(9) vpn[3];
       vpn[2]=va[38:30];
       vpn[1]=va[29:21];
@@ -115,7 +145,7 @@ package ptwalk_rv64;
         $display($time,"\tPTW: Received Memory response: ",fshow(ff_memory_response.first),
         " for VA:%h Access:%d Curr_priv:%d",va,access,wr_priv);
 
-      let {pte,err}=ff_memory_response.first();
+      let {pte,err,c,epochn}=ff_memory_response.first();
       ff_memory_response.deq;
       Bit#(9) ppn0=pte[18:10];
       Bit#(9) ppn1=pte[27:19];
@@ -142,23 +172,23 @@ package ptwalk_rv64;
           fault=True;
 
         // for execute access
-        if(access == 0  && !permissions.x)
+        if(access == 3  && !permissions.x)
           fault=True;
-        if(access == 0  && permissions.x && permissions.u && wr_priv==1)
+        if(access == 3  && permissions.x && permissions.u && wr_priv==1)
           fault=True;
-        if(access == 0  && permissions.x && !permissions.u && wr_priv==0)
+        if(access == 3  && permissions.x && !permissions.u && wr_priv==0)
           fault=True;
 
         // for load access
-        if(access == 1 && !permissions.r && (!permissions.x || mxr==0)) // if not readable and not mxr  executable
+        if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) // if not readable and not mxr  executable
           fault=True;
-        if(access != 0 && wr_priv==1 && permissions.u && sum==0) // supervisor accessing user
+        if(access != 3 && wr_priv==1 && permissions.u && sum==0) // supervisor accessing user
           fault=True;
-        if(access != 0 && !permissions.u && wr_priv==0)
+        if(access != 3 && !permissions.u && wr_priv==0)
           fault=True;
         
         // for Store access
-        if(access == 2 && !permissions.w) // if not readable and not mxr  executable
+        if((access == 2 || access==1) && !permissions.w) // if not readable and not mxr  executable
           fault=True;
 
         // mis-aligned page fault
@@ -167,16 +197,22 @@ package ptwalk_rv64;
           fault=True;
       end
 
-      if(fault || err==1) begin  
+      if(fault || err) begin  
         trap=True;
-        if(err==1)
-          cause = access==0?`Inst_access_fault :
-                  access==1?`Load_access_fault :`Store_access_fault;
+        if(err)
+          cause = access==3?`Inst_access_fault :
+                  access==0?`Load_access_fault :`Store_access_fault;
         else if(fault)
-          cause = access==0?`Inst_pagefault : 
-                      access==1?`Load_pagefault : `Store_pagefault;
+          cause = access==3?`Inst_pagefault : 
+                      access==0?`Load_pagefault : `Store_pagefault;
         if(verbosity>2)
           $display($time,"\tPTW: Generated Error. Cause:%d",cause);
+        if(access!=3)
+        `ifdef atomic
+          ff_memory_req.enq(tuple8(va, True,epoch, access, size, zeroExtend(cause), ?, True));
+        `else
+          ff_memory_req.enq(tuple8(va, True,epoch, access, size, zeroExtend(cause), True));
+        `endif
         ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
         ff_req_queue.deq();
         rg_state<=GeneratePTE;
@@ -193,14 +229,18 @@ package ptwalk_rv64;
         ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
         if(verbosity>2)
           $display($time,"\tPTW: Found Leaf PTE:%h levels: %d",pte,rg_levels);
-        rg_state<=GeneratePTE;
-        ff_req_queue.deq();
+        if(access!=3)
+          rg_state<=ReSendReq;
+        else begin
+          rg_state<=GeneratePTE;
+          ff_req_queue.deq;
+        end
         rg_levels<=satp_mode==8?2:3;
       end
     endrule
 
     interface from_tlb=interface Put
-      method Action put(Tuple2#(Bit#(64),Bit#(2)) req);
+      method Action put(DCore_request#(64, 64, `desize ) req);
         ff_req_queue.enq(req);
       endmethod
     endinterface;
@@ -224,14 +264,14 @@ package ptwalk_rv64;
       endmethod
     endinterface;
     interface request_to_cache=interface Get
-      method ActionValue#(Bit#(56)) get;
+      method ActionValue#(DCore_request#(64, 64, `desize )) get;
         ff_memory_req.deq;
         return ff_memory_req.first();
       endmethod
     endinterface;
 
     interface response_frm_cache=interface Put
-      method Action put (Tuple2#(Bit#(64),Bit#(1)) resp);
+      method Action put (DCore_response#(TMul#(`dwords,8), `desize ) resp);
         ff_memory_response.enq(resp);
       endmethod
     endinterface;

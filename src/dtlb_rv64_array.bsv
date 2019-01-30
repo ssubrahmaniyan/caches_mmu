@@ -61,11 +61,12 @@ package dtlb_rv64_array;
       numeric type mega_ways,
       numeric type giga_ways,
       numeric type asid_width);
-    interface Put#(Tuple3#(Bool, Bit#(64), Bit#(2))) core_req;
-    interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
+    //interface Put#(Tuple4#(Bool, Bit#(64), Bit#(2),Bool)) core_req;
+    interface Put#(DCore_request#(64,64,`desize )) core_req;
+    interface Get#(Tuple4#(Bit#(paddr), Bool, Bit#(6), Bool)) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
-    interface Get#(Tuple2#(Bit#(64),Bit#(2))) req_to_ptw;
+    interface Get#(DCore_request#(64, 64, `desize )) req_to_ptw;
                           // ppn   , levels , trap
     interface Put#(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(64)) satp_from_csr;
@@ -188,10 +189,12 @@ package dtlb_rv64_array;
     Bit#(1) sum = wr_mstatus[18];
 
     // FIFO to hold the next input
-    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(1);
-    FIFOF#(Tuple4#(Bit#(paddr), Bit#(2),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
+    //FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(1);
+    Reg#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkReg(?);
+    FIFOF#(Tuple5#(Bit#(paddr), Bit#(2),Bool, Bit#(6), Bool)) ff_translated <- mkSizedFIFOF(2);
+    //FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(64,64,`desize) ) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
 
@@ -202,7 +205,7 @@ package dtlb_rv64_array;
 
     rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
       if(verbosity>0)
-      $display($time,"\tDTLB: Initiliazing TLB");
+        $display($time,"\tDTLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
           tlb_vtag_reg[i][j]<='d0;
@@ -215,25 +218,28 @@ package dtlb_rv64_array;
         for(Integer n=0;n<v_giga_size;n=n+1)
           tlb_vtag_giga[m][n]<='d0;
       rg_init<=False;
-      ff_req_queue.deq;
     endrule
 
-    rule perform_pmp_check;
+    rule perform_pmp_check(!rg_init);
       if(verbosity>0)
         $display($time,"\tDTLB: Sending Physical Address: ",fshow(ff_translated.first)," to DCACHE");
-      let {pa,access,trap,cause} = ff_translated.first;
+      let {pa,access,trap,cause, miss} = ff_translated.first;
       // TODO: perform PMP check here
-      ff_core_resp.enq(tuple3(pa,trap,cause));
+      ff_core_resp.enq(tuple4(pa,trap,cause,miss));
       ff_translated.deq;
     endrule
 
     interface core_req=interface Put
-      method Action put ((Tuple3#(Bool, Bit#(64), Bit#(2))) req) if(!rg_init && !rg_tlb_miss);
-        let {sfence,va,access}=req;
-        if(verbosity>0)
-          $display($time,"\tDTLB: Recieved Request for VA %h",va);
+      method Action put (DCore_request#(64, 64, `desize) req) if(!rg_init);
+      `ifdef atomic
+        let {va, sfence, epoch, access, size, data, atomicop,core_ptw} =req;
+      `else
+        let {va, sfence, epoch, access, size, data, core_ptw} =req;
+      `endif
+      Bool init_tlb = !core_ptw && sfence;
+      if(verbosity>0)
+        $display($time,"\tDTLB: Recieved Request.", fshow(req));
       // capture input vpns for regular and mega pages.
-        if(!sfence)begin
       Bit#(27) inp_vpn_reg=va[38:12];
       Bit#(18) inp_vpn_mega=va[38:21];
       Bit#(9) inp_vpn_giga=va[38:30];
@@ -365,61 +371,84 @@ package dtlb_rv64_array;
       Bit#(26) ppn2=physical_address[43:18];
       // Check for instruction page-fault conditions
       Bool page_fault=False;
+      Bit#(6) cause=access==0?`Load_pagefault:`Store_pagefault;
       Bit#(25) unused_va=va[63:39];
-      // transparent translation
-      if(satp_mode==0 || wr_priv==3)begin
-        Bit#(paddr) coreresp = truncate(va);
-        Bit#(TSub#(64,paddr)) upper_bits = truncateLSB(va);
-        Bool trap = |upper_bits==1;
-        ff_translated.enq(tuple4(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
-                                                                            `Store_access_fault ));
-        if(verbosity!=0)
-          $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
-      end
-      else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
-        if(unused_va!=signExtend(va[38]))begin
+      if(!init_tlb)begin
+        // transparent translation
+        if(core_ptw && sfence)begin
+          cause = truncate(data);
           page_fault=True;
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause ,
+                                                                                            False));
+          if(verbosity!=0)
+            $display($time,"\tDTLB: Forwarding Trap");
+          if(rg_tlb_miss) begin
+            rg_tlb_miss<=False;
+            $display($time,"\tRESETING TLB");
+          end
         end
-        // pte.a==0 || pte.d==0 and access!=Load
-        if(!permissions.a || (!permissions.d && access!=0))begin
-          page_fault=True;
+        else if(satp_mode==0 || wr_priv==3 || core_ptw)begin
+          Bit#(paddr) coreresp = truncate(va);
+          Bit#(TSub#(64,paddr)) upper_bits = truncateLSB(va);
+          Bool trap = |upper_bits==1;
+          ff_translated.enq(tuple5(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
+                                                           `Store_access_fault , False ));
+          if(verbosity!=0)
+            $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
         end
-        if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
-          page_fault=True;
-        end
-        if(wr_priv==1 && permissions.u && sum==0)begin // supervisor accessing user
-          page_fault=True;
-        end
-        if(!permissions.u && wr_priv==0)begin
-          page_fault=True;
-        end
-        
-        // for Store access
-        if(access != 0 && !permissions.w)begin // if not readable and not mxr  executable
-          page_fault=True;
-        end
+        else if(|(hit_reg)==1 || |(hit_mega)==1 || |(hit_giga)==1 ) begin
+          if(unused_va!=signExtend(va[38]))begin
+            page_fault=True;
+          end
+          // pte.a==0 || pte.d==0 and access!=Load
+          if(!permissions.a || (!permissions.d && access!=0))begin
+            page_fault=True;
+          end
+          if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
+            page_fault=True;
+          end
+          if(wr_priv==1 && permissions.u && sum==0)begin // supervisor accessing user
+            page_fault=True;
+          end
+          if(!permissions.u && wr_priv==0)begin
+            page_fault=True;
+          end
+          
+          // for Store access
+          if(access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+            page_fault=True;
+          end
 
-        Bit#(6) cause=access==0?`Load_pagefault:`Store_pagefault;
-        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,page_fault,cause));
-        if(verbosity!=0 && page_fault)
-              $display($time,"\tDTLB: Page Fault - 2");
-      end
-      else begin
-        // Send virtual-address and indicate it is an instruction access to the PTW
-        Bit#(2) ptw_access = access==0?1:2;
-        if(verbosity>1)
-          $display($time,"\tDTLB: DTLBMiss. Sending Address to PTW:%h",va);
-        ff_ptw_req.enq(tuple2(va, ptw_access));
-        rg_tlb_miss<=True;
-        ff_req_queue.enq(tuple2(va,access));
-      end
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause ,
+                                                                                            False));
+          if(verbosity!=0 && page_fault)
+                $display($time,"\tDTLB: Page Fault - 2");
+          if(rg_tlb_miss) begin
+            rg_tlb_miss<=False;
+            $display($time,"\tRESETING TLB");
+          end
         end
         else begin
+          // Send virtual-address and indicate it is an instruction access to the PTW
           if(verbosity>1)
-            $display($time,"\tDTLB: Recived SFence with VA: %h",va);
-          rg_init<=True;
-          ff_req_queue.enq(tuple2(va,access));
+            $display($time,"\tDTLB: DTLBMiss. Sending Address to PTW:%h",va);
+        `ifdef atomic
+          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, atomicop, core_ptw));
+        `else
+          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, core_ptw));
+        `endif
+          rg_tlb_miss<=True;
+          ff_req_queue<=(tuple2(va,access));
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause, True));
         end
+      end
+      else begin
+        if(verbosity>1)
+          $display($time,"\tDTLB: Recived SFence with VA: %h",va);
+        rg_init<=True;
+        if(rg_tlb_miss && !core_ptw)
+          rg_tlb_miss<=False;
+      end
       endmethod
     endinterface;
 
@@ -442,17 +471,17 @@ package dtlb_rv64_array;
     endinterface;
 
     interface req_to_ptw = interface Get
-      method ActionValue#(Tuple2#(Bit#(64),Bit#(2))) get;
+      method ActionValue#(DCore_request#(64, 64, `desize )) get;
         ff_ptw_req.deq;
         return ff_ptw_req.first;
       endmethod
     endinterface;
     interface resp_from_ptw = interface Put
-      method Action put(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6)) resp)if(rg_tlb_miss && !rg_init);
+      method Action put(Tuple4#(Bit#(54),Bit#(2),Bool, Bit#(6)) resp)if(!rg_init);
         // This will then cause the rule access_tlb_on_request to fire again
         // which cause a hit in the tlb now and thus respond back to the core.
         let {pte, levels, trap_taken, cause}=resp;
-        let {va,access}=ff_req_queue.first();
+        let {va,access}=ff_req_queue;
         Bit#(27) vpn_reg=va[38:12];
         Bit#(TLog#(reg_size)) index_reg=truncate(vpn_reg);
         
@@ -495,15 +524,12 @@ package dtlb_rv64_array;
           physical_address={pte[53:19],vpn0};
         else
           physical_address={pte[53:28],vpn1,vpn0};
-        ff_translated.enq(tuple4(truncate({physical_address,page_offset}),access,trap_taken,cause));
-        ff_req_queue.deq;
         if(verbosity!=0)
-          $display($time,"\tDTLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
-        rg_tlb_miss<=False;
+          $display($time,"\tDTLB: response from PTW. PhyAddr: %h",{physical_address,page_offset});
       endmethod
     endinterface;
     interface core_resp= interface Get
-      method ActionValue#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) get;
+      method ActionValue#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) get;
         ff_core_resp.deq;
         return ff_core_resp.first();
       endmethod
