@@ -54,7 +54,7 @@ package dmem;
     function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
 	    if(!cacheable)
 	  	  return True;
-      else if(addr<'h8000000)
+      else if(addr<'h80000000)
         return True;
 	    else
 	  	  return False;
