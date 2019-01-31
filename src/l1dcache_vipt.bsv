@@ -632,7 +632,7 @@ package l1dcache_vipt;
       wr_sb_mask<=storemask1|storemask2;
     endrule
 
-    rule allocate_storebuffer( (wr_cache_response==Hit || wr_fb_response==Hit ||
+    rule allocate_storebuffer( (wr_cache_response==Hit || (wr_fb_response==Hit && wr_fb_err==0) ||
           wr_allocate_storebuffer|| wr_nc_response==Hit) &&  tpl_4(ff_core_request.first)!=0 && 
           !tpl_2(ff_core_request.first) && !wr_trap_from_tlb);
       wr_store_in_progress<=True;
@@ -725,6 +725,7 @@ package l1dcache_vipt;
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
         fb_addr[rg_fbmissallocate]<=phy_addr;
+        fb_err[rg_fbmissallocate]<=0;
         fb_enables[rg_fbmissallocate]<='1;
         fb_dataline[rg_fbmissallocate]<=wr_hitline;
         fb_dirty[rg_fbmissallocate]<=rg_dirty[set_index][wr_hitway];
@@ -750,7 +751,10 @@ package l1dcache_vipt;
       if(verbosity!=0)
         $display($time,"\tDCACHE: Sending response to core. Word: %h for address: %h access: %d",word,addr,access);
       if(!trap && err)begin
+        if(access==0)
         cause=`Load_access_fault;
+        else
+          cause=`Store_access_fault;
         trap=True;
       end
       if(trap || (!core_ptw && !miss))
@@ -811,6 +815,7 @@ package l1dcache_vipt;
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
         fb_addr[rg_fbmissallocate]<=phy_addr;
+        fb_err[rg_fbmissallocate]<=0;
         fb_enables[rg_fbmissallocate]<=0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
         
@@ -967,6 +972,9 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
         end
       end
       else begin 
+        if(verbosity!=0)begin
+          $display($time,"\tDCACHE: Release for Erroneous line dropped");
+        end
         fb_valid[rg_fbwriteback]<= False;
         rg_fbwriteback<=rg_fbwriteback+1;
       end
