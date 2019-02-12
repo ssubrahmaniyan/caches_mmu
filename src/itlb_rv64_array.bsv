@@ -201,15 +201,15 @@ package itlb_rv64_array;
         $display($time,"\tITLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
-          tlb_vtag_reg[i][j]<='d0;
+          tlb_pte_reg[i][j]<='d0;
 
       for(Integer k=0;k<v_mega_ways;k=k+1) 
         for(Integer l=0;l<v_mega_size;l=l+1)
-          tlb_vtag_mega[k][l]<='d0;
+          tlb_pte_mega[k][l]<='d0;
       
       for(Integer m=0;m<v_giga_ways;m=m+1) 
         for(Integer n=0;n<v_giga_size;n=n+1)
-          tlb_vtag_giga[m][n]<='d0;
+          tlb_pte_giga[m][n]<='d0;
       rg_init<=False;
       ff_req_queue.deq;
     endrule

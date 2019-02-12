@@ -187,6 +187,8 @@ package dtlb_rv64_array;
     Bit#(4) satp_mode = wr_satp[63:60];
     Bit#(1) mxr = wr_mstatus[19];
     Bit#(1) sum = wr_mstatus[18];
+    Bit#(2) mpp = wr_mstatus[12:11];
+    Bit#(1) mprv = wr_mstatus[17];
 
     // FIFO to hold the next input
     //FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(1);
@@ -208,15 +210,15 @@ package dtlb_rv64_array;
         $display($time,"\tDTLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
-          tlb_vtag_reg[i][j]<='d0;
+          tlb_pte_reg[i][j]<='d0;
 
       for(Integer k=0;k<v_mega_ways;k=k+1) 
         for(Integer l=0;l<v_mega_size;l=l+1)
-          tlb_vtag_mega[k][l]<='d0;
+          tlb_pte_mega[k][l]<='d0;
       
       for(Integer m=0;m<v_giga_ways;m=m+1) 
         for(Integer n=0;n<v_giga_size;n=n+1)
-          tlb_vtag_giga[m][n]<='d0;
+          tlb_pte_giga[m][n]<='d0;
       rg_init<=False;
     endrule
 
@@ -373,6 +375,7 @@ package dtlb_rv64_array;
       Bool page_fault=False;
       Bit#(6) cause=access==0?`Load_pagefault:`Store_pagefault;
       Bit#(25) unused_va=va[63:39];
+      Bit#(2) priv = mprv==0?wr_priv:mpp;
       if(!init_tlb)begin
         // transparent translation
         if(core_ptw && sfence)begin
@@ -387,7 +390,7 @@ package dtlb_rv64_array;
             $display($time,"\tRESETING TLB");
           end
         end
-        else if(satp_mode==0 || wr_priv==3 || core_ptw)begin
+        else if(satp_mode==0 || priv==3 || core_ptw)begin
           Bit#(paddr) coreresp = truncate(va);
           Bit#(TSub#(64,paddr)) upper_bits = truncateLSB(va);
           Bool trap = |upper_bits==1;
@@ -407,10 +410,10 @@ package dtlb_rv64_array;
           if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
             page_fault=True;
           end
-          if(wr_priv==1 && permissions.u && sum==0)begin // supervisor accessing user
+          if(priv==1 && permissions.u && sum==0)begin // supervisor accessing user
             page_fault=True;
           end
-          if(!permissions.u && wr_priv==0)begin
+          if(!permissions.u && priv==0)begin
             page_fault=True;
           end
           
@@ -525,7 +528,7 @@ package dtlb_rv64_array;
         else
           physical_address={pte[53:28],vpn1,vpn0};
         if(verbosity!=0)
-          $display($time,"\tDTLB: response from PTW. PhyAddr: %h",{physical_address,page_offset});
+          $display($time,"\tDTLB: response from PTW: ",fshow(resp));
       endmethod
     endinterface;
     interface core_resp= interface Get

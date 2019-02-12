@@ -75,6 +75,8 @@ package ptwalk_rv64;
     Bit#(4) satp_mode = wr_satp[63:60];
     Bit#(1) mxr = wr_mstatus[19];
     Bit#(1) sum = wr_mstatus[18];
+    Bit#(2) mpp = wr_mstatus[12:11];
+    Bit#(1) mprv = wr_mstatus[17];
 
     // register to hold the level number
     Reg#(Bit#(2)) rg_levels <- mkReg(2);
@@ -158,6 +160,7 @@ package ptwalk_rv64;
       // 7 6 5 4 3 2 1 0
       // D A G U X W R V
       TLB_permissions permissions=bits_to_permission(truncate(pte));
+      Bit#(2) priv = mprv==0?wr_priv:mpp;
       if(verbosity>2)
         $display($time,"\tPTW. Permissions: ",fshow(permissions));
       if (!permissions.v || (!permissions.r && permissions.w))begin // access fault generated while doing PTWALK
@@ -168,7 +171,7 @@ package ptwalk_rv64;
       end
       else if(permissions.x||permissions.r||permissions.w) begin // valid PTE
         // general
-        if(!permissions.a || (!permissions.d && access==2))
+        if(!permissions.a || (!permissions.d && (access==2||access==1)))
           fault=True;
 
         // for execute access
@@ -182,9 +185,9 @@ package ptwalk_rv64;
         // for load access
         if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) // if not readable and not mxr  executable
           fault=True;
-        if(access != 3 && wr_priv==1 && permissions.u && sum==0) // supervisor accessing user
+        if(access != 3 && priv==1 && permissions.u && sum==0) // supervisor accessing user
           fault=True;
-        if(access != 3 && !permissions.u && wr_priv==0)
+        if(access != 3 && !permissions.u && priv==0)
           fault=True;
         
         // for Store access
