@@ -55,7 +55,8 @@ package l1dcache_vipt;
                            numeric type fbsize,
                            numeric type sbsize,
                            numeric type esize,
-                           numeric type banks
+                           numeric type dbanks,
+                           numeric type tbanks
                            );
 
     interface Put#(DCore_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
@@ -96,7 +97,7 @@ package l1dcache_vipt;
   (*conflict_free="allocate_storebuffer,respond_to_core"*)
   (*conflict_free="allocate_storebuffer,request_to_memory"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,sbsize,esize, banks)) 
+    (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,sbsize,esize, dbanks, tbanks)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -113,9 +114,11 @@ package l1dcache_vipt;
           Add#(1, o__, TLog#(TAdd#(1, sbsize))),
           `endif
             
-          // for banks
-          Add#(q__, TDiv#(linewidth, banks), linewidth),
-          Mul#(TDiv#(linewidth, banks), banks, linewidth),
+          // for dbanks
+          Add#(q__, TDiv#(linewidth, dbanks), linewidth),
+          Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
+          Add#(r__, TDiv#(tagbits, tbanks), tagbits),
+          Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
 
           Add#(a__, respwidth, linewidth),
           Add#(b__, 32, respwidth),
@@ -231,8 +234,8 @@ package l1dcache_vipt;
 
    
     // ------------------------ Structures required for cache RAMS ------------------------------//
-    Ifc_mem_config1rw#(sets, linewidth, banks) data_arr [v_ways]; // data array
-    Ifc_mem_config1rw#(sets, tagbits, 1) tag_arr [v_ways];// one extra valid bit
+    Ifc_mem_config1rw#(sets, linewidth, dbanks) data_arr [v_ways]; // data array
+    Ifc_mem_config1rw#(sets, tagbits, tbanks) tag_arr [v_ways];// one extra valid bit
     for(Integer i=0;i<v_ways;i=i+1)begin
       data_arr[i]<-mkmem_config1rw(False, "single"); 
       tag_arr[i]<-mkmem_config1rw(False, "single");
