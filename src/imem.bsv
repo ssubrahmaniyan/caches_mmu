@@ -62,7 +62,7 @@ package imem;
 
   (*synthesize*)
   module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
-                                                                              `ifbsize, `iesize ));
+                                                                  `ifbsize, `iesize, `ibanks));
     let ifc();
     mkl1icache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);
