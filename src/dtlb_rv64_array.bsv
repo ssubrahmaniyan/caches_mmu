@@ -387,7 +387,6 @@ package dtlb_rv64_array;
             $display($time,"\tDTLB: Forwarding Trap");
           if(rg_tlb_miss) begin
             rg_tlb_miss<=False;
-            $display($time,"\tRESETING TLB");
           end
         end
         else if(satp_mode==0 || priv==3 || core_ptw)begin
@@ -428,7 +427,6 @@ package dtlb_rv64_array;
                 $display($time,"\tDTLB: Page Fault - 2");
           if(rg_tlb_miss) begin
             rg_tlb_miss<=False;
-            $display($time,"\tRESETING TLB");
           end
         end
         else begin
