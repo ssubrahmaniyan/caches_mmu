@@ -68,7 +68,10 @@ package l1dcache_vipt;
     interface Put#(DCache_read_response#(TMul#(wordsize,8))) nc_read_resp;
     interface Put#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) pa_from_tlb;
     
-    interface Get#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
+//    interface Get#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
+    method DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8))) write_mem_req_rd;
+    method Action write_mem_req_deq;
+
     interface Put#(DCache_write_response) write_mem_resp;
     interface Get#(DCache_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
     `ifdef pysimulate
@@ -210,7 +213,7 @@ package l1dcache_vipt;
     FIFOF#(DCache_write_request#(paddr,TMul#(wordsize,8))) ff_nc_write_request  <- mkSizedFIFOF(2);
     
     FIFOF#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) ff_write_mem_request    
-                                                                              <- mkSizedFIFOF(2);
+                                                                              <- mkSizedFIFOF(1);
     FIFOF#(DCache_write_response) ff_write_mem_response  <- mkBypassFIFOF();
 
 
@@ -1004,7 +1007,7 @@ fb_enables: %h",fbindex,fb_addr[fbindex],fb_dataline[fbindex],fb_enables[fbindex
 
     interface core_req=interface Put
       method Action put(DCore_request#(vaddr,respwidth,esize) req)if( ff_core_response.notFull &&
-                 !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty);
+                 !rg_replaylatest &&  !rg_fence_stall && !fb_full );
         `ifdef perf
           wr_total_access<=1;
         `endif
@@ -1146,12 +1149,12 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
         return {wr_total_fbfills,wr_total_io,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
       endmethod
     `endif
-    interface write_mem_req = interface Get
-      method ActionValue#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) get;
-        ff_write_mem_request.deq;
+      method DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8))) write_mem_req_rd;
         return ff_write_mem_request.first;
       endmethod
-    endinterface;
+      method Action write_mem_req_deq;
+        ff_write_mem_request.deq;
+      endmethod
 
     interface write_mem_resp= interface Put
      method Action put(DCache_write_response resp);
@@ -1167,7 +1170,7 @@ access: %d size: %b data:%h", addr, fence, epoch, set_index,  access,  size,  da
     endinterface;
 
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
-                  !rg_replaylatest &&  !rg_fence_stall && !fb_full && !ff_write_mem_request.notEmpty;
+                  !rg_replaylatest &&  !rg_fence_stall && !fb_full ;
     method storebuffer_empty = sb_empty;
   endmodule
  
