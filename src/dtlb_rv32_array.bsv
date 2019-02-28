@@ -65,7 +65,7 @@ package dtlb_rv32_array;
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
     interface Get#(DCore_request#(32, 32, `desize )) req_to_ptw;
                           // ppn   , levels , trap
-    interface Put#(Tuple4#(Bit#(32),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
+    interface Put#(Tuple4#(Bit#(32),Bit#(1),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(32)) satp_from_csr;
     interface Put#(Bit#(32)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
