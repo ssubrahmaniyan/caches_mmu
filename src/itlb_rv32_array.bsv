@@ -399,7 +399,9 @@ package itlb_rv32_array;
           physical_address={pte[31:20],vpn0};
         ff_translated.enq(tuple3(truncate({physical_address,page_offset}),trap_taken,cause));
         ff_req_queue.deq;
-        rg_tlb_miss<=True;
+        if(verbosity!=0)
+          $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
+        rg_tlb_miss<=False;
       endmethod
     endinterface;
     interface core_resp= interface Get
