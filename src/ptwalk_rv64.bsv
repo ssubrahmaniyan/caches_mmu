@@ -37,7 +37,6 @@ package ptwalk_rv64;
   import FIFO::*;
   import GetPut::*;
 
-  import common_types::*;
   import cache_types::*;
   `include "cache.defines"
 
@@ -123,7 +122,6 @@ package ptwalk_rv64;
       Bit#(56) pte_address=a+zeroExtend({vpn[rg_levels],3'b0});
       if(verbosity>2)
         $display($time,"\tPTW: Sending PTE-Address to Mem:%h",pte_address);
-      //ff_memory_req.enq(pte_address);
       `ifdef atomic
         ff_memory_req.enq(tuple8(signExtend(pte_address), False,epoch, 0, 3, ?, ?, True));
       `else
