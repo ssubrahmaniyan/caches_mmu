@@ -106,8 +106,9 @@ package dmem;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
-    interface Get#(DCore_request#(64, 64, `desize )) req_to_ptw;
-    interface Put#(Tuple4#(Bit#(54),Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
+    interface Get#(DCore_request#(`vaddr, `vaddr, `desize )) req_to_ptw;
+    interface Put#(Tuple4#(Bit#(`ifdef RV64 54 `else 32 `endif ),
+                          Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Bit#(`vaddr )) mstatus_from_csr;
