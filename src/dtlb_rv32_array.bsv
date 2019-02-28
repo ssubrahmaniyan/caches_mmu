@@ -79,10 +79,12 @@ package dtlb_rv32_array;
 
 
   module mkdtlb_rv32_array#(parameter String alg_reg, parameter String alg_mega) 
-    (Ifc_dtlb_rv32_array#(reg_size,mega_size,reg_ways,mega_ways,asid_width))
+    (Ifc_dtlb_rv32_array#(paddr, reg_size,mega_size,reg_ways,mega_ways,asid_width))
     provisos(
       Add#(a__, TLog#(reg_size), 20),
       Add#(d__, TLog#(mega_size), 10),
+      Add#(b__, paddr, 34),
+      Add#(c__, paddr, 32),
 
       // for replacement
       Add#(e__, TLog#(reg_ways), 4),
