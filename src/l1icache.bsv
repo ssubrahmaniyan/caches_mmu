@@ -153,15 +153,15 @@ package l1icache;
     // This fifo stores the request from the core.
     FIFOF#(ICore_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkSizedFIFOF(2);
+    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(ICache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
     
     FIFOF#(ICache_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_read_response#(respwidth)) ff_nc_read_response  <- mkSizedBypassFIFOF(1);
+    FIFOF#(ICache_read_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable<-mkWire();
     `ifdef pysimulate
@@ -276,7 +276,7 @@ package l1icache;
       for(Integer i=0;i<v_fbsize;i=i+1)
         fb_valid[i]<=False;
       rg_fence_stall<=False;
-      ff_core_request.deq; // TODO depends on how fence should be handled.
+      ff_core_request.deq;
       replacement.reset_repl;
       if(verbosity!=0)begin
         $display($time,"\tICACHE: Fence operation in progress");
@@ -296,7 +296,7 @@ package l1icache;
         word=wr_ram_hitword;
         if(alg=="PLRU") begin
           wr_ram_hitindex<=tagged Valid set_index;
-          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); // TODO update for PLRU should happen here
+          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
         end
         `ifdef perf
           wr_total_cache_hits<=1;

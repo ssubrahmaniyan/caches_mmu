@@ -580,7 +580,6 @@ package l1icache_vipt;
       // if line is valid and is completely filled.
       let addr=fb_addr[rg_fbwriteback];
       Bit#(setbits) set_index=addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-      Bit#(tagbits) tag = addr[v_paddr-1:v_paddr-v_tagbits];
       if(fb_err[rg_fbwriteback]==0)begin
         let waynum<-replacement.line_replace(set_index, rg_valid[set_index]);
         if(&(rg_valid[set_index])==1)begin

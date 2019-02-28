@@ -67,8 +67,8 @@ package l1dcache_vipt;
     interface Get#(DCache_read_request#(paddr)) nc_read_req;
     interface Put#(DCache_read_response#(TMul#(wordsize,8))) nc_read_resp;
     interface Put#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) pa_from_tlb;
-    
-    interface Get#(DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8)))) write_mem_req;
+    method DCache_write_request#(paddr,TMul#(blocksize,TMul#(wordsize,8))) write_mem_req_rd;
+    method Action write_mem_req_deq;
     interface Put#(DCache_write_response) write_mem_resp;
     interface Get#(DCache_write_request#(paddr,TMul#(wordsize,8))) nc_write_req;
     `ifdef pysimulate

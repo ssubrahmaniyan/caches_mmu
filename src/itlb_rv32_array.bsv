@@ -50,6 +50,7 @@ package itlb_rv32_array;
   import mem_config::*;
   import replacement::*;
   `include "cache.defines"
+  import cache_types::*;
 
   interface Ifc_itlb_rv32_array#(
       numeric type paddr,
@@ -63,7 +64,7 @@ package itlb_rv32_array;
     interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
-    interface Get#(Tuple2#(Bit#(32),Bit#(2))) req_to_ptw;
+    interface Get#(DCore_request#(32, 32, `desize )) req_to_ptw;
                           // ppn   , levels , trap
     interface Put#(Tuple4#(Bit#(32),Bit#(1),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(32)) satp_from_csr;
@@ -182,12 +183,13 @@ package itlb_rv32_array;
       $display($time,"\tITLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
-          tlb_vtag_reg[i][j]<='d0;
+          tlb_pte_reg[i][j]<='d0;
 
       for(Integer k=0;k<v_mega_ways;k=k+1) 
         for(Integer l=0;l<v_mega_size;l=l+1)
-          tlb_vtag_mega[k][l]<='d0;
+          tlb_pte_mega[k][l]<='d0;
       rg_init<=False;
+      ff_req_queue.deq;
     endrule
 
     rule perform_pmp_check;
@@ -315,16 +317,20 @@ package itlb_rv32_array;
             // pte.u=1 for supervisor
             else if(permissions[4]==1 && wr_priv==1)
               page_fault=True;
-            else if( |(hit_mega)==1 && ppn0!=0)
-              page_fault=True;
 
-            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),True,`Inst_pagefault ));
-            if(verbosity!=0)
+            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),page_fault,`Inst_pagefault ));
+            if(verbosity!=0 && page_fault)
               $display($time,"\tITLB: Page Fault - 2");
           end
           else begin
             // Send virtual-address and indicate it is an instruction access to the PTW
-            ff_ptw_req.enq(tuple2(va, 0));
+            if(verbosity>1)
+              $display($time,"\tITLB: TLBMiss. Sending Address to PTW:%h",va);
+          `ifdef atomic
+            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, ?, True));
+          `else
+            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, True));
+          `endif
             rg_tlb_miss<=True;
             ff_req_queue.enq(va);
           end
@@ -333,6 +339,7 @@ package itlb_rv32_array;
           if(verbosity>1)
             $display($time,"\tITLB: Recived SFence with VA: %h",va);
           rg_init<=True;
+          ff_req_queue.enq(va);
         end
       endmethod
     endinterface;
@@ -350,7 +357,7 @@ package itlb_rv32_array;
     endinterface;
 
     interface req_to_ptw = interface Get
-      method ActionValue#(Tuple2#(Bit#(32),Bit#(2))) get;
+      method ActionValue#(DCore_request#(32, 32, `desize )) get;
         ff_ptw_req.deq;
         return ff_ptw_req.first;
       endmethod

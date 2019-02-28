@@ -48,27 +48,32 @@ package dtlb_rv32_array;
   import BUtils::*;
 
   import mem_config::*;
-  import common_types::*;
-  import cache_types::*;
   import replacement::*;
+  import cache_types::*;
+  `include "cache.defines"
 
   interface Ifc_dtlb_rv32_array#(
+      numeric type paddr,
       numeric type reg_size, 
       numeric type mega_size,
       numeric type reg_ways,
       numeric type mega_ways,
       numeric type asid_width);
-    interface Put#(Tuple2#(Bit#(32),Bit#(2))) core_req;
-    interface Get#(Tuple2#(Bit#(22), Trap_type)) core_resp;
+    interface Put#(DCore_request#(32,32,`desize )) core_req;
+    interface Get#(Tuple4#(Bit#(paddr), Bool, Bit#(6), Bool)) core_resp;
 
                           // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
-    interface Get#(Tuple2#(Bit#(32),Bit#(2))) req_to_ptw;
+    interface Get#(DCore_request#(32, 32, `desize )) req_to_ptw;
                           // ppn   , levels , trap
-    interface Put#(Tuple3#(Bit#(32),Bit#(1),Trap_type)) resp_from_ptw;
+    interface Put#(Tuple4#(Bit#(32),Bit#(2),Bool, Bit#(6))) resp_from_ptw;
     interface Put#(Bit#(32)) satp_from_csr;
     interface Put#(Bit#(32)) mstatus_from_csr;
     interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Tuple2#(Bit#(32),Bit#(32))) fence_tlb;
+  `ifdef pmp
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+  `endif
+    method Bool tlb_available;
   endinterface
 
 
@@ -91,7 +96,31 @@ package dtlb_rv32_array;
     let v_index_bits=valueOf(TLog#(reg_size));
     let v_asid_width = valueOf(asid_width);
     let verbosity=`VERBOSITY;
+  `ifdef pmp
+    function Tuple2#(Bool,Bit#(6)) pmp_check (Array#(Bit#(8)) cfg, Array#(Bit#(paddr)) pmpaddr,
+                                Bit#(paddr) phy_addr, Bit#(2) priv);
+      Bool sucess=True;
+      Bit#(6) cause = 0;
+      //Bit#(TSub#(paddr,2)) comp_addr = truncateLSB(paddr);
+      for(Integer i=0;i<valueOf(`PMPSIZE ); i=i+1)begin
+        Bit#(1) x = cfg[i][2];
+        Bit#(2) a = cfg[i][4:3];
+        Bit#(1) l = cfg[i][7];
+        Bool valid_acess = (l==0 && (priv==3 || x==1)) || (l==1 && x==1);
 
+        Bit#(paddr) tor_top = pmpaddr[i];
+        Bit#(paddr) tor_base = (i==0)?0:pmpaddr[i-1];
+        if(a==1)begin // TOR:
+          if(tor_base<=phy_addr && phy_addr<tor_top)
+            sucess=valid_acess&&sucess;
+        end
+        else if(a==3)begin // NAPOT
+          
+        end
+      end
+      return (tuple2(!sucess,cause));
+    endfunction
+  `endif
     // definging the tlb entries and virtual tags for regular pages.
     Reg#(Bit#(32)) tlb_pte_reg [v_reg_ways][v_reg_size];
     Reg#(Bit#(TAdd#(asid_width,20))) tlb_vtag_reg [v_reg_ways][v_reg_size];
@@ -119,6 +148,8 @@ package dtlb_rv32_array;
     Reg#(Bit#(TLog#(mega_ways))) mega_replaceway<- mkReg(0);
 
 
+
+    // -------------- Common data structures and resources across TLBs ----------- //
     // register to initialize the tlbs on reset.
     Reg#(Bool) rg_init <- mkReg(False);
     Reg#(Bit#(32)) rg_rs1<- mkReg(0);
@@ -135,27 +166,54 @@ package dtlb_rv32_array;
     Bit#(1) satp_mode = wr_satp[31];
     Bit#(1) mxr = wr_mstatus[19];
     Bit#(1) sum = wr_mstatus[18];
+    Bit#(2) mpp = wr_mstatus[12:11];
+    Bit#(1) mprv = wr_mstatus[17];
 
     // FIFO to hold the next input
-    FIFOF#(Tuple2#(Bit#(32),Bit#(2))) ff_req_queue <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(32),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(22),Trap_type)) ff_core_resp<- mkSizedFIFOF(2);
+    Reg#(Tuple2#(Bit#(32),Bit#(2))) ff_req_queue <- mkReg(?);
+    FIFOF#(Tuple5#(Bit#(paddr), Bit#(2),Bool, Bit#(6), Bool)) ff_translated <- mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(32,32,`desize) ) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
+    // -------------------------------------------------------------------------- //
 
-    rule initialize(rg_init && !ff_req_queue.notEmpty);
-      $display($time,"\tITLB: Initiliazing TLB");
+  `ifdef pmp
+    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
+    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
+  `endif
+
+    rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
+      if(verbosity>0)
+        $display($time,"\tDTLB: Initiliazing TLB");
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
-          tlb_vtag_reg[i][j]<='d0;
+          tlb_pte_reg[i][j]<='d0;
 
       for(Integer k=0;k<v_mega_ways;k=k+1) 
         for(Integer l=0;l<v_mega_size;l=l+1)
-          tlb_vtag_mega[k][l]<='d0;
+          tlb_pte_mega[k][l]<='d0;
       rg_init<=False;
     endrule
 
-    rule access_tlb_on_request(!rg_tlb_miss && !rg_init);
-      let {va,access}=ff_req_queue.first();
+    rule perform_pmp_check(!rg_init);
+      if(verbosity>0)
+        $display($time,"\tDTLB: Sending Physical Address: ",fshow(ff_translated.first)," to DCACHE");
+      let {pa,access,trap,cause, miss} = ff_translated.first;
+      // TODO: perform PMP check here
+      ff_core_resp.enq(tuple4(pa,trap,cause,miss));
+      ff_translated.deq;
+    endrule
+
+    interface core_req=interface Put
+      method Action put (DCore_request#(32, 32, `desize) req) if(!rg_init);
+      `ifdef atomic
+        let {va, sfence, epoch, access, size, data, atomicop,core_ptw} =req;
+      `else
+        let {va, sfence, epoch, access, size, data, core_ptw} =req;
+      `endif
+      Bool init_tlb = !core_ptw && sfence;
+      if(verbosity>0)
+        $display($time,"\tDTLB: Recieved Request.", fshow(req));
       // capture input vpns for regular and mega pages.
       Bit#(20) inp_vpn_reg=va[31:12];
       Bit#(10) inp_vpn_mega=va[31:22];
@@ -248,47 +306,76 @@ package dtlb_rv32_array;
 
       // Check for instruction page-fault conditions
       Bool page_fault=False;
-      if(satp_mode==0 || wr_priv==3)begin
-        ff_core_resp.enq(tuple2(signExtend(va[31:12]),tagged None));
-        ff_req_queue.deq();
+      Bit#(6) cause=access==0?`Load_pagefault:`Store_pagefault;
+      Bit#(2) priv = mprv==0?wr_priv:mpp;
+      if(!init_tlb)begin
+        // transparent translation
+        if(core_ptw && sfence)begin
+          cause = truncate(data);
+          page_fault=True;
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause ,
+                                                                                            False));
+          if(verbosity!=0)
+            $display($time,"\tDTLB: Forwarding Trap");
+          if(rg_tlb_miss) begin
+            rg_tlb_miss<=False;
+      end
+      else if(satp_mode==0 || priv==3 || core_ptw)begin
+          Bit#(paddr) coreresp = truncate(va);
+          ff_translated.enq(tuple5(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
+                                                           `Store_access_fault , False ));
+          if(verbosity!=0)
+            $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
       end
       else if(|(hit_reg)==1 || |(hit_mega)==1) begin
         // pte.a==0 || pte.d==0 and access!=Load
-        if(!permissions.a || (!permissions.d && access!=1))
+          if(!permissions.a || (!permissions.d && access!=0))begin
           page_fault=True;
-        if(access == 1 && !permissions.r && (!permissions.x || mxr==0)) // if not readable and not mxr  executable
+          end
+          if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
           page_fault=True;
-        if(wr_priv==1 && permissions.u && sum==0) // supervisor accessing user
+          end
+          if(priv==1 && permissions.u && sum==0)begin // supervisor accessing user
           page_fault=True;
-        if(!permissions.u && wr_priv==0)
+          end
+          if(!permissions.u && priv==0)begin
           page_fault=True;
+          end
         
         // for Store access
-        if(access == 2 && !permissions.w) // if not readable and not mxr  executable
+          if(access != 0 && !permissions.w)begin // if not readable and not mxr  executable
           page_fault=True;
+          end
 
-        if( |(hit_mega)==1 && ppn0!=0)
-          page_fault=True;
-
-       Trap_type exception=page_fault?(access==1)?tagged Exception Load_pagefault:
-                                                  tagged Exception Store_pagefault
-                                      :tagged None; 
-       ff_core_resp.enq(tuple2(physical_address,exception));
-       ff_req_queue.deq;
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause ,
+                                                                                            False));
+          if(verbosity!=0 && page_fault)
+                $display($time,"\tDTLB: Page Fault - 2");
+          if(rg_tlb_miss) begin
+            rg_tlb_miss<=False;
+          end
       end
       else begin
         // Send virtual-address and indicate it is an instruction access to the PTW
-        ff_ptw_req.enq(tuple2(va,access));
+          if(verbosity>1)
+            $display($time,"\tDTLB: DTLBMiss. Sending Address to PTW:%h",va);
+        `ifdef atomic
+          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, atomicop, core_ptw));
+        `else
+          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, core_ptw));
+        `endif
         rg_tlb_miss<=True;
+          ff_req_queue<=(tuple2(va,access));
+          ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause, True));
       end
-    endrule
-
-    interface core_req=interface Put
-      method Action put (Tuple2#(Bit#(32),Bit#(2)) req) if(!rg_init);
-        let {va,access} = req;
-        Bit#(12) page_offset=va[11:0];
-
-        ff_req_queue.enq(req);
+      end
+      else begin
+        if(verbosity>1)
+          $display($time,"\tDTLB: Recived SFence with VA: %h",va);
+        rg_init<=True;
+        if(rg_tlb_miss && !core_ptw)
+          rg_tlb_miss<=False;
+      end
       endmethod
     endinterface;
 
@@ -297,6 +384,7 @@ package dtlb_rv32_array;
         wr_satp<=satp;
       endmethod
     endinterface;
+    
     interface mstatus_from_csr=interface Put
       method Action put (Bit#(32) mstatus);
         wr_mstatus<=mstatus;
@@ -310,17 +398,17 @@ package dtlb_rv32_array;
     endinterface;
 
     interface req_to_ptw = interface Get
-      method ActionValue#(Tuple2#(Bit#(32),Bit#(2))) get;
+      method ActionValue#(DCore_request#(32, 32, `desize )) get;
         ff_ptw_req.deq;
         return ff_ptw_req.first;
       endmethod
     endinterface;
     interface resp_from_ptw = interface Put
-      method Action put(Tuple3#(Bit#(32),Bit#(1),Trap_type) resp)if(rg_tlb_miss && !rg_init);
+      method Action put(Tuple4#(Bit#(32),Bit#(2),Bool, Bit#(6)) resp)if(!rg_init);
         // This will then cause the rule access_tlb_on_request to fire again
         // which cause a hit in the tlb now and thus respond back to the core.
-        let {pte, levels, trap}=resp;
-        let {va,access}=ff_req_queue.first();
+        let {pte, levels, trap_taken, cause}=resp;
+        let {va,access}=ff_req_queue;
         Bit#(20) vpn_reg=va[31:12];
         Bit#(TLog#(reg_size)) index_reg=truncate(vpn_reg);
         
@@ -329,7 +417,7 @@ package dtlb_rv32_array;
 
         Bit#(10) vpn0=va[21:12];
 
-        if(trap matches tagged None)begin
+        if(!trap_taken)begin
           if(levels==0) begin
               tlb_pte_reg[reg_replaceway][index_reg]<=pte;
               tlb_vtag_reg[reg_replaceway][index_reg]<={satp_asid,vpn_reg};
@@ -344,28 +432,26 @@ package dtlb_rv32_array;
                 mega_replacement.update_set(truncate(vpn_mega),?);//TODO for plru need to send current valids
           end
         end
-        Bit#(22) physical_address=0;
-        if(levels==0)
-          physical_address=truncateLSB(pte);
-        else
-          physical_address={pte[31:20],vpn0};
-        ff_core_resp.enq(tuple2(physical_address,trap));
-        ff_req_queue.deq;
-        rg_tlb_miss<=True;
       endmethod
     endinterface;
-    interface  fence_tlb=interface Put
-      method Action put(Tuple2#(Bit#(32),Bit#(32)) req) if(!rg_init);
-        rg_init<=True;
-      endmethod
-    endinterface;
-
     interface core_resp= interface Get
-      method ActionValue#(Tuple2#(Bit#(22),Trap_type)) get;
+      method ActionValue#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) get;
         ff_core_resp.deq;
         return ff_core_resp.first();
       endmethod
     endinterface;
+  `ifdef pmp
+    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_cfg[i] <= pmpcfg[i];
+    endmethod
+    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+      for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
+        wr_pmp_addr[i] <= pmpadr[i];
+    endmethod
+  `endif
+    method tlb_available=!rg_tlb_miss && ff_translated.notFull;
+
   endmodule
 endpackage
 

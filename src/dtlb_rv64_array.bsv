@@ -61,7 +61,6 @@ package dtlb_rv64_array;
       numeric type mega_ways,
       numeric type giga_ways,
       numeric type asid_width);
-    //interface Put#(Tuple4#(Bool, Bit#(64), Bit#(2),Bool)) core_req;
     interface Put#(DCore_request#(64,64,`desize )) core_req;
     interface Get#(Tuple4#(Bit#(paddr), Bool, Bit#(6), Bool)) core_resp;
 
@@ -191,10 +190,8 @@ package dtlb_rv64_array;
     Bit#(1) mprv = wr_mstatus[17];
 
     // FIFO to hold the next input
-    //FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkSizedFIFOF(1);
     Reg#(Tuple2#(Bit#(64),Bit#(2))) ff_req_queue <- mkReg(?);
     FIFOF#(Tuple5#(Bit#(paddr), Bit#(2),Bool, Bit#(6), Bool)) ff_translated <- mkSizedFIFOF(2);
-    //FIFOF#(Tuple2#(Bit#(64),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
     FIFOF#(DCore_request#(64,64,`desize) ) ff_ptw_req <- mkSizedFIFOF(2);
     FIFOF#(Tuple4#(Bit#(paddr),Bool, Bit#(6), Bool)) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
@@ -514,19 +511,6 @@ package dtlb_rv64_array;
                 giga_replacement.update_set(truncate(vpn_giga),?);//TODO for plru need to send current valids
           end
         end
-        Bit#(44) physical_address=0;
-        Bit#(9) vpn0=va[20:12];
-        Bit#(9) vpn1=va[29:21];
-        Bit#(9) vpn2=va[38:30];
-        Bit#(12) page_offset = va[11:0];
-        if(levels==0)
-          physical_address=truncateLSB(pte);
-        else if(levels==1)
-          physical_address={pte[53:19],vpn0};
-        else
-          physical_address={pte[53:28],vpn1,vpn0};
-        if(verbosity!=0)
-          $display($time,"\tDTLB: response from PTW: ",fshow(resp));
       endmethod
     endinterface;
     interface core_resp= interface Get
