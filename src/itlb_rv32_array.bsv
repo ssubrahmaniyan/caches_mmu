@@ -168,7 +168,7 @@ package itlb_rv32_array;
     // FIFO to hold the next input
     FIFOF#(Bit#(32)) ff_req_queue <- mkSizedFIFOF(1);
     FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
-    FIFOF#(Tuple2#(Bit#(32),Bit#(2))) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(DCore_request#(32, 32, `desize )) ff_ptw_req <- mkSizedFIFOF(2);
     FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
