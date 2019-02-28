@@ -209,6 +209,7 @@ package ptwalk_rv32;
         `endif
         ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
         ff_req_queue.deq();
+        rg_state<=GeneratePTE;
         rg_levels<=1;
       end
       else if (!permissions.r && !permissions.x)begin // this pointer to next level
@@ -216,7 +217,7 @@ package ptwalk_rv32;
         rg_a<={pte[31:10],12'b0};
         rg_state<=GeneratePTE;
         if(verbosity>2)
-          $display($time,"\tPTW: Pointer to NextLevel:%h Level:%d",{pte[53:10],12'b0},rg_levels);
+          $display($time,"\tPTW: Pointer to NextLevel:%h Level:%d",{pte[31:10],12'b0},rg_levels);
       end
       else begin // Leaf PTE found
         ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
