@@ -319,30 +319,31 @@ package dtlb_rv32_array;
             $display($time,"\tDTLB: Forwarding Trap");
           if(rg_tlb_miss) begin
             rg_tlb_miss<=False;
-      end
-      else if(satp_mode==0 || priv==3 || core_ptw)begin
+          end
+        end
+        else if(satp_mode==0 || priv==3 || core_ptw)begin
           Bit#(paddr) coreresp = truncate(va);
           ff_translated.enq(tuple5(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
                                                            `Store_access_fault , False ));
           if(verbosity!=0)
             $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
-      end
-      else if(|(hit_reg)==1 || |(hit_mega)==1) begin
-        // pte.a==0 || pte.d==0 and access!=Load
+        end
+        else if(|(hit_reg)==1 || |(hit_mega)==1) begin
+          // pte.a==0 || pte.d==0 and access!=Load
           if(!permissions.a || (!permissions.d && access!=0))begin
-          page_fault=True;
+            page_fault=True;
           end
           if(access == 0 && !permissions.r && (!permissions.x || mxr==0)) begin// if not readable and not mxr  executable
-          page_fault=True;
+            page_fault=True;
           end
           if(priv==1 && permissions.u && sum==0)begin // supervisor accessing user
-          page_fault=True;
+            page_fault=True;
           end
           if(!permissions.u && priv==0)begin
-          page_fault=True;
+            page_fault=True;
           end
-        
-        // for Store access
+          
+          // for Store access
           if(access != 0 && !permissions.w)begin // if not readable and not mxr  executable
           page_fault=True;
           end
@@ -354,20 +355,20 @@ package dtlb_rv32_array;
           if(rg_tlb_miss) begin
             rg_tlb_miss<=False;
           end
-      end
-      else begin
-        // Send virtual-address and indicate it is an instruction access to the PTW
+        end
+        else begin
+          // Send virtual-address and indicate it is an instruction access to the PTW
           if(verbosity>1)
             $display($time,"\tDTLB: DTLBMiss. Sending Address to PTW:%h",va);
-        `ifdef atomic
-          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, atomicop, core_ptw));
-        `else
-          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, core_ptw));
-        `endif
-        rg_tlb_miss<=True;
+          `ifdef atomic
+            ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, atomicop, core_ptw));
+          `else
+            ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, core_ptw));
+          `endif
+          rg_tlb_miss<=True;
           ff_req_queue<=(tuple2(va,access));
           ff_translated.enq(tuple5(truncate({physical_address,page_offset}),access,page_fault,cause, True));
-      end
+        end
       end
       else begin
         if(verbosity>1)
