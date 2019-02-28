@@ -326,7 +326,7 @@ package dtlb_rv32_array;
         end
         else if(satp_mode==0 || priv==3 || core_ptw)begin
           Bit#(paddr) coreresp = truncate(va);
-          ff_translated.enq(tuple5(signExtend(coreresp),access,trap,access==0?`Load_access_fault :
+          ff_translated.enq(tuple5(signExtend(coreresp),access,False,access==0?`Load_access_fault :
                                                            `Store_access_fault , False ));
           if(verbosity!=0)
             $display($time,"\tDTLB: Transparent Translation. PhyAddr: %h",coreresp);
@@ -408,7 +408,7 @@ package dtlb_rv32_array;
       endmethod
     endinterface;
     interface resp_from_ptw = interface Put
-      method Action put(Tuple4#(Bit#(32),Bit#(2),Bool, Bit#(6)) resp)if(!rg_init);
+      method Action put(Tuple4#(Bit#(32),Bit#(1),Bool, Bit#(6)) resp)if(!rg_init);
         // This will then cause the rule access_tlb_on_request to fire again
         // which cause a hit in the tlb now and thus respond back to the core.
         let {pte, levels, trap_taken, cause}=resp;
