@@ -221,6 +221,7 @@ package dtlb_rv32_array;
       Bit#(10) inp_vpn_mega=va[31:22];
       Bit#(10) vpn0=va[21:12];
       Bit#(10) vpn1=va[31:22];
+      Bit#(12) page_offset = va[11:0];
 
       // find if there is a hit in the regular page tlb
       Bit#(32) pte_reg [v_reg_ways];
