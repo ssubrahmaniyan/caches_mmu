@@ -145,9 +145,9 @@ package dmem;
           `endif
         if(!fence)
           `ifdef atomic
-            dtlb.core_req.put(tuple8(addr, sfence, epoch, access, size, data, atomicop, core_ptw));
+            dtlb.core_req.put(tuple8(addr, sfence, epoch, access, size, truncate(data), atomicop, core_ptw));
           `else
-            dtlb.core_req.put(tuple6(addr, sfence, epoch, access, size, data, core_ptw));
+            dtlb.core_req.put(tuple6(addr, sfence, epoch, access, size, truncate(data), core_ptw));
           `endif
       `else
         dcache.core_req.put(req);
