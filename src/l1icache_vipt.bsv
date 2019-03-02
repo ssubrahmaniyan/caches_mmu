@@ -32,8 +32,6 @@ Details:
   3. Total IO requests
   4. Total Fills from FB to Cache
   
-TODO: rg_latest_index will not be required since a write-operation to the RAMs by the Fill-buffer
-should not cause a change in the read-output-port of the RAMs.
 --------------------------------------------------------------------------------------------------
 */
 package l1icache_vipt;
@@ -60,13 +58,14 @@ package l1icache_vipt;
                            numeric type fbsize,
                            numeric type esize, 
                            numeric type dbanks,
-                           numeric type tbanks
+                           numeric type tbanks,
+                           numeric type buswidth
                            );
 
     interface Put#(ICore_request#(vaddr,esize)) core_req;
     interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(ICache_read_request#(paddr)) read_mem_req;
-    interface Put#(ICache_read_response#(TMul#(wordsize,8))) read_mem_resp;
+    interface Put#(ICache_read_response#(buswidth)) read_mem_resp;
     interface Get#(ICache_read_request#(paddr)) nc_read_req;
     interface Put#(ICache_read_response#(TMul#(wordsize,8))) nc_read_resp;
     interface Put#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) pa_from_tlb;
@@ -85,7 +84,7 @@ package l1icache_vipt;
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,dbanks,tbanks)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,dbanks,tbanks,buswidth)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -95,6 +94,8 @@ package l1icache_vipt;
           Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index+offset, 
           Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
+          Div#(buswidth,respwidth,o__), 
+          Add#(o__, p__, 2),            // ensure that the buswidth is no more than twice the size of respwidth
 
           `ifdef ASSERT
           Add#(1, e__, TLog#(TAdd#(1, fbsize))),
@@ -115,6 +116,7 @@ package l1icache_vipt;
           Add#(TAdd#(tagbits, setbits), g__, paddr),
           Add#(TAdd#(tagbits, setbits), l__, vaddr),
           Add#(h__, 1, blocksize),
+          Mul#(buswidth, q__, linewidth),
 
           Add#(i__, TLog#(ways), 4),
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
@@ -140,6 +142,8 @@ package l1icache_vipt;
     function Bit#(blocksize) fn_enable(Bit#(blockbits)word_index);
        Bit#(blocksize) write_enable ='h0; //
        write_enable[word_index]=1;
+       for(Integer i=0;i<valueOf(TDiv#(buswidth,respwidth));i=i+1)
+         write_enable[word_index+fromInteger(i)]=1;
        return write_enable;
     endfunction
     function Bool isTrue(Bool a);
@@ -159,7 +163,7 @@ package l1icache_vipt;
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(ICache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_read_response#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
+    FIFOF#(ICache_read_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
     
     FIFOF#(ICache_read_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
@@ -367,7 +371,6 @@ package l1icache_vipt;
       let {addr, fence, epoch} =ff_core_request.first();
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= addr[v_blockbits+v_wordbits-1:v_wordbits];
-      // TODO The request tag will come from TLB
       let {phy_addr,trap,cause} = ff_from_tlb.first;
       Bit#(tagbits) request_tag = phy_addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -500,7 +503,7 @@ package l1icache_vipt;
                                                                                         
       let {addr, fence, epoch} =ff_core_request.first();
       let {phy_addr,trap,cause} = ff_from_tlb.first;
-      if(isNonCacheable(phy_addr,wr_cache_enable))begin // TODO make this programmable;
+      if(isNonCacheable(phy_addr,wr_cache_enable))begin 
         ff_nc_read_request.enq(tuple3(phy_addr,0,fromInteger(v_wordbits)));
         if(verbosity!=0)begin
           $display($time,"\tICACHE: Sending IO memory request. Addr: %h",phy_addr);
@@ -511,8 +514,11 @@ package l1icache_vipt;
           $display($time,"\tICACHE: Sending LINE memory request. Addr: %h",phy_addr);
           $display($time,"\tICACHE: Allocating FB line: %d",rg_fbmissallocate);
         end
-        phy_addr= (phy_addr>>v_wordbits)<<v_wordbits; // align the address to be one word aligned.
-        ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(v_blocksize-1),fromInteger(v_wordbits)));
+        let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
+        phy_addr= (phy_addr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
+        let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
+        let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
+        ff_read_mem_request.enq(tuple3(phy_addr,fromInteger(burst_len),fromInteger(burst_size)));
         rg_fbmissallocate<=rg_fbmissallocate+1;
         fb_valid[rg_fbmissallocate]<=True;
         fb_addr[rg_fbmissallocate]<=phy_addr;
@@ -535,8 +541,10 @@ package l1icache_vipt;
         temp=fn_enable(word_index);
       else
         temp=rg_fbfillenable;
+      $display($time,"\tICACHE: temp:%b",temp);
       fb_enables[fbindex]<=fb_enables[fbindex]|temp;
-      rg_fbfillenable <= {temp[valueOf(blocksize)-2:0],temp[valueOf(blocksize)-1]};
+      let rotate_amount = valueOf(TDiv#(buswidth,respwidth));
+      rg_fbfillenable <=rotateBitsBy(temp,fromInteger(rotate_amount));
 
       Bit#(linewidth) mask=0;
       for (Integer i=0;i<v_blocksize;i=i+1)begin
@@ -668,7 +676,7 @@ addr:%h way: %d",
     endinterface;
 
     interface read_mem_resp= interface Put
-     method Action put(ICache_read_response#(respwidth) resp);
+     method Action put(ICache_read_response#(buswidth) resp);
         ff_read_mem_response.enq(resp);
      endmethod
     endinterface;

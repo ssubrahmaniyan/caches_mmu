@@ -62,7 +62,7 @@ package imem;
 
   (*synthesize*)
   module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
-                                                      `ifbsize, `iesize, `idbanks, `itbanks));
+                                         `ifbsize, `iesize, `idbanks, `itbanks, `ibuswidth));
     let ifc();
     mkl1icache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);
@@ -89,7 +89,7 @@ package imem;
     interface Put#(IMem_request#(`vaddr ,`iesize)) core_req;
     interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
     interface Get#(ICache_read_request#(`paddr)) read_mem_req;
-    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) read_mem_resp;
+    interface Put#(ICache_read_response#(`ibuswidth)) read_mem_resp; 
     interface Get#(ICache_read_request#(`paddr)) nc_read_req;
     interface Put#(ICache_read_response#(TMul#(`iwords, 8))) nc_read_resp;
     method Action cache_enable(Bool c);
