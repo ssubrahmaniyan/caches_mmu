@@ -67,6 +67,7 @@ package mem_config;
   import SpecialFIFOs::*;
   import Assert::*;
   import bram_1rw::*;
+  import bram_1r1w::*;
   
   interface Ifc_mem_config1rw#( numeric type n_entries, numeric type datawidth, numeric type banks);
     method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
@@ -106,6 +107,58 @@ package mem_config;
       end
     endmethod
     method ActionValue#(Bit#(datawidth)) read_response;
+      Bit#(datawidth) data_resp=0;
+      for(Integer i=0;i<valueOf(banks);i=i+1)begin
+        data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
+      end
+      return data_resp;
+    endmethod
+  endmodule
+  
+  interface Ifc_mem_config1r1w#( numeric type n_entries, numeric type datawidth, numeric type banks);
+    method Action write(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
+    method Action read(Bit#(TLog#(n_entries)) index);
+    method Bit#(datawidth) read_response;
+  endinterface
+  
+  module mkmem_config1r1w#(parameter Bool ramreg, parameter String porttype)
+                                                  (Ifc_mem_config1r1w#(n_entries, datawidth,  banks))
+    provisos(
+             Div#(datawidth, banks, bpb), 
+             Mul#(bpb, banks, datawidth),
+             Add#(a__, bpb, datawidth)
+    );
+    Integer bits_per_bank=valueOf(bpb);
+    
+    staticAssert(porttype=="double","Only supported porttypes are: double");
+
+    Ifc_bram_1r1w#(TLog#(n_entries), bpb, n_entries) ram_double [valueOf(banks)];
+    Reg#(Bit#(bpb)) rg_output[valueOf(banks)][2];
+    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+      ram_double[i]<-mkbram_1r1w;
+      rg_output[i] <- mkCReg(2,0);
+    end
+
+    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+      rule capture_output(!ramreg);
+        rg_output[i][0]<=ram_double[i].response;
+      endrule
+      rule capture_output_reg(ramreg);
+        rg_output[i][1]<=ram_double[i].response;
+      endrule
+    end
+
+    method Action write(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
+      for(Integer i=0;i<valueOf(banks);i=i+1) begin
+        ram_double[i].write(data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank], index, we);
+      end
+    endmethod
+    method Action read(Bit#(TLog#(n_entries)) index);
+      for(Integer i=0;i<valueOf(banks);i=i+1) begin
+        ram_double[i].read(index);
+      end
+    endmethod
+    method Bit#(datawidth) read_response;
       Bit#(datawidth) data_resp=0;
       for(Integer i=0;i<valueOf(banks);i=i+1)begin
         data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
