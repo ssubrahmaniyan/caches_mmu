@@ -397,7 +397,7 @@ package itlb_rv64_array;
           `ifdef atomic
             ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, ?, True));
           `else
-            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, True));
+            ff_ptw_req.enq(tuple7(va, False,?, 3, 3, ?, True));
           `endif
             rg_tlb_miss<=True;
             ff_req_queue.enq(va);
