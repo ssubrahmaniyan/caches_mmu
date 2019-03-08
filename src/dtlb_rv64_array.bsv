@@ -433,7 +433,7 @@ package dtlb_rv64_array;
         `ifdef atomic
           ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, atomicop, core_ptw));
         `else
-          ff_ptw_req.enq(tuple8(va, False,epoch, access, size, data, core_ptw));
+          ff_ptw_req.enq(tuple7(va, False,epoch, access, size, data, core_ptw));
         `endif
           rg_tlb_miss<=True;
           ff_req_queue<=(tuple2(va,access));
