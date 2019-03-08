@@ -40,16 +40,20 @@ package imem;
 
   import cache_types::*;
   `include "cache.defines"
-`ifdef supervisor
-  import l1icache_vipt::*;
-  `ifdef RV64
-    import itlb_rv64_array::*;
-  `elsif RV32
-    import itlb_rv32_array::*;
+  `ifdef supervisor
+    import l1icache_vipt::*;
+    `ifdef RV64
+      import itlb_rv64_array::*;
+    `elsif RV32
+      import itlb_rv32_array::*;
+    `endif
+  `else
+    import l1icache::*;
   `endif
-`else
-  import l1icache::*;
-`endif
+
+  `ifdef branch_speculation
+    import bimodal::*;
+  `endif
 
     function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
 	    if(!cacheable)
@@ -106,11 +110,23 @@ package imem;
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
   `endif
   `endif
+  `ifdef branch_speculation
+		interface Get#(Tuple3#(Bit#(2), Bit#(`vaddr ), Bit#(`vaddr))) prediction_response;
+    method Tuple2#(Bit#(2), Bit#(`vaddr)) prediction_pc;
+		method Action train_bpu (Training_data td);
+  `ifdef ras
+    method Action train_ras(Bit#(`vaddr) pc);
+    method Action ras_push(Bit#(`vaddr) pc);
+  `endif
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
   (*synthesize*)
   module mkimem(Ifc_imem);
+  `ifdef branch_speculation
+    Ifc_bimodal bpu <- mkbimodal;
+  `endif
     let icache<-mkicache;
   `ifdef supervisor
     let itlb <- mkitlb;
@@ -124,8 +140,15 @@ package imem;
           icache.core_req.put(tuple3(addr, fence, epoch));
         if(!fence)
           itlb.core_req.put(tuple2(sfence,addr));
+      `ifdef branch_speculation
+        if(!sfence && !fence)
+          bpu.prediction_req(addr);
+      `endif
       `else
         icache.core_req.put(req);
+        `ifdef branch_speculation
+          bpu.prediction_req(addr);
+        `endif
       `endif
       endmethod
     endinterface;
@@ -151,6 +174,15 @@ package imem;
     endmethod
   `endif
 `endif
+  `ifdef branch_speculation
+    interface prediction_response=bpu.prediction_response;
+    method prediction_pc = bpu.prediction_pc;
+		method train_bpu = bpu.train_bpu;
+    `ifdef ras
+      method train_ras = bpu.train_ras;
+      method ras_push = bpu.ras_push;
+    `endif
+  `endif
   endmodule
 endpackage
 
