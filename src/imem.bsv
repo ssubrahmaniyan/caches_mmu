@@ -111,7 +111,7 @@ package imem;
   `endif
   `endif
   `ifdef branch_speculation
-		interface Get#(Tuple3#(Bit#(2), Bit#(`vaddr ), Bit#(`vaddr))) prediction_response;
+		interface Get#(PredictionResponse) prediction_response; 
     method Tuple2#(Bit#(2), Bit#(`vaddr)) prediction_pc;
 		method Action train_bpu (Training_data td);
   `ifdef ras
