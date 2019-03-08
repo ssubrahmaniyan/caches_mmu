@@ -96,7 +96,7 @@ package ptwalk_rv32;
       `ifdef atomic
         ff_memory_req.enq(tuple8(va, False ,epoch, access, size, data, atomicop, False));
       `else
-        ff_memory_req.enq(tuple8(va, False ,epoch, access, size, data, False));
+        ff_memory_req.enq(tuple7(va, False ,epoch, access, size, data, False));
       `endif
         ff_req_queue.deq();
         rg_state<=GeneratePTE;
@@ -121,7 +121,7 @@ package ptwalk_rv32;
       `ifdef atomic
         ff_memory_req.enq(tuple8(truncate(pte_address), False,epoch, 0, 3, ?, ?, True));
       `else
-        ff_memory_req.enq(tuple8(truncate(pte_address), False,epoch, 0, 3, ?, True));
+        ff_memory_req.enq(tuple7(truncate(pte_address), False,epoch, 0, 3, ?, True));
       `endif
       rg_state<=WaitForMemory;
     endrule
@@ -205,7 +205,7 @@ package ptwalk_rv32;
         `ifdef atomic
           ff_memory_req.enq(tuple8(va, True,epoch, access, size, zeroExtend(cause), ?, True));
         `else
-          ff_memory_req.enq(tuple8(va, True,epoch, access, size, zeroExtend(cause), True));
+          ff_memory_req.enq(tuple7(va, True,epoch, access, size, zeroExtend(cause), True));
         `endif
         ff_response.enq(tuple4(truncate(pte),rg_levels,trap,cause));
         ff_req_queue.deq();
