@@ -36,6 +36,7 @@ package bimodal;
 	import ConfigReg::*;
 	import Connectable::*;
 	import GetPut::*;
+  import Assert::*;
   
   /*==== Project imports ======= */
   import mem_config::*; // for bram 1rw instances.
@@ -44,12 +45,22 @@ package bimodal;
   import stack::*;
 `endif
 
+  `ifdef compressed
+    `define ignore 2
+  `else
+    `define ignore 3
+  `endif
+
   typedef Tuple3#(Bit#(`vaddr), Bit#(`vaddr), Bit#(2)) Training_data;
+`ifdef compressed
+  typedef Tuple4#(Bit#(2), Bit#(2), Bit#( `vaddr ), Bool) PredictionResponse;
+`else
   typedef Tuple2#(Bit#(2), Bit#(`vaddr )) PredictionResponse;
+`endif
 
 	interface Ifc_bimodal;
     // method to receive the new pc for which prediction is to be looked up.
-		method Action prediction_req(Bit#(`vaddr) pc);
+		method Action prediction_req(Bit#(`vaddr) pc `ifdef compressed ,Bool discard `endif );
 
     // method to respond to stage0 with prediction state and new target address on hit
 		interface Get#(PredictionResponse) prediction_response; 
@@ -67,12 +78,17 @@ package bimodal;
 	(*synthesize*)
 	module mkbimodal(Ifc_bimodal);
     String bimodal="";
-    Ifc_mem_config1r1w#(`btbsize , `vaddr, 1) mem_btb <- mkmem_config1r1w(False,"double");
+    Ifc_mem_config1r1w#(TDiv#(`btbsize, 2) , `vaddr, 1) mem_btb0 <- mkmem_config1r1w(False,"double");
+    Ifc_mem_config1r1w#(TDiv#(`btbsize, 2) , `vaddr, 1) mem_btb1 <- mkmem_config1r1w(False,"double");
 
     // ram to hold the tag of the address being predicted. The 2 bits are deducted since we are
     // supporting only non-compressed ISA. When compressed is supported, 1 will be dedudcted.
-    Ifc_mem_config1r1w#(`btbsize , TAdd#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),2),3), 1) mem_btb_tag 
-                                                              <- mkmem_config1r1w(False,"double");
+    Ifc_mem_config1r1w#(TDiv#(`btbsize,  2) , 
+        TAdd#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),`ignore),3),1) mem_btb_tag0 
+        <- mkmem_config1r1w(False,"double");
+    Ifc_mem_config1r1w#(TDiv#(`btbsize,  2) , 
+        TAdd#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),`ignore),3),1) mem_btb_tag1 
+        <- mkmem_config1r1w(False,"double");
 
   `ifdef ras 
     // ram to hold the tag bits for return instructions
@@ -85,9 +101,13 @@ package bimodal;
 
     // boolean register and counter used to initialize the ram structure on reset.
     Reg#(Bool) rg_init <- mkReg(True);
-    Reg#(Bit#(TAdd#(1,TLog#(TMax#(`btbsize, `rassets))))) rg_init_count <- mkReg(0);
+    Reg#(Bit#(TAdd#(1,TLog#(TMax#(TDiv#(`btbsize, 2), `rassets))))) rg_init_count <- mkReg(0);
 
+  `ifdef compressed
+    FIFOF#(Tuple2#(Bit#(`vaddr), Bool)) ff_pred_request <- mkSizedFIFOF(2);
+  `else
     FIFOF#(Bit#(`vaddr)) ff_pred_request <- mkSizedFIFOF(2);
+  `endif
     FIFOF#(PredictionResponse) ff_prediction_resp <- mkBypassFIFOF();
 
     Reg#(Tuple2#(Bit#(2), Bit#(`vaddr))) rg_prediction_pc[2] <-mkCReg(2,tuple2(0,?));
@@ -97,11 +117,12 @@ package bimodal;
     // Implicit Conditions: None
     // on system reset first initialize the ram structure with valid=0.
     rule initialize(rg_init);
-      mem_btb_tag.write(1, truncate(rg_init_count),0);
+      mem_btb_tag0.write(1, truncate(rg_init_count),0);
+      mem_btb_tag1.write(1, truncate(rg_init_count),0);
     `ifdef ras
       mem_ras_tag.write(1 , truncate(rg_init_count),0);
     `endif
-      if(rg_init_count==fromInteger(max(`btbsize,`rassets))) begin
+      if(rg_init_count==fromInteger(max((`btbsize/2),`rassets))) begin
 				rg_init<=False;
 			end
       `logLevel( bimodal, 0, $format("Bimodal: Init stage. Count:%d",rg_init_count))
@@ -114,15 +135,34 @@ package bimodal;
     // Description: This rule will the prediction response from the BTB and RAS and send the result
     // to stage1. A hit can occur either in the BTB or the RAS and never both
     rule perform_prediction(!rg_init);
+      `ifdef ASSERT
+        Bit#(4) hit=0;
+      `endif
+    `ifdef compressed
+      let {va, discard} = ff_pred_request.first();
+    `else
       let va = ff_pred_request.first();
+    `endif
       ff_pred_request.deq();
+    `ifdef compressed
+      Bit#(2) prediction0=0;
+      Bit#(2) prediction1=0;
       Bit#(2) prediction=0;
+    `else
+      Bit#(2) prediction=0;
+    `endif
 
-      Bit#(TSub#(TSub#(`vaddr , TLog#(`btbsize)),2)) tag1 = truncateLSB(va);
-      let bimodal_target_addr = mem_btb.read_response;
-      let bht_tag_state = mem_btb_tag.read_response;
-      Bit#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),2)) bht_tag = truncate(bht_tag_state);
-      Bit#(3) state = truncateLSB(bht_tag_state);
+      Bit#(TSub#(TSub#(`vaddr , TLog#(`btbsize)),`ignore)) tag_compare = truncateLSB(va);
+      let bimodal_target_addr0 = mem_btb0.read_response;
+      let bht_tag_state0 = mem_btb_tag0.read_response;
+      Bit#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),`ignore)) bht_tag0 = truncate(bht_tag_state0);
+      Bit#(3) state0 = truncateLSB(bht_tag_state0);
+
+      let bimodal_target_addr1 = mem_btb1.read_response;
+      let bht_tag_state1 = mem_btb_tag1.read_response;
+      Bit#(TSub#(TSub#(`vaddr, TLog#(`btbsize)),`ignore)) bht_tag1 = truncate(bht_tag_state1);
+      Bit#(3) state1 = truncateLSB(bht_tag_state1);
+
     `ifdef ras
       Bit#(TSub#(TSub#(`vaddr , TLog#(`rassets)),2)) tag2 = truncateLSB(va);
       let ras_tag_valid = mem_ras_tag.read_response;
@@ -131,10 +171,31 @@ package bimodal;
       let ras_target_address = ras_stack.top;
     `endif
 
-      Bit#(`vaddr) target_address=bimodal_target_addr;
-      if (tag1 == bht_tag && state[2]==1) begin
-        prediction=state[1:0];
-        `logLevel( bimodal, 1, $format("Bimodal: BTB hit"))
+      Bit#(`vaddr) target_address=bimodal_target_addr0;
+      if (tag_compare == bht_tag0 && state0[2]==1 && va[`ignore - 1]==0) begin
+      `ifdef compressed
+        prediction0=state0[1:0];
+        prediction=state0[1:0];
+      `else
+        prediction=state0[1:0];
+      `endif
+        `logLevel( bimodal, 1, $format("Bimodal: BTB0 hit"))
+        hit[0]=1;
+      end
+      if (tag_compare == bht_tag1 && state1[2]==1 && va[`ignore - 1]==1) begin
+      `ifdef compressed
+        prediction1=state1[1:0];
+        if(hit[0]==0)begin
+          target_address=bimodal_target_addr1;
+          prediction=state1[1:0];
+        end
+        hit[0]=1;
+      `else
+        prediction=state1[1:0];
+        target_address=bimodal_target_addr1;
+        hit[1]=1;
+      `endif
+        `logLevel( bimodal, 1, $format("Bimodal: BTB0 hit"))
       end
     `ifdef ras
       if( tag2 == ras_tag && ras_valid==1 && !ras_stack.empty)begin
@@ -142,9 +203,19 @@ package bimodal;
         target_address=ras_target_address;
         ras_stack.pop;
         `logLevel( bimodal, 1, $format("Bimodal: RAS hit"))
+        hit[2]=1;
       end
     `endif
+  `ifndef compressed
+    `ifdef ASSERT
+      dynamicAssert(countOnes(hit)<=1, "Multiple hits in BPU");
+    `endif
+  `endif
+    `ifdef compressed
+      PredictionResponse resp = tuple4(prediction0,prediction1,va, discard);
+    `else
       PredictionResponse resp = tuple2(prediction,va);
+    `endif
       `logLevel( bimodal, 0, $format("Bimodal: enquing Response:",fshow(resp)))
       rg_prediction_pc[0]<=tuple2(prediction,target_address);
       ff_prediction_resp.enq(resp);
@@ -154,16 +225,22 @@ package bimodal;
     // Explicit Conditions: rg_init==False
     // Implicit Conditions: None
     // Description: This rule will latch the index of the PC to be predicted.
-		method Action prediction_req(Bit#(`vaddr) pc)if(!rg_init);
-      Bit#(TLog#(`btbsize )) index = truncate(pc>>2);
-      `logLevel( bimodal, 0, $format("Bimodal: Prediction request for PC:%h",pc))
-      mem_btb.read(index);
-      mem_btb_tag.read(index);
+		method Action prediction_req(Bit#(`vaddr) pc `ifdef compressed , Bool discard `endif )if(!rg_init);
+      `logLevel( bimodal, 0, $format("Bimodal: Prediction request for PC:%h discard:%b",pc, discard))
+      Bit#(TLog#(TDiv#(`btbsize, 2))) index = truncate(pc>>`ignore);
+      mem_btb0.read(index);
+      mem_btb1.read(index);
+      mem_btb_tag0.read(index);
+      mem_btb_tag1.read(index);
     `ifdef ras
       Bit#(TLog#(`rassets)) index1 = truncate(pc>>2);
       mem_ras_tag.read(index1);
     `endif
+    `ifdef compressed
+      ff_pred_request.enq(tuple2(pc, discard));
+    `else
       ff_pred_request.enq(pc);
+    `endif
 		endmethod
 
     // MethodName: prediction_resp
@@ -187,12 +264,20 @@ package bimodal;
     // execute stage
 		method Action train_bpu (Training_data td)if(!rg_init);
       let {pc, branch_address, state} = td;
-        Bit#(TLog#(`btbsize )) index = truncate(pc>>2);
-        Bit#(TSub#(TSub#(`vaddr , TLog#(`btbsize)),2)) tag = truncateLSB(pc);
-        mem_btb.write(1, index,branch_address);
-        mem_btb_tag.write(1, index, {1'b1,state,tag});
-        `logLevel( bimodal, 0, $format("Bimodal: Training BTB for ",fshow(td)))
-        `logLevel( bimodal, 0, $format("Bimodal: Training BTB: index:%d tag:%h state:%b", index,tag,state))
+        Bit#(TLog#(TDiv#(`btbsize , 2))) index = truncate(pc>>`ignore);
+        Bit#(TSub#(TSub#(`vaddr , TLog#(`btbsize)),`ignore)) tag = truncateLSB(pc);
+        if (pc[`ignore - 1]==0)begin
+          mem_btb0.write(1, index,branch_address);
+          mem_btb_tag0.write(1, index, {1'b1,state,tag});
+          `logLevel( bimodal, 0, $format("Bimodal: Training BTB0: ",fshow(td)))
+          `logLevel( bimodal, 0, $format("Bimodal: Training BTB0: index:%d tag:%h state:%b", index,tag,state))
+        end
+        else begin
+          mem_btb1.write(1, index,branch_address);
+          mem_btb_tag1.write(1, index, {1'b1,state,tag});
+          `logLevel( bimodal, 0, $format("Bimodal: Training BTB1: ",fshow(td)))
+          `logLevel( bimodal, 0, $format("Bimodal: Training BTB1: index:%d tag:%h state:%b", index,tag,state))
+        end
 		endmethod
 
     // MethodName: prediction_pc

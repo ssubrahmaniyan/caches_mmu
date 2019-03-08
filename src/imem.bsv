@@ -135,19 +135,20 @@ package imem;
     interface core_req = interface Put
       method Action put (IMem_request#(`vaddr ,`iesize) req);
       `ifdef supervisor
-        let {addr, fence, sfence, epoch} =req;
+        let {addr, fence, sfence, epoch, discard} =req;
         if(!sfence)
           icache.core_req.put(tuple3(addr, fence, epoch));
         if(!fence)
           itlb.core_req.put(tuple2(sfence,addr));
       `ifdef branch_speculation
         if(!sfence && !fence)
-          bpu.prediction_req(addr);
+          bpu.prediction_req(addr `ifdef compressed , discard `endif );
       `endif
       `else
-        icache.core_req.put(req);
+        let {addr, fence, epoch, discard} =req;
+        icache.core_req.put(tuple3(addr, fence, epoch));
         `ifdef branch_speculation
-          bpu.prediction_req(addr);
+          bpu.prediction_req(addr `ifdef compressed , discard `endif );
         `endif
       `endif
       endmethod

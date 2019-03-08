@@ -33,11 +33,11 @@ package cache_types;
     // ----------------- Instruction Memory subsystem types ----------------------------------//
 `ifdef supervisor
                   // addr, Fence, SFence, epoch
-  typedef Tuple4#(Bit#(addr), Bool, Bool, Bit#(esize)) IMem_request#(numeric type addr, 
+  typedef Tuple5#(Bit#(addr), Bool, Bool, Bit#(esize), Bool) IMem_request#(numeric type addr, 
                                                                           numeric type esize);
 `else                                                                          
                   // addr, Fence, epoch
-  typedef Tuple3#(Bit#(addr), Bool, Bit#(esize)) IMem_request#(numeric type addr, 
+  typedef Tuple4#(Bit#(addr), Bool, Bit#(esize), Bool) IMem_request#(numeric type addr, 
                                                                           numeric type esize);
 `endif
   typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) IMem_response#(numeric type data, 
