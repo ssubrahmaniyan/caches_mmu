@@ -88,7 +88,7 @@ package dmem;
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(Tuple2#(DMem_request#(`vaddr, TMul#( `dwords ,8),`desize ), Bool)) core_req;
-    interface Get#(ICore_response#(TMul#(`dwords, 8), `desize )) core_resp;
+    interface Get#(DCore_response#(TMul#(`dwords, 8), `desize )) core_resp;
     interface Get#(DCore_response#(TMul#(`dwords,8), `desize)) ptw_resp;
     interface Get#(DCache_read_request#(`paddr)) read_mem_req;
     interface Put#(DCache_read_response#(TMul#(`dwords, 8))) read_mem_resp;
