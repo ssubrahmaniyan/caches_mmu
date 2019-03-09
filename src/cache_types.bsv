@@ -30,33 +30,6 @@ Details:
 */
 package cache_types;
 
-    // ----------------- Instruction Memory subsystem types ----------------------------------//
-`ifdef supervisor
-                  // addr, Fence, SFence, epoch
-  typedef Tuple4#(Bit#(addr), Bool, Bool, Bit#(esize)) IMem_request#(numeric type addr, 
-                                                                          numeric type esize);
-`else                                                                          
-                  // addr, Fence, epoch
-  typedef Tuple3#(Bit#(addr), Bool, Bit#(esize)) IMem_request#(numeric type addr, 
-                                                                          numeric type esize);
-`endif
-  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) IMem_response#(numeric type data, 
-                                                                          numeric type esize);
-// --------------------------------------------------------------------------------------------//
-
-// ---------------------- Instruction Cache types ---------------------------------------------//
-                  // addr, Fence, epoch
-  typedef Tuple3#(Bit#(addr), Bool, Bit#(esize)) ICore_request#(numeric type addr, 
-                                                                          numeric type esize);
-                 // word , trap, cause , epoch
-  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) ICore_response#(numeric type data, 
-                                                                          numeric type esize);
-                // addr ,  burst len, burst_size 
-  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) ICache_read_request#(numeric type addr);
-                    // data,  last , err
-  typedef Tuple3#(Bit#(data), Bool, Bool) ICache_read_response#(numeric type data);
-// -------------------------------------------------------------------------------------------//
-
 
 // ---------------------- Data Cache types ---------------------------------------------//
 `ifdef atomic

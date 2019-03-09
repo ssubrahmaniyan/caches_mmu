@@ -39,6 +39,7 @@ package imem;
   import Connectable::*;
 
   import cache_types::*;
+  import globals::*;
   `include "cache.defines"
   `ifdef supervisor
     import l1icache_vipt::*;
@@ -90,7 +91,7 @@ package imem;
 `endif
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(IMem_request#(`vaddr ,`iesize)) core_req;
+    interface Put#(FetchRequest#(`vaddr ,`iesize)) core_req;
     interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
     interface Get#(ICache_read_request#(`paddr)) read_mem_req;
     interface Put#(ICache_read_response#(`ibuswidth)) read_mem_resp; 
@@ -112,7 +113,7 @@ package imem;
   `endif
   `ifdef branch_speculation
 		interface Get#(PredictionResponse) prediction_response; 
-    method Tuple2#(Bit#(2), Bit#(`vaddr)) prediction_pc;
+    method PredictionToStage0 predicted_pc;
 		method Action train_bpu (Training_data td);
   `ifdef ras
     method Action train_ras(Bit#(`vaddr) pc);
@@ -133,22 +134,20 @@ package imem;
     mkConnection(itlb.core_resp,icache.pa_from_tlb);
   `endif
     interface core_req = interface Put
-      method Action put (IMem_request#(`vaddr ,`iesize) req);
+      method Action put (FetchRequest#(`vaddr ,`iesize) req);
       `ifdef supervisor
-        let {addr, fence, sfence, epoch} =req;
-        if(!sfence)
-          icache.core_req.put(tuple3(addr, fence, epoch));
-        if(!fence)
-          itlb.core_req.put(tuple2(sfence,addr));
-      `ifdef branch_speculation
-        if(!sfence && !fence)
-          bpu.prediction_req(addr);
+        if(!req.sfence)
       `endif
-      `else
-        icache.core_req.put(req);
-        `ifdef branch_speculation
-          bpu.prediction_req(addr);
-        `endif
+          icache.core_req.put(req.icache_req);
+
+      `ifdef supervisor
+        if(!req.icache_req.fence)
+          itlb.core_req.put(tuple2(req.sfence,req.icache_req.address));
+      `endif
+
+      `ifdef branch_speculation
+        if(`ifdef supervisor !req.sfence `endif && !req.icache_req.fence)
+          bpu.prediction_req(req.icache_req.address `ifdef compressed , req.discard `endif );
       `endif
       endmethod
     endinterface;
@@ -176,7 +175,7 @@ package imem;
 `endif
   `ifdef branch_speculation
     interface prediction_response=bpu.prediction_response;
-    method prediction_pc = bpu.prediction_pc;
+    method predicted_pc = bpu.predicted_pc;
 		method train_bpu = bpu.train_bpu;
     `ifdef ras
       method train_ras = bpu.train_ras;
