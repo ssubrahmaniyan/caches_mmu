@@ -180,7 +180,7 @@ package bimodal;
     `endif
 
       Bit#(`vaddr) target_address=bimodal_target_addr0;
-      if (tag_compare == bht_tag0 && state0[2]==1 && !discard) begin
+      if (tag_compare == bht_tag0 && state0[2]==1 `ifdef compressed && !discard `endif ) begin
       `ifdef compressed
         prediction0=state0[1:0];
         prediction=state0[1:0];
@@ -272,7 +272,7 @@ package bimodal;
     `else
       ff_pred_request.enq(pc);
     `endif
-      `logLevel( bimodal, 0, $format("Bimodal: Prediction request for PC:%h discard:%b index:%d",pc,discard,index))
+      `logLevel( bimodal, 0, $format("Bimodal: Prediction request for PC:%h index:%d",pc,index))
 		endmethod
 
     // MethodName: prediction_resp

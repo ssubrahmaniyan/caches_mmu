@@ -63,7 +63,7 @@ package l1icache_vipt;
                            );
 
     interface Put#(ICache_request#(vaddr,esize)) core_req;
-    interface Get#(ICore_response#(TMul#(wordsize,8),esize)) core_resp;
+    interface Get#(FetchResponse#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(ICache_read_request#(paddr)) read_mem_req;
     interface Put#(ICache_read_response#(buswidth)) read_mem_resp;
     interface Get#(ICache_read_request#(paddr)) nc_read_req;
@@ -159,7 +159,7 @@ package l1icache_vipt;
     // This fifo stores the request from the core.
     FIFOF#(ICache_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
     // This fifo stores the response that needs to be sent back to the core.
-    FIFOF#(ICore_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
+    FIFOF#(FetchResponse#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     // this fifo stores the read request that needs to be sent to the next memory level.
     FIFOF#(ICache_read_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
@@ -344,7 +344,7 @@ package l1icache_vipt;
         cause=`Inst_access_fault;
         trap=True;
       end
-      ff_core_response.enq(tuple4(word, trap, cause, req.epochs));
+      ff_core_response.enq(FetchResponse{instr:word, trap:trap, cause:cause, epochs:req.epochs});
       ff_core_request.deq;
       ff_from_tlb.deq;
       `ifdef pysimulate
@@ -660,7 +660,7 @@ addr:%h way: %d",
 
 
     interface core_resp = interface Get
-      method ActionValue#(ICore_response#(respwidth,esize)) get();
+      method ActionValue#(FetchResponse#(respwidth,esize)) get();
         ff_core_response.deq;
         return ff_core_response.first;
       endmethod

@@ -92,7 +92,7 @@ package imem;
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(FetchRequest#(`vaddr ,`iesize)) core_req;
-    interface Get#(ICore_response#(TMul#(`iwords, 8), `iesize )) core_resp;
+    interface Get#(FetchResponse#(TMul#(`iwords,8),`iesize)) core_resp;
     interface Get#(ICache_read_request#(`paddr)) read_mem_req;
     interface Put#(ICache_read_response#(`ibuswidth)) read_mem_resp; 
     interface Get#(ICache_read_request#(`paddr)) nc_read_req;
