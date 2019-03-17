@@ -93,17 +93,16 @@ package imem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(FetchRequest#(`vaddr ,`iesize)) core_req;
     interface Get#(FetchResponse#(TMul#(`iwords,8),`iesize)) core_resp;
-    interface Get#(ICache_read_request#(`paddr)) read_mem_req;
-    interface Put#(ICache_read_response#(`ibuswidth)) read_mem_resp; 
-    interface Get#(ICache_read_request#(`paddr)) nc_read_req;
-    interface Put#(ICache_read_response#(TMul#(`iwords, 8))) nc_read_resp;
+    interface Get#(ICache_mem_request#(`paddr)) read_mem_req;
+    interface Put#(ICache_mem_response#(`ibuswidth)) read_mem_resp; 
+    interface Get#(ICache_mem_request#(`paddr)) nc_read_req;
+    interface Put#(ICache_mem_response#(TMul#(`iwords, 8))) nc_read_resp;
     method Action cache_enable(Bool c);
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
-    interface Get#(DCore_request#(`vaddr, `vaddr , `desize )) req_to_ptw;
-    interface Put#(Tuple4#(Bit#(`ifdef RV64 54 `else 32 `endif ),
-                          Bit#(`ifdef RV64 2 `else 1 `endif ),Bool, Bit#(6))) resp_from_ptw;
+    interface Get#(PTWalk_tlb_request#(64)) req_to_ptw;
+    interface Put#(PTWalk_tlb_response#(`ifdef RV64 54, 3 `else 32, 2 `endif )) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
   `ifdef pmp
@@ -142,7 +141,7 @@ package imem;
 
       `ifdef supervisor
         if(!req.icache_req.fence)
-          itlb.core_req.put(tuple2(req.sfence,req.icache_req.address));
+          itlb.core_req.put(ITLB_core_request{address:req.icache_req.address, sfence:req.sfence});
       `endif
 
       `ifdef branch_speculation

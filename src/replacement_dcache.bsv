@@ -45,7 +45,6 @@ package replacement_dcache;
 
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
-    let verbosity = `VERBOSITY;
     staticAssert(alg=="RANDOM" || alg=="RROBIN" || alg=="PLRU","Invalid replacement Algorithm");
     if(alg == "RANDOM")begin
       LFSR#(Bit#(4)) random <- mkLFSR_4();
@@ -90,11 +89,7 @@ package replacement_dcache;
       Vector#(sets,Reg#(Bit#(TLog#(ways)))) v_count <- replicateM(mkReg(fromInteger(v_ways-1)));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
-        if (verbosity>1)
-          $display("\tDREPL: valid: %b index: %d",valid,index);
         if (&(valid)==1 && &(dirty)==1)begin // if all lines are valid choose one to randomly replace
-          if (verbosity>1)
-            $display("\tDREPL: replacing line :%d ",readVReg(v_count)[index]);
           return readVReg(v_count)[index];
         end
         else if(&(valid)!=1) begin // if any line empty then send that
@@ -117,8 +112,6 @@ package replacement_dcache;
         end
       endmethod
       method Action update_set (Bit#(TLog#(sets)) index, Bit#(TLog#(ways)) way);
-        if (verbosity>1)
-          $display("DREPL: Updating index: %d",index);
         v_count[index]<=v_count[index]-1;
       endmethod
       method Action reset_repl;
@@ -132,10 +125,10 @@ package replacement_dcache;
             index, Bit#(ways) valid, Bit#(ways) dirty);
         if (&(valid)==1)begin // if all lines are valid choose one to randomly replace
           case (v_count[index]) matches
-            'b?00: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 0"); return 0;end 
-            'b?10: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 1"); return 1;end
-            'b0?1: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 2"); return 2;end
-            default: begin if(verbosity>1) $display($time,"\tDREPL: Replacing line: 3"); return 3; end
+            'b?00:    begin return 0; end 
+            'b?10:    begin return 1; end
+            'b0?1:    begin return 2; end
+            default:  begin return 3; end
           endcase
         end
         else begin // if any line empty then send that
@@ -157,8 +150,6 @@ package replacement_dcache;
           'd2:begin val='b100; mask='b101;end
           'd3:begin val='b000; mask='b101;end  
         endcase
-        if(verbosity>1)
-          $display($time,"\tREPL: old:%b mask:%b new: %b final: %b",v_count[index],mask,val,(v_count[index]&~mask)|(val&mask));
         v_count[index]<=(v_count[index]&~mask)|(val&mask);
       endmethod
       method Action reset_repl;

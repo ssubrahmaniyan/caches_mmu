@@ -30,57 +30,113 @@ Details:
 */
 package cache_types;
 
+  // ---------------------- Instruction Cache types ---------------------------------------------//
+  typedef struct{
+    Bit#(addr)  address;
+    Bit#(8)     burst_len;
+    Bit#(3)     burst_size;
+  } ICache_mem_request#( numeric type addr) deriving (Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(data)  data;
+    Bool        last;
+    Bool        err;
+  } ICache_mem_response#( numeric type data) deriving (Bits, Eq, FShow);
+// -------------------------------------------------------------------------------------------//
 
 // ---------------------- Data Cache types ---------------------------------------------//
-`ifdef atomic
-                  // addr, Fence, epoch, access_type, access_size data,  atomic_op core_ptw
-  typedef Tuple8#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5), Bool) 
-                    DCore_request#(numeric type addr, numeric type data, numeric type esize);
-`else
-                  // addr, Fence, epoch, access_type, access_size data,  atomic_op, core_ptw
-  typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data), Bool) 
-                    DCore_request#(numeric type addr, numeric type data, numeric type esize);
-`endif
-                 // word , err , epoch
-  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) DCore_response#(numeric type data, numeric type esize);
-                // addr ,  burst len, burst_size 
-  typedef Tuple3#(Bit#(addr),  Bit#(8), Bit#(3)) DCache_read_request#(numeric type addr);
-                  // data , last, err
-  typedef Tuple3#(Bit#(data), Bool, Bool) DCache_read_response#(numeric type data);
-                
-                // addr ,  burst len, burst_size, data
-  typedef Tuple4#(Bit#(addr),  Bit#(8), Bit#(2), Bit#(linewidth)) DCache_write_request#(
-                                    numeric type addr, numeric type linewidth);
-  typedef Bool DCache_write_response;
-// -------------------------------------------------------------------------------------------//
-    // ----------------- Data Memory subsystem types ----------------------------------//
-`ifdef supervisor
-  `ifdef atomic
-                  // addr, Fence, sFence, epoch, access_type, access_size data,  atomic_op
-    typedef Tuple8#(Bit#(addr), Bool, Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
-                    DMem_request#(numeric type addr, numeric type data, numeric type esize);
-  `else
-                  // addr, Fence, sFence epoch, access_type, access_size data,  atomic_op
-    typedef Tuple7#(Bit#(addr), Bool, Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data)) 
-                    DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  typedef struct{
+    Bit#(addr)    address;
+    Bool          fence;
+    Bit#(esize)   epochs;
+    Bit#(2)       access;
+    Bit#(3)       size;
+    Bit#(data)    data;
+  `ifdef atomic 
+    Bit#(5)       atomic_op;
   `endif
-`else                                                                          
-  `ifdef atomic
-                    // addr, Fence, epoch, access_type, access_size data,  atomic_op
-    typedef Tuple7#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data),  Bit#(5)) 
-                      DMem_request#(numeric type addr, numeric type data, numeric type esize);
-  `else
-                    // addr, Fence, epoch, access_type, access_size data,  atomic_op
-    typedef Tuple6#(Bit#(addr), Bool, Bit#(esize), Bit#(2), Bit#(3), Bit#(data)) 
-                      DMem_request#(numeric type addr, numeric type data, numeric type esize);
+  `ifdef supervisor
+    Bool          ptwalk_req;
   `endif
-`endif
-  typedef Tuple4#(Bit#(data), Bool, Bit#(6), Bit#(esize)) DMem_response#(numeric type data, 
-                                                                          numeric type esize);
+  } DCache_core_request#( numeric type addr, 
+                      numeric type data, 
+                      numeric type esize) deriving (Bits, Eq, FShow);
+  typedef struct{
+    Bit#(addr)    address;
+    Bit#(8)       burst_len;
+    Bit#(3)       burst_size;
+  } DCache_mem_readreq#( numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(data)    data;
+    Bool          last;
+    Bool          err;
+  } DCache_mem_readresp#(numeric type data) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)      address;
+    Bit#(data)      data;
+    Bit#(8)         burst_len;
+    Bit#(3)         burst_size;
+  } DCache_mem_writereq#(numeric type addr, numeric type data) deriving(Bits, Eq, FShow);
+
+  typedef Bool DCache_mem_writeresp;
+// --------------------------------------------------------------------------------------------- //
+
+// --------------------------------- Data TLB types ---------------------------------------------//
+  typedef struct{
+    Bit#(addr)        address;
+    Bit#(2)           access;
+    Bit#(`causesize)  cause;
+    Bool              ptwalk_trap;
+    Bool              ptwalk_req;
+    Bool              sfence;
+  }DTLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)        address;
+    Bool              trap;
+    Bit#(`causesize)  cause;
+    Bool              tlbmiss;
+  } DTLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)        address;
+    Bit#(2)           access;
+  }PTWalk_tlb_request#(numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)            pte;
+    Bit#(TLog#(level))    levels;
+    Bool                  trap;
+    Bit#(`causesize)      cause;
+  }PTWalk_tlb_response#(numeric type addr, numeric type level) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)            address;
+    Bit#(3)               size;
+    Bit#(2)               access;
+    Bool                  ptwalk_trap;
+    Bool                  ptwalk_req;
+    Bit#(`causesize)      cause;
+  }PTwalk_mem_request# (numeric type addr) deriving(Bits, Eq, FShow);
+// --------------------------------------------------------------------------------------------- //
+// --------------------------------- Data TLB types ---------------------------------------------//
+  typedef struct{
+    Bit#(addr)        address;
+    Bool              sfence;
+  }ITLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
+  
+  typedef struct{
+    Bit#(addr)        address;
+    Bool              trap;
+    Bit#(`causesize)  cause;
+  } ITLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
 // --------------------------------------------------------------------------------------------//
 
 // --------------------------- Common Structs ---------------------------------------------------//
-  typedef enum {Hit, Miss, None} RespState deriving(Eq,Bits,FShow);
+  typedef enum {Hit=1, Miss=0, None=2} RespState deriving(Eq,Bits,FShow);
+
   function String countName (Integer cntr);
     case (cntr)
       'd0: return "Total accesses";
