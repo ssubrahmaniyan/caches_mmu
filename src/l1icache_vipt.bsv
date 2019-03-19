@@ -407,8 +407,8 @@ package l1icache_vipt;
         wr_ram_response<=Miss;
       end
       `logLevel( icache, 0, $format("ICACHE : TAGCMP for Req: ",fshow(req)))
-      `logLevel( dcache, 0, $format("ICACHE : ",fshow(pa)))
-      `logLevel( dcache, 1, $format("ICACHE : TAGCMP Result. Hit:%b Hitline:%h",hit, hitline))
+      `logLevel( icache, 0, $format("ICACHE : ",fshow(pa)))
+      `logLevel( icache, 1, $format("ICACHE : TAGCMP Result. Hit:%b Hitline:%h",hit, hitline))
 
       `ifdef ASSERT
         dynamicAssert(countOnes(hit)<=1,"More than one way is a hit in the cache");
