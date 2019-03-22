@@ -755,8 +755,7 @@ pack(wr_fb_response), pack(wr_nc_response)))
       end
       if(pa.trap || (!request.ptwalk_req && !pa.tlbmiss)) begin
         if(pa.trap)
-          word = zeroExtend(request.address);
-
+          word = truncate(request.address);
         ff_core_response.enq(DMem_core_response{word : word, trap : pa.trap, cause : pa.cause, 
                                                   epochs : request.epochs});
       end
