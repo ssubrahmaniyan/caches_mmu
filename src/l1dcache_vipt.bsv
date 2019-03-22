@@ -114,8 +114,7 @@ package l1dcache_vipt;
           Add#(wordbits, blockbits, _a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index + offset, 
           Add#(tagbits, _b, paddr),     // tagbits = 32 - (wordbits + blockbits + setbits)
-//          Add#(t__, respwidth, vaddr),
-          Add#(s__, vaddr, respwidth),
+          Add#(s__, respwidth, vaddr),
 
           `ifdef ASSERT
           Add#(1, p__, TLog#(TAdd#(1, fbsize))),
