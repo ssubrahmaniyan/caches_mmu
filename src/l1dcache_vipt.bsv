@@ -114,7 +114,8 @@ package l1dcache_vipt;
           Add#(wordbits, blockbits, _a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index + offset, 
           Add#(tagbits, _b, paddr),     // tagbits = 32 - (wordbits + blockbits + setbits)
-          Add#(s__, respwidth, vaddr),
+//          Add#(t__, respwidth, vaddr),
+          Add#(s__, vaddr, respwidth),
 
           `ifdef ASSERT
           Add#(1, p__, TLog#(TAdd#(1, fbsize))),
@@ -755,7 +756,8 @@ pack(wr_fb_response), pack(wr_nc_response)))
       end
       if(pa.trap || (!request.ptwalk_req && !pa.tlbmiss)) begin
         if(pa.trap)
-          word = truncate(request.address);
+          word = zeroExtend(request.address);
+
         ff_core_response.enq(DMem_core_response{word : word, trap : pa.trap, cause : pa.cause, 
                                                   epochs : request.epochs});
       end

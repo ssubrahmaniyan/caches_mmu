@@ -50,6 +50,7 @@ package itlb_rv32_array;
   import mem_config::*;
   import replacement::*;
   `include "cache.defines"
+  `include "Logger.bsv"
   import cache_types::*;
 
   interface Ifc_itlb_rv32_array#(
@@ -59,14 +60,11 @@ package itlb_rv32_array;
       numeric type reg_ways,
       numeric type mega_ways,
       numeric type asid_width);
-    interface Put#(Tuple2#(Bool,Bit#(32))) core_req;
-                          // physical-addr, exception, cause
-    interface Get#(Tuple3#(Bit#(paddr), Bool, Bit#(6))) core_resp;
+    interface Put#(ITLB_core_request#(32)) core_req;
+    interface Get#(ITLB_core_response#(paddr)) core_resp;
 
-                          // va , type: 0-Execution, 1-Load, 2-Store, 3-Atomic
-    interface Get#(DCore_request#(32, 32, `desize )) req_to_ptw;
-                          // ppn   , levels , trap
-    interface Put#(Tuple4#(Bit#(32),Bit#(1),Bool, Bit#(6))) resp_from_ptw;
+    interface Get#(PTWalk_tlb_request#(32)) req_to_ptw;
+    interface Put#(PTWalk_tlb_response#(32, 2)) resp_from_ptw;
     interface Put#(Bit#(32)) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
   `ifdef pmp
@@ -167,9 +165,9 @@ package itlb_rv32_array;
 
     // FIFO to hold the next input
     FIFOF#(Bit#(32)) ff_req_queue <- mkSizedFIFOF(1);
-    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_translated <- mkSizedFIFOF(2);
-    FIFOF#(DCore_request#(32, 32, `desize )) ff_ptw_req <- mkSizedFIFOF(2);
-    FIFOF#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) ff_core_resp<- mkBypassFIFOF();
+    FIFOF#(ITLB_core_response#(paddr)) ff_translated <- mkSizedFIFOF(2);
+    FIFOF#(PTWalk_tlb_request#(32)) ff_ptw_req <- mkSizedFIFOF(2);
+    FIFOF#(ITLB_core_response#(paddr)) ff_core_resp <- mkBypassFIFOF();
     Reg#(Bool) rg_tlb_miss<- mkReg(False);
     // -------------------------------------------------------------------------- //
 
@@ -179,8 +177,7 @@ package itlb_rv32_array;
   `endif
 
     rule initialize(rg_init && !rg_tlb_miss && !ff_translated.notEmpty);
-      if(verbosity>0)
-      $display($time,"\tITLB: Initiliazing TLB");
+      `logLevel( itlb, 1, $format("ITLB : Initiliazing TLB"))
       for(Integer i=0;i<v_reg_ways;i=i+1) 
         for(Integer j=0;j<v_reg_size;j=j+1)
           tlb_pte_reg[i][j]<='d0;
@@ -193,25 +190,22 @@ package itlb_rv32_array;
     endrule
 
     rule perform_pmp_check;
-      if(verbosity>0)
-        $display($time,"\tITLB: Sending Physical Address: ",fshow(ff_translated.first)," to ICACHE");
+      `logLevel( itlb, 0, $format("ITLB : Sending Physical Address: ", fshow(ff_translated.first)))
       // TODO: perform PMP check here
       ff_core_resp.enq(ff_translated.first);
       ff_translated.deq;
     endrule
 
     interface core_req=interface Put
-      method Action put (Tuple2#(Bool,Bit#(32)) req) if(!rg_init && !rg_tlb_miss);
-        let {sfence,va}=req;
-        if(verbosity>0)
-          $display($time,"\tITLB: Recieved Request for VA %h",va);
+      method Action put (ITLB_core_request#(32) req) if(!rg_init && !rg_tlb_miss);
+        `logLevel( itlb, 0, $format("ITLB : Recieved Request for VA %h",req.address))
       // capture input vpns for regular and mega pages.
-        if(!sfence)begin
-          Bit#(20) inp_vpn_reg=va[31:12];
-          Bit#(10) inp_vpn_mega=va[31:22];
-          Bit#(10) vpn0=va[21:12];
-          Bit#(10) vpn1=va[31:22];
-          Bit#(12) page_offset = va[11:0];
+        if(!req.sfence)begin
+          Bit#(20) inp_vpn_reg=req.address[31:12];
+          Bit#(10) inp_vpn_mega=req.address[31:22];
+          Bit#(10) vpn0=req.address[21:12];
+          Bit#(10) vpn1=req.address[31:22];
+          Bit#(12) page_offset = req.address[11:0];
 
           // find if there is a hit in the regular page tlb
           Bit#(32) pte_reg [v_reg_ways];
@@ -298,11 +292,13 @@ package itlb_rv32_array;
 
           // Check for instruction page-fault conditions
           Bool page_fault=False;
+
           if(satp_mode==0 || wr_priv==3)begin
-	          Bit#(paddr) coreresp = truncate(va);
-            ff_translated.enq(tuple3(signExtend(coreresp),False,?));
-	          if(verbosity!=0)
-              $display($time,"\tITLB: Transparent Translation. PhyAddr: %h",coreresp);
+	          Bit#(paddr) coreresp = truncate(req.address);
+ff_translated.enq(ITLB_core_response{address  : signExtend(coreresp),
+                                                 trap     : False,
+                                                 cause    : ?});
+            `logLevel( itlb, 0, $format("ITLB : Transparent Translation. PhyAddr: %h",coreresp))
           end
           else if(|(hit_reg)==1 || |(hit_mega)==1) begin
             // pte.x == 0
@@ -318,28 +314,23 @@ package itlb_rv32_array;
             else if(permissions[4]==1 && wr_priv==1)
               page_fault=True;
 
-            ff_translated.enq(tuple3(truncate({physical_address,page_offset}),page_fault,`Inst_pagefault ));
-            if(verbosity!=0 && page_fault)
-              $display($time,"\tITLB: Page Fault - 2");
+            ff_translated.enq(ITLB_core_response{address  : truncate({physical_address, page_offset}),
+                                                 trap     : page_fault,
+                                                 cause    : `Inst_pagefault });
           end
           else begin
             // Send virtual-address and indicate it is an instruction access to the PTW
-            if(verbosity>1)
-              $display($time,"\tITLB: TLBMiss. Sending Address to PTW:%h",va);
-          `ifdef atomic
-            ff_ptw_req.enq(tuple8(va, False,?, 3, 3, ?, ?, True));
-          `else
-            ff_ptw_req.enq(tuple7(va, False,?, 3, 3, ?, True));
-          `endif
+            `logLevel( itlb, 0, $format("ITLB : TLBMiss. Sending Address to PTW:%h",req.address))
+            ff_ptw_req.enq(PTWalk_tlb_request{address : req.address, access : 3 });
+
             rg_tlb_miss<=True;
-            ff_req_queue.enq(va);
+            ff_req_queue.enq(req.address);
           end
         end
         else begin
-          if(verbosity>1)
-            $display($time,"\tITLB: Recived SFence with VA: %h",va);
+          `logLevel( itlb, 0, $format("ITLB : Recived SFence with VA: %h",req.address))
           rg_init<=True;
-          ff_req_queue.enq(va);
+          ff_req_queue.enq(req.address);
         end
       endmethod
     endinterface;
@@ -356,17 +347,9 @@ package itlb_rv32_array;
       endmethod
     endinterface;
 
-    interface req_to_ptw = interface Get
-      method ActionValue#(DCore_request#(32, 32, `desize )) get;
-        ff_ptw_req.deq;
-        return ff_ptw_req.first;
-      endmethod
-    endinterface;
+    interface req_to_ptw = toGet(ff_ptw_req);
     interface resp_from_ptw = interface Put
-      method Action put(Tuple4#(Bit#(32),Bit#(1), Bool, Bit#(6)) resp)if(rg_tlb_miss && !rg_init);
-        // This will then cause the rule access_tlb_on_request to fire again
-        // which cause a hit in the tlb now and thus respond back to the core.
-        let {pte, levels, trap_taken, cause}=resp;
+      method Action put(PTWalk_tlb_response#(32, 2) resp)if(rg_tlb_miss && !rg_init);
         let va=ff_req_queue.first();
         Bit#(20) vpn_reg=ff_req_queue.first[31:12];
         Bit#(TLog#(reg_size)) index_reg=truncate(vpn_reg);
@@ -376,16 +359,16 @@ package itlb_rv32_array;
       
         Bit#(10) vpn0=ff_req_queue.first()[21:12];
 
-        if(!trap_taken)begin
-          if(levels==0) begin
-              tlb_pte_reg[reg_replaceway][index_reg]<=pte;
+        if(!resp.trap)begin
+          if(resp.levels==0) begin
+              tlb_pte_reg[reg_replaceway][index_reg]<=resp.pte;
               tlb_vtag_reg[reg_replaceway][index_reg]<={satp_asid,vpn_reg};
               if(v_reg_ways>1)
                 reg_replacement.update_set(truncate(vpn_reg),?);//TODO for plru need to send current valids
           end
           else begin
             // index into the mega page arrays
-              tlb_pte_mega[mega_replaceway] [index_mega]<=pte;
+              tlb_pte_mega[mega_replaceway] [index_mega]<=resp.pte;
               tlb_vtag_mega[mega_replaceway][index_mega]<={satp_asid,vpn_mega};
               if(v_mega_ways>1)
                 mega_replacement.update_set(truncate(vpn_mega),?);//TODO for plru need to send current valids
@@ -393,23 +376,22 @@ package itlb_rv32_array;
         end
         Bit#(22) physical_address=0;
         Bit#(12) page_offset = va[11:0];
-        if(levels==0)
-          physical_address=truncateLSB(pte);
+        if(resp.levels==0)
+          physical_address=truncateLSB(resp.pte);
         else
-          physical_address={pte[31:20],vpn0};
-        ff_translated.enq(tuple3(truncate({physical_address,page_offset}),trap_taken,cause));
+          physical_address={resp.pte[31:20],vpn0};
+	ff_translated.enq(ITLB_core_response{address  : truncate({physical_address, page_offset}),
+                                                 trap     : resp.trap,
+                                                 cause    : resp.cause });
         ff_req_queue.deq;
-        if(verbosity!=0)
-          $display($time,"\tITLB: Response from PTW. PhyAddr: %h",{physical_address,page_offset});
+        `logLevel( itlb, 0, $format("ITLB : Response from PTW. PhyAddr: %h", 
+                                    {physical_address, page_offset}))
         rg_tlb_miss<=False;
       endmethod
     endinterface;
-    interface core_resp= interface Get
-      method ActionValue#(Tuple3#(Bit#(paddr),Bool, Bit#(6))) get;
-        ff_core_resp.deq;
-        return ff_core_resp.first();
-      endmethod
-    endinterface;
+
+    interface core_resp = toGet(ff_core_resp);
+
   `ifdef pmp
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
       for(Integer i=0;i<valueOf(`PMPSIZE) ;i=i+1)
