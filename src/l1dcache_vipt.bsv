@@ -723,6 +723,7 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
         fb_dataline[rg_fbmissallocate] <= wr_hitline;
         fb_dirty[rg_fbmissallocate] <= rg_dirty[set_index][wr_hitway];
         rg_valid[set_index][wr_hitway] <= 1'b0;
+        rg_dirty[set_index][wr_hitway] <= 1'b0;
         `ifdef ASSERT
           dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill - buffer on \
 Cache Hit");
@@ -947,6 +948,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
           data_arr[waynum].request(1, set_index, writedata);
           rg_fbwriteback <= rg_fbwriteback + 1;
           fb_valid[rg_fbwriteback] <= False;
+          // TODO is the rg_dirty check in the following if required?
           if((fb_full && fillindex == rg_latest_index) || rg_dirty[set_index][waynum] == 1)
             rg_replaylatest <= True;
           if(&(rg_valid[set_index]) == 1)begin
