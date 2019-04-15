@@ -90,7 +90,6 @@ package dmem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) core_req;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) core_resp;
-    interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize)) ptw_resp;
     interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
     interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) read_mem_resp;
     interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
@@ -104,10 +103,10 @@ package dmem;
     method Bool cacheable_store;
     method Bool cache_available;
     method Bool storebuffer_empty;
-    interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
+    interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize)) ptw_resp;
     interface Get#(PTWalk_tlb_request#(`vaddr)) req_to_ptw;
     interface Put#(PTWalk_tlb_response#(`ifdef RV64 54, 3 `else 32, 2 `endif )) resp_from_ptw;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
@@ -117,6 +116,7 @@ package dmem;
     method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
     method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
   `endif
+    interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
   `endif
       // ---------------------------------------------------------//
   endinterface
@@ -136,17 +136,17 @@ package dmem;
                                       ,ptwalk_req: req.ptwalk_req
                                     `endif };
   endfunction
-  
+`ifdef supervisor 
   function DTLB_core_request#(`vaddr) get_tlb_packet
                                     (DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) req);
           return DTLB_core_request{   address   : req.address,
                                       access    : req.access,
                                       cause     : truncate(req.writedata),
-                                      ptwalk_req: req.ptwalk_req,
                                       ptwalk_trap: req.ptwalk_trap,
                                       sfence    : req.sfence
                                       };
   endfunction
+`endif
 
   (*synthesize*)
   module mkdmem(Ifc_dmem);
@@ -168,7 +168,6 @@ package dmem;
       endmethod
     endinterface;
     interface core_resp = dcache.core_resp;
-    interface ptw_resp = dcache.ptw_resp;
     interface read_mem_req = dcache.read_mem_req;
     interface read_mem_resp = dcache.read_mem_resp;
     interface nc_read_req = dcache.nc_read_req;
@@ -187,6 +186,7 @@ package dmem;
       method cache_available    =dcache.cache_available `ifdef supervisor && dtlb.tlb_available `endif ;
     method storebuffer_empty  =dcache.storebuffer_empty;
 `ifdef supervisor
+    interface ptw_resp = dcache.ptw_resp;
     interface req_to_ptw = dtlb.req_to_ptw;
     interface resp_from_ptw = dtlb.resp_from_ptw;
     interface satp_from_csr = dtlb.satp_from_csr;
@@ -200,8 +200,8 @@ package dmem;
       dtlb.pmp_addr(pmpadr);
     endmethod
   `endif
-`endif
     interface hold_req = dcache.hold_req;
+`endif
   endmodule
 endpackage
 
