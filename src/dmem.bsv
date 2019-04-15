@@ -41,17 +41,20 @@ package dmem;
   import cache_types::*;
   import globals::*;
   `include "cache.defines"
-`ifdef supervisor
-  import l1dcache_vipt::*;
-  `ifdef RV64
-    import dtlb_rv64_array::*;
-  `elsif RV32
-    import dtlb_rv32_array::*;
+`ifdef dcache
+  `ifdef supervisor
+    import l1dcache_vipt::*;
+    `ifdef RV64
+      import dtlb_rv64_array::*;
+    `elsif RV32
+      import dtlb_rv32_array::*;
+    `endif
+  `else
+    import l1dcache::*;
   `endif
-`else
-  import l1dcache::*;
 `endif
 
+`ifdef dcache
     function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
 	    if(!cacheable)
 	  	  return True;
@@ -69,40 +72,42 @@ package dmem;
     return (ifc);
   endmodule
 
-`ifdef supervisor
-  (*synthesize*)
-  (*conflict_free="resp_from_ptw_put, core_req_put"*)
-`ifdef RV64
-  module mkdtlb(Ifc_dtlb_rv64_array#(`paddr, 8,8, 8,1, 1,1,`asidwidth));
-    let ifc();
-    mkdtlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
-    return (ifc);
-  endmodule
-`else
-  module mkdtlb(Ifc_dtlb_rv32_array#(`paddr, 8,8, 1,1,`asidwidth));
-    let ifc();
-    mkdtlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
-    return (ifc);
-  endmodule
-`endif
+  `ifdef supervisor
+    (*synthesize*)
+    (*conflict_free="resp_from_ptw_put, core_req_put"*)
+    `ifdef RV64
+      module mkdtlb(Ifc_dtlb_rv64_array#(`paddr, 8,8, 8,1, 1,1,`asidwidth));
+        let ifc();
+        mkdtlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
+        return (ifc);
+      endmodule
+    `else
+      module mkdtlb(Ifc_dtlb_rv32_array#(`paddr, 8,8, 1,1,`asidwidth));
+        let ifc();
+        mkdtlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
+        return (ifc);
+      endmodule
+    `endif
+  `endif
 `endif
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) core_req;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) core_resp;
-    interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
-    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) read_mem_resp;
     interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
     interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) nc_read_resp;
-    method Action cache_enable(Bool c);
-    method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) write_mem_req_rd;
-    method Action write_mem_req_deq;
-    interface Put#(DCache_mem_writeresp) write_mem_resp;
     interface Get#(DCache_mem_writereq#(`paddr, TMul#( `dwords, 8))) nc_write_req;
+    method Bool storebuffer_empty;
     method Action perform_store(Bit#(`desize ) currepoch);
+`ifdef dcache
+    method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) write_mem_req_rd;
+    interface Put#(DCache_mem_writeresp) write_mem_resp;
+    method Action write_mem_req_deq;
+    method Action cache_enable(Bool c);
+    interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
+    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) read_mem_resp;
     method Bool cacheable_store;
     method Bool cache_available;
-    method Bool storebuffer_empty;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -112,19 +117,22 @@ package dmem;
     interface Put#(Bit#(`vaddr )) satp_from_csr;
     interface Put#(Bit#(2)) curr_priv;
     interface Put#(Bit#(`vaddr )) mstatus_from_csr;
-  `ifdef pmp
-    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-    method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
-  `endif
+    `ifdef pmp
+      method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+      method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
+    `endif
     interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
   `endif
+`endif
       // ---------------------------------------------------------//
   endinterface
 
   function DCache_core_request#(`vaddr, TMul#(`dwords,8), `desize ) get_cache_packet
                                     (DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) req);
           return DCache_core_request{ address   : req.address,
+                                  `ifdef dcache
                                       fence     : req.fence,
+                                  `endif
                                       epochs    : req.epochs,
                                       access    : req.access,
                                       size      : req.size,
@@ -150,7 +158,9 @@ package dmem;
 
   (*synthesize*)
   module mkdmem(Ifc_dmem);
+  `ifdef dcache
     let dcache <- mkdcache;
+  `endif
   `ifdef supervisor
     let dtlb <- mkdtlb;
     mkConnection(dtlb.core_resp, dcache.pa_from_tlb);
