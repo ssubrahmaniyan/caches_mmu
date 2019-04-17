@@ -180,7 +180,6 @@ package dmem;
         if(!r.fence)
             dtlb.core_req.put(get_tlb_packet(r));
       `else
-        $display($time,"Sending to nullcache: ",fshow(get_cache_packet(r)));
         dcache.core_req.put(get_cache_packet(r));
       `endif
       endmethod
