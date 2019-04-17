@@ -43,18 +43,21 @@ package dmem;
   `include "cache.defines"
 `ifdef dcache
   `ifdef supervisor
-    import l1dcache_vipt::*;
-    `ifdef RV64
-      import dtlb_rv64_array::*;
-    `elsif RV32
-      import dtlb_rv32_array::*;
-    `endif
+    import l1dcache_vipt :: *;
   `else
-    import l1dcache::*;
+    import l1dcache :: *;
+  `endif
+`else
+  import null_dcache :: *;
+`endif
+`ifdef supervisor
+  `ifdef RV64
+    import dtlb_rv64_array::*;
+  `elsif RV32
+    import dtlb_rv32_array::*;
   `endif
 `endif
 
-`ifdef dcache
     function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
 	    if(!cacheable)
 	  	  return True;
@@ -68,7 +71,11 @@ package dmem;
   module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,`dfbsize, 
                                                       `dsbsize, `desize, `ddbanks, `dtbanks ));
     let ifc();
+  `ifdef dcache
     mkl1dcache#(isIO,"RROBIN") _temp(ifc);
+  `else
+    mknull_dcache _temp(ifc);
+  `endif
     return (ifc);
   endmodule
 
@@ -89,25 +96,29 @@ package dmem;
       endmodule
     `endif
   `endif
-`endif
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) core_req;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) core_resp;
-    interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
-    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) nc_read_resp;
-    interface Get#(DCache_mem_writereq#(`paddr, TMul#( `dwords, 8))) nc_write_req;
     method Bool storebuffer_empty;
     method Action perform_store(Bit#(`desize ) currepoch);
-`ifdef dcache
+  `ifdef dcache
     method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) write_mem_req_rd;
-    interface Put#(DCache_mem_writeresp) write_mem_resp;
+  `else
+    method DCache_mem_writereq#(`paddr, TMul#(`dwords, 8)) write_mem_req_rd;
+  `endif
     method Action write_mem_req_deq;
     method Action cache_enable(Bool c);
     interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
     interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) read_mem_resp;
     method Bool cacheable_store;
     method Bool cache_available;
+`ifdef dcache
+    interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
+    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) nc_read_resp;
+    interface Get#(DCache_mem_writereq#(`paddr, TMul#( `dwords, 8))) nc_write_req;
+    interface Put#(DCache_mem_writeresp) write_mem_resp;
+`endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -123,16 +134,13 @@ package dmem;
     `endif
     interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
   `endif
-`endif
       // ---------------------------------------------------------//
   endinterface
 
   function DCache_core_request#(`vaddr, TMul#(`dwords,8), `desize ) get_cache_packet
                                     (DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) req);
           return DCache_core_request{ address   : req.address,
-                                  `ifdef dcache
                                       fence     : req.fence,
-                                  `endif
                                       epochs    : req.epochs,
                                       access    : req.access,
                                       size      : req.size,
@@ -151,6 +159,7 @@ package dmem;
                                       access    : req.access,
                                       cause     : truncate(req.writedata),
                                       ptwalk_trap: req.ptwalk_trap,
+                                      ptwalk_req: req.ptwalk_req,
                                       sfence    : req.sfence
                                       };
   endfunction
@@ -158,9 +167,7 @@ package dmem;
 
   (*synthesize*)
   module mkdmem(Ifc_dmem);
-  `ifdef dcache
     let dcache <- mkdcache;
-  `endif
   `ifdef supervisor
     let dtlb <- mkdtlb;
     mkConnection(dtlb.core_resp, dcache.pa_from_tlb);
@@ -173,6 +180,7 @@ package dmem;
         if(!r.fence)
             dtlb.core_req.put(get_tlb_packet(r));
       `else
+        $display($time,"Sending to nullcache: ",fshow(get_cache_packet(r)));
         dcache.core_req.put(get_cache_packet(r));
       `endif
       endmethod
@@ -180,15 +188,17 @@ package dmem;
     interface core_resp = dcache.core_resp;
     interface read_mem_req = dcache.read_mem_req;
     interface read_mem_resp = dcache.read_mem_resp;
-    interface nc_read_req = dcache.nc_read_req;
-    interface nc_read_resp = dcache.nc_read_resp;
     method Action cache_enable (Bool c);
       dcache.cache_enable(c);
     endmethod
     method write_mem_req_rd = dcache.write_mem_req_rd;
     method write_mem_req_deq = dcache.write_mem_req_deq;
+`ifdef dcache
     interface write_mem_resp = dcache.write_mem_resp;
     interface nc_write_req = dcache.nc_write_req;
+    interface nc_read_req = dcache.nc_read_req;
+    interface nc_read_resp = dcache.nc_read_resp;
+`endif
     method Action perform_store(Bit#(`desize ) currepoch);
       dcache.perform_store(currepoch);
     endmethod
