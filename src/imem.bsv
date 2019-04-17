@@ -100,11 +100,11 @@ package imem;
     interface Put#(ICache_request#(`vaddr ,`iesize)) core_req;
     interface Get#(FetchResponse#(TMul#(`iwords, 8),`iesize)) core_resp;
     method Action cache_enable(Bool c);
-    interface Get#(ICache_mem_request#(`paddr)) nc_read_req;
-    interface Put#(ICache_mem_response#(TMul#(`iwords, 8))) nc_read_resp;
-  `ifdef icache
     interface Get#(ICache_mem_request#(`paddr)) read_mem_req;
     interface Put#(ICache_mem_response#(`ibuswidth)) read_mem_resp; 
+  `ifdef icache
+    interface Get#(ICache_mem_request#(`paddr)) nc_read_req;
+    interface Put#(ICache_mem_response#(TMul#(`iwords, 8))) nc_read_resp;
   `endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces - --------------------- //
@@ -136,20 +136,22 @@ package imem;
           icache.core_req.put(req);
 
       `ifdef supervisor
-        if(!req.fence)
+        `ifdef ifence
+          if(!req.fence)
+        `endif
           itlb.core_req.put(ITLB_core_request{address : req.address, sfence : req.sfence});
       `endif
       endmethod
     endinterface;
     interface core_resp = icache.core_resp;
-    interface nc_read_req = icache.nc_read_req;
-    interface nc_read_resp = icache.nc_read_resp;
+    interface read_mem_req = icache.read_mem_req;
+    interface read_mem_resp = icache.read_mem_resp;
     method Action cache_enable (Bool c);
       icache.cache_enable(c);
     endmethod
   `ifdef icache
-    interface read_mem_req = icache.read_mem_req;
-    interface read_mem_resp = icache.read_mem_resp;
+    interface nc_read_req = icache.nc_read_req;
+    interface nc_read_resp = icache.nc_read_resp;
   `endif
   `ifdef supervisor
     interface req_to_ptw = itlb.req_to_ptw;

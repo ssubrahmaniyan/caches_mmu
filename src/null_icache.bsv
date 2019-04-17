@@ -52,8 +52,8 @@ package null_icache;
 
     interface Put#(ICache_request#(vaddr,esize)) core_req;
     interface Get#(FetchResponse#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(ICache_mem_request#(paddr)) nc_read_req;
-    interface Put#(ICache_mem_response#(TMul#(wordsize,8))) nc_read_resp;
+    interface Get#(ICache_mem_request#(paddr)) read_mem_req;
+    interface Put#(ICache_mem_response#(buswidth)) read_mem_resp; 
   `ifdef supervisor
     interface Put#(ITLB_core_response#(paddr)) pa_from_tlb;
   `endif
@@ -70,7 +70,8 @@ package null_icache;
                                     esize,dbanks,tbanks,buswidth))
           provisos(
           Mul#(wordsize, 8, respwidth),
-          Add#(a__, paddr, vaddr));        // respwidth is the total bits in a word
+          Add#(a__, paddr, vaddr),
+          Add#(b__, respwidth, buswidth));        // respwidth is the total bits in a word
     
     
     // This fifo stores the request from the core.
@@ -84,14 +85,20 @@ package null_icache;
     FIFOF#(ITLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
     
     // this fifo stores the read request that needs to be sent to the next memory level.
-    FIFOF#(ICache_mem_request#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
+    FIFOF#(ICache_mem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     
     // This fifo stores the response from the next level memory.
-    FIFOF#(ICache_mem_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
+    FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
 
     Reg#(Bool) rg_pending_read <- mkReg(False);
 
-    rule check_request(!rg_pending_read);
+    `ifdef ifence
+      rule ignore_fence(ff_core_request.first.fence);
+        ff_core_request.deq;
+      endrule
+    `endif
+
+    rule check_request(!rg_pending_read `ifdef ifence && !ff_core_request.first.fence `endif );
       let req = ff_core_request.first;
       Bool trap = False;
       Bit#(`causesize) cause = `Inst_access_fault;
@@ -119,8 +126,7 @@ package null_icache;
         ff_core_request.deq;
       end
       else begin
-        let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
-        ff_nc_read_request.enq(ICache_mem_request{ address    : phy_addr,
+        ff_read_mem_request.enq(ICache_mem_request{ address    : phy_addr,
                                                    burst_len  : 0,
                                                    burst_size : 2});
         rg_pending_read <= True;
@@ -128,19 +134,19 @@ package null_icache;
     endrule
 
     rule receive_nc_response(rg_pending_read);
-      let response = ff_nc_read_response.first;
+      let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
       ff_core_request.deq;
-      ff_nc_read_response.deq;
-      ff_core_response.enq(FetchResponse{instr:response.data, trap: response.err, 
+      ff_read_mem_response.deq;
+      ff_core_response.enq(FetchResponse{instr:truncate(response.data), trap: response.err, 
                                            cause:`Inst_access_fault, epochs:req.epochs});
       rg_pending_read <=  False;
     endrule
 
     interface core_req = toPut(ff_core_request);
     interface core_resp = toGet(ff_core_response);
-    interface nc_read_req = toGet(ff_nc_read_request);
-    interface nc_read_resp = toPut(ff_nc_read_response);
+    interface read_mem_req= toGet(ff_read_mem_request);
+    interface read_mem_resp = toPut(ff_read_mem_response);
   `ifdef supervisor
     interface pa_from_tlb = toPut(ff_from_tlb);
   `endif
