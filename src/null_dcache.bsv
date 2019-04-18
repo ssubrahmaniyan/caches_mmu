@@ -333,7 +333,7 @@ package null_dcache;
         ff_from_tlb.deq;
       `endif
       end
-      else if(wr_store_detected && !pa.tlbmiss) begin
+      else if(wr_store_detected `ifdef supervisor && !pa.tlbmiss `endif ) begin
         ff_core_response.enq(DMem_core_response{ word: ?, trap : False, cause: ?,
                                                    epochs : req.epochs});
         wr_allocate_storebuffer <= True;
