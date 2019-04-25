@@ -96,6 +96,7 @@ package l1dcache;
   (*conflict_free="respond_to_core,perform_store"*)
   (*conflict_free="update_fb_with_memory_response,perform_store"*)
   (*conflict_free="allocate_storebuffer,perform_store"*)
+  (*conflict_free="request_to_memory, perform_store"*)
   (*conflict_free="allocate_storebuffer,respond_to_core"*)
   (*conflict_free="allocate_storebuffer,request_to_memory"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
@@ -401,6 +402,8 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
           index=next_set;
         end
         if(unpack(dirty_and_valid))begin
+          `logLevel( dcache, 2, $format("DCACHE: Fence Evicting Addr:%h Data:%h", final_address,
+                                        final_line))
           ff_write_mem_request.enq(DCache_mem_writereq{address   : final_address,
                                                 burst_len : fromInteger(valueOf(blocksize) - 1),
                                                 burst_size : fromInteger(valueOf(TLog#(wordsize))),
@@ -784,6 +787,7 @@ pack(wr_fb_response), pack(wr_nc_response)))
         fb_addr[rg_fbmissallocate]<=phy_addr;
         fb_err[rg_fbmissallocate]<=0;
         fb_enables[rg_fbmissallocate]<=0;
+        fb_dirty[rg_fbmissallocate] <= 0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
         `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", phy_addr)) 
         `logLevel( dcache, 1, $format("DCACHE : Allocating FBindex:", rg_fbmissallocate)) 
