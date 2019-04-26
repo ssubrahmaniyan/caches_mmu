@@ -452,7 +452,7 @@ package null_dcache;
       noAction;
     endmethod
     method cacheable_store = False;
-    method cache_available = ff_core_request.notFull && ff_core_response.notFull;
+    method cache_available = ff_core_request.notFull && ff_core_response.notFull && !sb_full;
     method storebuffer_empty = sb_empty;
   `ifdef supervisor
     interface ptw_resp      = toGet(ff_ptw_response);
