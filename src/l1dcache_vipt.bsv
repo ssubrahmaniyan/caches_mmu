@@ -472,7 +472,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
     // miss. On a hit the required word is forwarded to the rule respond_to_core. On a miss the
     // address is forwarded to the rule request_to_memory;
     rule tag_match(ff_core_response.notFull && !rg_miss_ongoing && !rg_polling &&
-          !ff_core_request.first.fence && !fb_full && !rg_replaylatest);
+          !ff_core_request.first.fence && !fb_full && !rg_replaylatest && !sb_full);
       let request = ff_core_request.first();
 
       let pa = ff_from_tlb.first;
@@ -1102,7 +1102,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     interface nc_write_req = toGet(ff_nc_write_request);
 
     method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
-                  !rg_replaylatest &&  !rg_fence_stall && !fb_full ;
+                  !rg_replaylatest &&  !rg_fence_stall && !fb_full && !sb_full;
     method storebuffer_empty = sb_empty;
     interface hold_req = toGet(ff_hold_request);
   endmodule
