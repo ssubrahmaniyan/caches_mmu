@@ -40,6 +40,7 @@ package dmem;
 
   import cache_types::*;
   import globals::*;
+  import io_func::*;
   `include "cache.defines"
 `ifdef dcache
   `ifdef supervisor
@@ -57,15 +58,6 @@ package dmem;
     import dtlb_rv32_array::*;
   `endif
 `endif
-
-    function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
-	    if(!cacheable)
-	  	  return True;
-      else if(addr<'h80000000)
-        return True;
-	    else
-	  	  return False;
-    endfunction
 
   (*synthesize*)
   module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,`dfbsize, 

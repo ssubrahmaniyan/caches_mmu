@@ -40,6 +40,7 @@ package imem;
 
   import globals::*;
   import cache_types::*;
+  import io_func::*;
   `include "cache.defines"
   `ifdef supervisor
     `ifdef RV64
@@ -57,15 +58,6 @@ package imem;
   `else
     import null_icache :: *;
   `endif
-
-  function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
-	  if(!cacheable)
-		  return True;
-    else if(addr<'h80000000)
-      return True;
-	  else
-		  return False;
-  endfunction
 
   (*synthesize*)
   module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
