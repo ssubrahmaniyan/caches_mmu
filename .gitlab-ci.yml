@@ -1,0 +1,7 @@
+version-update:
+    script:
+        - python3 /scratch/version-update.py
+    only:
+        - master
+    tags:
+        - shakti-runner
