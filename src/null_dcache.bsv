@@ -382,7 +382,7 @@ package null_dcache;
       else if(req.access == 0 `ifdef atomic || req.access == 2 `endif )begin
         ff_read_mem_request.enq(DCache_mem_readreq{address    : phy_addr,
                                                   burst_len  : 0,
-                                                  burst_size : req.size});
+                                                  burst_size : zeroExtend(req.size[1:0])});
         `logLevel( dcache, 0, $format("DCACHE : Sending IO Request for Addr:%h", phy_addr))
         rg_pending_read <= True;
       end
