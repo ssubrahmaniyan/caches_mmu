@@ -59,15 +59,16 @@ package nb_dcache;
 	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, prf_index, id_bits, mshrsize)
 		provisos(
 			Mul#(wordsize, 8, respwidth),					// respwidth is the total bits in a word
-			Mul#(linesize, respwidth, linewidth),// linewidth is the total bits in a cache line
+			Mul#(linesize, respwidth, linewidth),	// linewidth is the total bits in a cache line
+			Log#(linewidth, linewidthbits),				// linewidthbits is no. of bits to indicate byte offset within a line
 			Log#(wordsize, wordbits),							// wordbits is no. of bits to index a byte in a word
-			Log#(linesize, linebits),						// linebits is no. of bits to index a word in a line
+			Log#(linesize, linebits),							// linebits is no. of bits to index a word in a line
 			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
 			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
 			Add#(mshrsize, 2, temp1),
 			Log#(temp1, temp1_bits),
-			Add#(temp1_bits, a__, id_bits)				//id_bits should be greater than Log(mshrsize+2)
-			Add#(wordbits, linebits, temp2), 		// temp2 total bits to index a byte in a cache line.
+			Add#(temp1_bits, a__, id_bits)				// id_bits should be greater than Log(mshrsize+2)
+			Add#(wordbits, linebits, temp2), 			// temp2 total bits to index a byte in a cache line.
 			Add#(temp2, setbits, tagpos),					// tagpos total bits for index + offset, 
 			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (wordbits + linebits + setbits)
 
@@ -173,52 +174,46 @@ package nb_dcache;
 			end
 			else begin																							//Line miss
 				let fill_buffer_resp<- fill_buffer.req(req.addr); 		//Send request to fill buffer
-				if(fill_buffer_resp.is_hit) begin											//Fill buffer holds/will hold data for this line
+				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer)
+				if(fill_buffer_resp.is_hit) begin	
+					ff_first_stage.deq;
 
-					if(fill_buffer_resp.fabric_data_valid) begin				//If the fabric data corresponding to this req is valid
-						ff_first_stage.deq;
-
-						if((req.origin==Load_buffer || req.origin==PTW)) begin	//If the request needs to send a response back
-							Bit#(data) data_to_core= fn_extract_data_from(fill_buffer_resp.data);	//TODO Make UniqueWrapper for this fn
-							wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																							 prf_index: req.prf_index,
-																							 exception: None };
-						end
-						else if(req.origin==Store_commit) begin						//For a commit store, update fill buffer
-							fill_buffer.upd(req.addr, req.payload);
-						end
-
+					if((req.origin==Load_buffer || req.origin==PTW)) begin	//If the request needs to send a response back
+						Bit#(data) data_to_core= fn_extract_data_from(fill_buffer_resp.data);	//TODO Make UniqueWrapper for this fn
+						wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																						 prf_index: req.prf_index,
+																						 exception: None };
 					end
-					else if(req.origin==Store_buffer) begin							//For a load req from store buffer, drop the request
+					else if(req.origin==Store_commit) begin						//For a commit store, update fill buffer
+						Bit#(linewidthbits) offset_within_line= req.addr[linewidth_val-1:0];
+						fill_buffer.upd(offset_within_line, req.payload);
+					end
+					else if(req.origin==Store_buffer) begin						//For a load req from store buffer, drop the request
 						ff_first_stage.deq;
 					end
-					else begin																					//Fill buffer awaiting data
-						rg_cache_stage<= Waiting_for_FB_response;
-					end
-					
 				end
-				else begin																						//Fill buffer miss
+				else begin																					//Fill buffer miss
 					ff_second_stage.enq(req);
 				end
 			end
 		endrule
 
-		//TODO remove this rule and instead put the request in the MSHR
-		rule rl_waiting_for_fb_respose(rg_cache_stage==Waiting_for_FB_response);
-				let fill_buffer_resp<- fill_buffer.req(req.addr); 		//Send request to fill buffer
-				if(fill_buffer_resp.fabric_data_valid) begin				//If the fabric data corresponding to this req is valid
-					ff_first_stage.deq;
-					//The following if condition is not required as the only case we would end up here is
-					//for an actual load request.
-					//if((req.origin==Load_buffer || req.origin==PTW)) begin	//If the request needs to send a response back
-					Bit#(data) data_to_core= fn_extract_data_from(fill_buffer_resp.data);	//TODO Make UniqueWrapper for this fn
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: req.prf_index,
-																					 exception: None };
-					end
-				end
+		rule rl_access_MSHRs;
+			let req= ff_second_stage.first;
+			let addr= req.addr[paddr_val-1:linewidthbits];
+			ff_second_stage.deq;
+			let mshr_resp<- mshr.allocate(req);
+			if(mshr_resp.send_read_req) begin
+				ff_read_req_to_mem.enq(mshr_resp.read_req);
+			end
 		endrule
 
+		//This will be fire only in those clock cycles when MSHR wants to send a R/W req to MSHRs
+		rule rl_MSHR_req_to_fill_buffer;
+			let req= mshr.req_to_fill_buffer;
+			if(req.is_load) begin
+			fill_buffer.upd(req.offset_within_line, req.
+		endrule
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);
 
