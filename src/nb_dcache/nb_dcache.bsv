@@ -186,7 +186,7 @@ package nb_dcache;
 					end
 					else if(req.origin==Store_commit) begin						//For a commit store, update fill buffer
 						Bit#(linewidthbits) offset_within_line= req.addr[linewidth_val-1:0];
-						fill_buffer.upd(offset_within_line, req.payload);
+						fill_buffer.upd(req.payload);
 					end
 					else if(req.origin==Store_buffer) begin						//For a load req from store buffer, drop the request
 						ff_first_stage.deq;
@@ -208,11 +208,20 @@ package nb_dcache;
 			end
 		endrule
 
+		rule rl_response_from_memory;
+			mshr.resp_from_mem(resp.rid, resp.rdata);
+		endrule
+
 		//This will be fire only in those clock cycles when MSHR wants to send a R/W req to MSHRs
 		rule rl_MSHR_req_to_fill_buffer;
-			let req= mshr.req_to_fill_buffer;
-			if(req.is_load) begin
-			fill_buffer.upd(req.offset_within_line, req.
+			let req= mshr.req_to_fb;		//Receive the request from MSHR
+			let fb_resp<- fill_buffer.req(req.addr);	//Send the req to fill buffer and check if it's a hit
+			if(fb_resp.is_hit) begin		//If it's a hit in the fill buffer
+				mshr.ack_from_fb;					//Send ack to mshr to dequeue the FIFO
+				if(!req.is_load) begin		//If it's a store request
+					fill_buffer.upd(req.data);
+				end
+			end
 		endrule
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);
