@@ -37,7 +37,7 @@ package nb_dcache_types;
 		Bit#(2) access_size,
 		Bit#(data) payload,
 		Origin origin
-	} Req_from_core#(numeric type addr, numeric type data, numeric type prf_index) deriving (Bits, Eq, FShow);
+	} Req_from_core#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
 	
 	typedef enum {No_exception, Bus_error, Access_fault} DCache_exception deriving (Bits, Eq, FShow);
 	
