@@ -45,39 +45,37 @@ package nb_dcache;
 													numeric type tbanks,
 													numeric type prf_index,
 													numeric type id_bits,
-													numeric type mshrsize);
+													numeric type mshrsize,
+													numeric type buswidth);
 		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) subifc_req_from_core;
 		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))         subifc_resp_to_core;
 		interface Get#(Req_to_ptw#(vaddr))                                  subifc_req_to_ptw;
 		interface Get#(Read_req_to_mem#(vaddr, id_bits))                    subifc_read_req_to_mem;
-		interface Put#(Read_resp_from_mem#(data, id_bits))                  subifc_read_resp_from_mem;
-		interface Get#(Write_req_to_mem#(vaddr, data))                      subifc_write_req_to_mem;
+		interface Put#(Read_resp_from_mem#(buswidth, id_bits))              subifc_read_resp_from_mem;
+		interface Get#(Write_req_to_mem#(vaddr, buswidth))                  subifc_write_req_to_mem;
 		interface Put#(Bool)                                                subifc_write_resp_from_mem;
 		
 	endinterface
 
 	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, prf_index, id_bits, mshrsize)
 		provisos(
-			Mul#(wordsize, 8, respwidth),					// respwidth is the total bits in a word
-			Mul#(linesize, respwidth, linewidth),	// linewidth is the total bits in a cache line
-			Log#(linewidth, linewidthbits),				// linewidthbits is no. of bits to indicate byte offset within a line
-			Log#(wordsize, wordbits),							// wordbits is no. of bits to index a byte in a word
-			Log#(linesize, linebits),							// linebits is no. of bits to index a word in a line
+			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
+			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
+			Log#(linewidth, linewidthbits),			// linewidthbits is no. of bits to indicate byte offset within a line
 			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
 			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
 			Add#(mshrsize, 2, temp1),
 			Log#(temp1, temp1_bits),
 			Add#(temp1_bits, a__, id_bits)				// id_bits should be greater than Log(mshrsize+2)
-			Add#(wordbits, linebits, temp2), 			// temp2 total bits to index a byte in a cache line.
-			Add#(temp2, setbits, tagpos),					// tagpos total bits for index + offset, 
-			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (wordbits + linebits + setbits)
+			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
+			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
 
 
 		);
 
 		let ways_val= valueOf(ways);
-		let wordbits_val= valueOf(wordbits);
-		let linebits_val= valueOf(linebits);
+		let datawidth_val= valueOf(datawidth);
+		let linewidthbits_val= valueOf(linewidthbits);
 		let setbits_val= valueOf(setbits);
 		let tagbits_val= valueOf(tagbits);
 		let tagpos_val= valueOf(tagpos);
@@ -106,11 +104,21 @@ package nb_dcache;
 		Reg#(Bool) rg_cache_busy <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
 		
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(linewidthbits) line_addr);
+    	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
+    	                       size[1 : 0] == 1?'hFFFF : 
+    	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+    	Bit#(linewidth) mask = zeroExtend(temp);
+    	Bit#(datawidth) zeros = 0;
+    	mask = mask<<{line_addr,3'd0};
+			let writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
+		endfunction
+
 		rule rl_handle_req_from_core;
 			let req= ff_req_from_core.first;
 			Bool is_actual_load= (req.origin == Load_buffer);
-			Bit#(setbits) set_index = req.addr[setbits_val + linebits_val + wordbits_val - 1 :
-                                         linebits_val + wordbits_val];
+			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
 			for(Integer i = 0;i<v_ways;i = i+1) begin
 				data_arr[i].request(0, set_index, ?);
 				tag_arr[i].request(0, set_index, ?);
@@ -152,9 +160,10 @@ package nb_dcache;
 
 		rule rl_tag_and_data_array_read_response;
 			let req= ff_first_stage.first;
+			ff_first_stage.deq;
 			Bit#(linewidth) dataline [v_ways];
 			Bit#(tagbits) tag [v_ways];
-			Bit#(TLog#(TAdd#(ways,1))) hit='d-1;
+			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
 			Bit#(tagbits) tag= req.addr[paddr_val-1: tagpos_val];
 
 			for(Integer i = 0;i<v_ways;i = i+1)begin
@@ -162,64 +171,76 @@ package nb_dcache;
 				tag[i] <- tag_arr[i].read_response();
 				//If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
 				if(tag[i][tagbits_val]==1 && tag[i][tagbits_val-1:0]==tag) begin		
-					hit== fromInteger(i);	//Store the index of the tag match
+					way_num== fromInteger(i);	//Store the index of the tag match
 				end
 			end
 
-			if(hit!='d-1) begin																			//It's a line hit
-				let line= dataline[truncate(hit)];
-				Bit#(data) data_to_core= fn_extract_data_from(line);	//TODO Make UniqueWrapper for this fn
-				ff_first_stage.deq;
-				//Get the right offset data and return to core (Even PTW will take it from here)
+			Bool send_resp= False;
+			if(req.origin==Load_buffer || req.origin==PTW) begin
+				send_resp= True;
+			end
+
+			if(way_num!='d-1) begin																			//It's a line hit
+				let line= dataline[truncate(way_num)];
+				if(send_resp) begin
+					//Get the right offset data and return to core (Even PTW will take it from here)
+					Bit#(data) data_to_core= fn_extract_data(line);	//TODO Make UniqueWrapper for this fn
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: req.prf_index,
+																					 exception: None };
+				end
+				else if(req.origin==Store_commit) begin								//Store instruction
+					Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+    			Bit#(linewidthbits) line_addr= req.addr[lineoffsetbits_val-1:0];
+					let write_data= generate_masked_data(dataline[i], req.data, line_addr);
+      		data_arr[truncate(way_num)].request(1, set_index, write_data);
+				end
 			end
 			else begin																							//Line miss
-				let fill_buffer_resp<- fill_buffer.req(req.addr); 		//Send request to fill buffer
-				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer)
-				if(fill_buffer_resp.is_hit) begin	
-					ff_first_stage.deq;
-
-					if((req.origin==Load_buffer || req.origin==PTW)) begin	//If the request needs to send a response back
-						Bit#(data) data_to_core= fn_extract_data_from(fill_buffer_resp.data);	//TODO Make UniqueWrapper for this fn
+				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
+				let fill_buffer_resp<- fill_buffer.request(req); 			//Send request to fill buffer
+				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
+				//if a response needs to be sent (i.e. a load_buffer or a PTW request).
+				//Here, fb_data is the complete fill buffer line
+				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					if(send_resp) begin
+						Bit#(data) data_to_core= fn_extract_data(fb_data);	//TODO Make UniqueWrapper for this fn
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																						 prf_index: req.prf_index,
 																						 exception: None };
 					end
-					else if(req.origin==Store_commit) begin						//For a commit store, update fill buffer
-						Bit#(linewidthbits) offset_within_line= req.addr[linewidth_val-1:0];
-						fill_buffer.upd(req.payload);
-					end
-					else if(req.origin==Store_buffer) begin						//For a load req from store buffer, drop the request
-						ff_first_stage.deq;
-					end
+					//else do nothing
 				end
-				else begin																					//Fill buffer miss
-					ff_second_stage.enq(req);
+				else begin																						//Fill buffer miss
+					ff_second_stage.enq(req);														//Pass the req to the next stage
 				end
 			end
 		endrule
 
 		rule rl_access_MSHRs;
 			let req= ff_second_stage.first;
-			let addr= req.addr[paddr_val-1:linewidthbits];
 			ff_second_stage.deq;
 			let mshr_resp<- mshr.allocate(req);
-			if(mshr_resp.send_read_req) begin
-				ff_read_req_to_mem.enq(mshr_resp.read_req);
+			if(mshr_resp matches tagged Valid .read_req) begin
+				ff_read_req_to_mem.enq(read_req);
 			end
 		endrule
 
-		rule rl_response_from_memory;
-			mshr.resp_from_mem(resp.rid, resp.rdata);
-		endrule
-
-		//This will be fire only in those clock cycles when MSHR wants to send a R/W req to MSHRs
+		//This will fire only in those clock cycles when MSHR wants to send a R/W req to MSHRs
 		rule rl_MSHR_req_to_fill_buffer;
-			let req= mshr.req_to_fb;		//Receive the request from MSHR
-			let fb_resp<- fill_buffer.req(req.addr);	//Send the req to fill buffer and check if it's a hit
-			if(fb_resp.is_hit) begin		//If it's a hit in the fill buffer
+			let resp_from_mem= wr_read_resp_from_mem;
+			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
+			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
+
+			//Send the req to fill buffer and check if it's a hit
+			let fb_resp<- fill_buffer.request(req_from_mshr);	
+			if(fb_resp matches tagged Valid .fb_resp_data) begin		//If it's a hit in the fill buffer
 				mshr.ack_from_fb;					//Send ack to mshr to dequeue the FIFO
-				if(!req.is_load) begin		//If it's a store request
-					fill_buffer.upd(req.data);
+				if(req_from_mshr.is_load) begin		//If it's a load request, send response to processor
+					let data_to_core= fn_extract_data(fb_resp_data);
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: req_from_mshr.prf_index,
+																					 exception: None };
 				end
 			end
 		endrule
