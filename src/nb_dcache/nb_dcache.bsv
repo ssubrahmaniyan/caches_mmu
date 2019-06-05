@@ -233,7 +233,8 @@ package nb_dcache;
 			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
 
 			//Send the req to fill buffer and check if it's a hit
-			let fb_resp<- fill_buffer.request(req_from_mshr);	
+			let fb_resp<- fill_buffer.request(req_from_mshr);
+
 			if(fb_resp matches tagged Valid .fb_resp_data) begin		//If it's a hit in the fill buffer
 				mshr.ack_from_fb;					//Send ack to mshr to dequeue the FIFO
 				if(req_from_mshr.is_load) begin		//If it's a load request, send response to processor

@@ -34,7 +34,7 @@ package mshr;
 											numeric type data,
 											numeric type id_bits);
 		method ActionValue#(Maybe#(Read_req_to_mem)) allocate (Req_from_core#(addr, data) req);
-		method Req_from_core#(addr, data) req_to_fb(Bit#(id_bits) rid);
+		method Req_from_core#(addr, data) req_to_fb(Bit#(id_bits) rid, Bool rlast);
 		method Action ack_from_fb;
 	endinterface
 
@@ -44,13 +44,31 @@ package mshr;
 			 						 ));
 
 		Reg#(Bit#(lineaddrbits)) rg_line_addr [mshrsize];
-		Reg#(Bit#(id_bits)) rg_fb_
+		Reg#(Bit#(id_bits)) rg_curr_fb_id <- mkReg(0);
 
 		for(Integer i=0; i<mshrsize; i=i+1)
 			rg_line_addr[i] <- mkReg(0);
 
 		
 		method Action allocate (Req_from_core#(addr, data, prfindex) req);
+
+		endmethod
+
+		method Req_from_core#(addr, data) req_to_fb(Bit#(id_bits) rid, Bool rlast);
+			if(rg_curr_fb_id matches tagged Invalid) begin
+				rg_curr_fb_id<= tagged Valid rid;
+			end
+			else if(rlast) begin
+				rg_curr_fb_id<= tagged Invalid;
+			end
+
+			return Req_from_core {addr: ,
+														access_size,
+														payload,
+														origin};
+		endmethod
+
+		method Action ack_from_fb;
 		endmethod
 		
 	endmodule
