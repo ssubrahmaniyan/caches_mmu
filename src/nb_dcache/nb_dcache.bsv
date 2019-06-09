@@ -226,7 +226,7 @@ package nb_dcache;
 			end
 		endrule
 
-		//This will fire only in those clock cycles when MSHR wants to send a R/W req to MSHRs
+		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
 			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
@@ -254,7 +254,7 @@ package nb_dcache;
 
 		interface subifc_read_req_to_mem= to_Get(ff_read_req_to_mem);
 
-		interface Put#(Read_resp_from_mem#(data, id_bits))                subifc_read_resp_from_mem;
+		interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
 			method Action put(Read_resp_from_mem#(data, id_bits) resp);
 				wr_read_resp_from_mem<= resp;
 			endmethod

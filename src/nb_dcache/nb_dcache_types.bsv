@@ -31,6 +31,9 @@ Details:
 package nb_dcache_types;
 
 	typedef enum {Load_buffer, Store_buffer, PTW, Store_commit} Origin deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Origin);
+		defaultValue= Store_buffer;
+	endinstance
 
 	typedef struct {
 		Bit#(addr) addr,
@@ -38,6 +41,13 @@ package nb_dcache_types;
 		Bit#(data) payload,
 		Origin origin
 	} Req_from_core#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
+
+	instance DefaultValue#(Req_from_core#(addr, data));
+		defaultValue= Req_from_core {	addr: 'd0,
+																	access_size: 'd3,
+																	payload: 'd0,
+																	origin: defaultValue }; 
+	endinstance
 	
 	typedef enum {No_exception, Bus_error, Access_fault} DCache_exception deriving (Bits, Eq, FShow);
 	
