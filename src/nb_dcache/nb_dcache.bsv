@@ -94,7 +94,7 @@ package nb_dcache;
 		FIFO#(Resp_to_core#(TMul#(wordsize,8), prf_index)) ff_read_resp_to_core <- mkFIFO;
 		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_req_to_ptw <- mkFIFO;
 		FIFO#(Read_req_to_mem(vaddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
-		Wire#(Read_resp_from_mem(data, id_bits)) wr_read_resp_from_mem <- mkWire;
+		Wire#(Read_resp_from_mem(data, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		Wire#(Write_req_to_mem(vaddr, data)) wr_write_req_to_mem <- mkWire;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
@@ -227,7 +227,7 @@ package nb_dcache;
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
-		rule rl_MSHR_req_to_fill_buffer;
+		rule rl_MSHR_req_to_fill_buffer_when_memory_responds;
 			let resp_from_mem= wr_read_resp_from_mem;
 			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
 			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
@@ -244,6 +244,10 @@ package nb_dcache;
 																					 exception: None };
 				end
 			end
+
+			rule rl_MSHR_req_to_fb;
+			endrule
+
 		endrule
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);

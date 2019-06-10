@@ -50,24 +50,34 @@ package mshr;
 		FIFO#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize];
 
 		Bool one_mshr_fifo_full= False;
-		Bool mshr_full= rg_mshr_valid[0];
+		Bool mshr_full= True;
+		Bool mshr_not_empty= False;
 		for(Integer i=0; i<mshrsize; i=i+1) begin
 			rg_line_addr[i] <- mkReg(0);
-			ff_mshr[i] <- mkFIFOF(defaultValue);
+			rg_mshr_valid[i] <- mkReg(False);
+			ff_mshr[i] <- mkUGFIFOF(defaultValue);
 			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr.not_full[i];
 			mshr_full= mshr_full && rg_mshr_valid[i];
+			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
+
+		rule rl_free_one_MSHR;
+			if(rg_curr_fb_id matched tagged Valid .fb_id &&& !ff_mshr[fb_id].notEmpty && wr_curr_req_mshr_id!=rg_curr_fb_id) begin
+				rg_curr_fb_id<= tagged Invalid;
+			end
+		endrule
 		
 		method Action allocate (Req_from_core#(paddr, data, prfindex) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(mshrbits) mshr_allocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr-1:linewidthbits];
 			for(Integer i=0; i<mshrsize; i=i+1) begin
-				if(rg_mshr_valid && ( req_line_addr == rg_mshr_line_addr[i])) begin
+				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
 					mshr_allocated_id= i;
 				end
 			end
+			wr_curr_req_mshr_id<= mshr_allocated_id;
 
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
@@ -77,28 +87,56 @@ package mshr;
 																										access_size: req.access_size,
 																										payload: req.payload,
 																										origin: req.origin });
-			
 		endmethod
 
-		//TODO remove tagged Invalid from rg_curr_fb_id. Save the mux on the input rid used for indexing.
-		//One has to always index the MSHR that is pointed by the rid input.
-		method Req_from_core#(paddr, data) req_to_fb(Bit#(id_bits) rid, Bool rlast);
+		//TODO make the FIFO unguarded and put explicit conditions wherever requried
+		method Req_from_core#(paddr, data) req_to_fb(Bit#(id_bits) req_rid) if(mshr_not_empty);
 			Req_from_core#(paddr, data) req= defaultValue;
 			if(rg_curr_fb_id matches tagged Invalid) begin
-				rg_curr_fb_id<= tagged Valid rid;
-				req= (Req_from_core {	addr: {rg_mshr_line_addr[rid], ff_mshr[rid].addr},
-															access_size: ff_mshr[rid].access_size,
-															payload: ff_mshr[rid].payload,
-															origin: ff_mshr[rid].origin });
+				rg_curr_fb_id<= tagged Valid req_rid;
+				if(rg_mshr_valid[req_rid]) begin
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], ff_mshr[req_rid].addr},
+																access_size: ff_mshr[req_rid].access_size,
+																payload: ff_mshr[req_rid].payload,
+																origin: ff_mshr[req_rid].origin });
+				end
+				//This condition should never happen as if the MSHR is not empty, and a response comes from
+				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
+				else begin
+					$finish(0);
+				end
 			end
-			else if(rlast) begin
-				rg_curr_fb_id<= tagged Invalid;
-			end
+			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
+				if(ff_mshr[curr_rid].notEmpty) begin
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
+																access_size: ff_mshr[curr_rid].access_size,
+																payload: ff_mshr[curr_rid].payload,
+																origin: ff_mshr[curr_rid].origin });
+				end
 
+				if(curr_rid==req_rid) begin		//matches with the memory response's id
+				end
+				else if(curr_rid==wr_curr_req_mshr_id) begin
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
+																access_size: ff_mshr[curr_rid].access_size,
+																payload: ff_mshr[curr_rid].payload,
+																origin: ff_mshr[curr_rid].origin });
+				end
+				else begin
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
+																access_size: ff_mshr[curr_rid].access_size,
+																payload: ff_mshr[curr_rid].payload,
+																origin: ff_mshr[curr_rid].origin });
+				end
+
+			end
 			return req;
 		endmethod
 
-		method Action ack_from_fb;
+		method Action ack_from_fb if(mshr_not_empty);
+			if(rg_curr_fb_id matches tagged Valid fb_id) begin
+				ff_mshr[fb_id].deq;
+			end
 		endmethod
 		
 	endmodule

@@ -54,10 +54,10 @@ package fill_buffer;
 		let buswidthbits_val= valueOf(buswidthbits);
 		let num_chunkbits_val= valueOf(num_chunkbits);
 
-		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidthbits) core_data, Bit#(num_chunks) chunk_addr);
+		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidthbits) core_data, Bit#(TLog#(num_chunks)) chunk_addr);
 			Bit#(buswidthbits) temp= '1;
     	Bit#(linewidth) mask = zeroExtend(temp);
-			Bit#(TAdd#(TExp#(num_chunks), wordsize)) zeros= 'd0;
+			Bit#(TLog#(buswidthbits)) zeros= 'd0;
     	mask = mask<<{chunk_addr,zeros};
 			let writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
 			return writedata;
@@ -81,7 +81,7 @@ package fill_buffer;
 		Reg#(Bool) rg_can_release <- mkReg(False);
 		Reg#(Bool) rg_first_resp <- mkReg(False);
 
-		Wire#(Req_from_core#(paddr, data)) wr_req <- mkWire;
+		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
 		Wire#(Bit#(data)) wr_data_from_mem <- mkWire;
 
 		let all_valid= (rg_valid=='1);
@@ -98,6 +98,11 @@ package fill_buffer;
 		rule rl_operation(!all_valid);
 			let req= wr_req;
 			Bit#(TLog#(num_chunks)) lv_index;
+			//For the first response from memory, since the critical data arrives first, the index to be written
+			//in the FB is computed. In the first cycle, the MSHR will definitely send a request with the
+			//corresponding address to the memory response's rid. In the subsequent cycles, the index is
+			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
+			//it does not matter.
 			if(rg_first_resp) begin
 				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunks_val + buswidthbits_val -1 : buswidthbits_val];
 				rg_index<= valid_index+1;
@@ -109,8 +114,7 @@ package fill_buffer;
 			end
 
 			//Mix the fill buffer and the data from memory response
-			Bit#(buswidthbits) write_lineaddr= {lv_index, req.addr[buswidthbits_val-num_chunkbits_val:0]};
-			Bit#(linewidthbits) write_linedata= generate_masked_data_bus(rg_fill_buffer, wr_data_from_mem, write_lineaddr);
+			Bit#(linewidthbits) write_linedata= generate_masked_data_bus(rg_fill_buffer, wr_data_from_mem, lv_index);
 
 			//For a store commit combine the above data along with that of the request
 			if(req.origin==Store_commit) begin
@@ -118,10 +122,12 @@ package fill_buffer;
 				write_linedata= generate_masked_data(write_linedata, req.rdata, write_reqaddr);
 				rg_fill_buffer<= write_linedata;
 			end
+			//When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
+			//In which case this else statement gets executed.
 			else begin
 				rg_fill_buffer<= write_linedata;
 			end
-			rg_valid[lv_index]<= 1;
+			rg_valid[lv_index]<= 1'b1;
 		endrule
 
 		rule rl_serve_remaining_mshr_requests;
@@ -151,7 +157,8 @@ package fill_buffer;
 		endmethod
 
 		method Action release_fb(all_valid);
-			rg_valid<= 0;
+			for(Integer i=0; i<
+			rg_valid<= 'd0;
 		endmethod
 
 		method Bool can_release;

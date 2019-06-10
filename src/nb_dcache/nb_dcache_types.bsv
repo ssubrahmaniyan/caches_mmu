@@ -41,7 +41,6 @@ package nb_dcache_types;
 		Bit#(data) payload,
 		Origin origin
 	} Req_from_core#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
-
 	instance DefaultValue#(Req_from_core#(addr, data));
 		defaultValue= Req_from_core {	addr: 'd0,
 																	access_size: 'd3,
@@ -67,6 +66,10 @@ package nb_dcache_types;
 		Bit#(data) data,
 		Bit#(id_bits) id
 	} Read_resp_from_mem#(numeric type data, numeric type id_bits) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Req_from_core#(addr, data));
+		defaultValue= Req_from_core {	data: 'd0,
+																	id: '1 };
+	endinstance
 	
 	typedef struct {
 		Bit#(addr) addr,
