@@ -31,6 +31,7 @@ TODO
 1. Optimize the first stage buffer where you do not send the virtual page number to the next stage.
    Instead, when you get the physical page number, concat that with the offset address and send it to 
 	 the next stage.
+2. Change appropriate interface parameters to module parameters
 */
 package nb_dcache;
 	import cache_types::*;          // for local cache types
@@ -197,24 +198,40 @@ package nb_dcache;
 				end
 			end
 			else begin																							//Line miss
-				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
-				let fill_buffer_resp<- fill_buffer.request(req); 			//Send request to fill buffer
-				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
-				//if a response needs to be sent (i.e. a load_buffer or a PTW request).
-				//Here, fb_data is the complete fill buffer line
-				if(fill_buffer_resp matches tagged Valid .fb_data) begin
-					if(send_resp) begin
-						Bit#(data) data_to_core= fn_extract_data(fb_data);	//TODO Make UniqueWrapper for this fn
-						wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																						 prf_index: req.prf_index,
-																						 exception: None };
-					end
-					//else do nothing
-				end
-				else begin																						//Fill buffer miss
-					ff_second_stage.enq(req);														//Pass the req to the next stage
-				end
+				wr_stage1_req_to_fb<= req;
+				wr_stage1<= True;
 			end
+		endrule
+
+		rule rl_send_req_to_fb(wr_stage1 || wr_MSHR);
+			let req= wr_stage1_req_to_fb;
+			if(wr_MSHR) begin
+				req= wr_MSHR_req_to_fb;
+			end
+
+			let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
+			let fill_buffer_resp<- fill_buffer.request(req); 			//Send request to fill buffer
+			//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
+			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
+			//Here, fb_data is the complete fill buffer line
+			if(fill_buffer_resp matches tagged Valid .fb_data) begin
+				if(wr_MSHR) begin
+					mshr.ack_from_fb;
+				end
+
+				Bool send_resp= (req.origin==Load || req.origin==PTW);
+				if(send_resp) begin
+					Bit#(data) data_to_core= fn_extract_data(fb_data);
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: req.prf_index,
+																					 exception: None };
+				end
+				//else do nothing
+			end
+			else if(wr_stage1) begin															//Fill buffer miss
+				ff_second_stage.enq(req);														//Pass the req to the next stage
+			end
+			//else do nothing
 		endrule
 
 		rule rl_access_MSHRs;
@@ -227,27 +244,15 @@ package nb_dcache;
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
-		rule rl_MSHR_req_to_fill_buffer_when_memory_responds;
+		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
 			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
 			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
 
+			wr_MSHR_req_to_fb<= req_from_mshr;
+			wr_MSHR<= True;
 			//Send the req to fill buffer and check if it's a hit
 			let fb_resp<- fill_buffer.request(req_from_mshr);
-
-			if(fb_resp matches tagged Valid .fb_resp_data) begin		//If it's a hit in the fill buffer
-				mshr.ack_from_fb;					//Send ack to mshr to dequeue the FIFO
-				if(req_from_mshr.is_load) begin		//If it's a load request, send response to processor
-					let data_to_core= fn_extract_data(fb_resp_data);
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: req_from_mshr.prf_index,
-																					 exception: None };
-				end
-			end
-
-			rule rl_MSHR_req_to_fb;
-			endrule
-
 		endrule
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);
@@ -261,6 +266,7 @@ package nb_dcache;
 		interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
 			method Action put(Read_resp_from_mem#(data, id_bits) resp);
 				wr_read_resp_from_mem<= resp;
+				fill_buffer_resp.data_from_mem(resp.data);
 			endmethod
 		endinterface
 

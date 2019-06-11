@@ -90,9 +90,11 @@ package mshr;
 		endmethod
 
 		//TODO make the FIFO unguarded and put explicit conditions wherever requried
+		//Check if the condition for the method to fire should be mshr_not_empty or that 
+		//For whatever MSHR the response has come, that FIFO is not empty.
 		method Req_from_core#(paddr, data) req_to_fb(Bit#(id_bits) req_rid) if(mshr_not_empty);
 			Req_from_core#(paddr, data) req= defaultValue;
-			if(rg_curr_fb_id matches tagged Invalid) begin
+			if(rg_curr_fb_id matches tagged Invalid &&& req_rid!='1) begin
 				rg_curr_fb_id<= tagged Valid req_rid;
 				if(rg_mshr_valid[req_rid]) begin
 					req= (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], ff_mshr[req_rid].addr},
@@ -103,30 +105,24 @@ package mshr;
 				//This condition should never happen as if the MSHR is not empty, and a response comes from
 				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
 				else begin
-					$finish(0);
+					`ifdef ASSERT
+						dynamicAssert(req_rid=='1,"Invalid memory response"); 
+					`endif
 				end
 			end
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
+				
 				if(ff_mshr[curr_rid].notEmpty) begin
 					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
 																access_size: ff_mshr[curr_rid].access_size,
 																payload: ff_mshr[curr_rid].payload,
 																origin: ff_mshr[curr_rid].origin });
 				end
-
-				if(curr_rid==req_rid) begin		//matches with the memory response's id
-				end
-				else if(curr_rid==wr_curr_req_mshr_id) begin
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
-																access_size: ff_mshr[curr_rid].access_size,
-																payload: ff_mshr[curr_rid].payload,
-																origin: ff_mshr[curr_rid].origin });
-				end
-				else begin
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
-																access_size: ff_mshr[curr_rid].access_size,
-																payload: ff_mshr[curr_rid].payload,
-																origin: ff_mshr[curr_rid].origin });
+				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
+				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
+				//so that in the next cycle it will be assigned the value
+				else if(!ff_mshr[curr_rid].notEmpty && wr_curr_req_mshr_id!=curr_id) begin
+					rg_curr_fb_id<= tagged Invalid
 				end
 
 			end
@@ -134,8 +130,14 @@ package mshr;
 		endmethod
 
 		method Action ack_from_fb if(mshr_not_empty);
-			if(rg_curr_fb_id matches tagged Valid fb_id) begin
+			if(rg_curr_fb_id matches tagged Valid fb_id &&& ff_mshr[fb_id].notEmpty) begin
+      	`logLevel( nb_dcache, 1, $format("DCACHE: ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
+			end
+			else begin
+      `ifdef ASSERT
+        dynamicAssert(True,"Ack from fb called when ff_mshr empty");
+      `endif
 			end
 		endmethod
 		
