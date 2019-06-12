@@ -35,31 +35,42 @@ TODO
 */
 package fill_buffer;
 
-	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth);
-		method ActionValue#(Maybe#(Bit#(data))) request(Req_from_core#(paddr, data) req);
-		method Action data_from_mem(Bit#(buswidth) mem_resp);
-		method Action release_fb(all_valid);
+  //`include "Logger.bsv"           // for logging
+  import nb_dcache_types::*; 	         
+  import BUtils::*;
+	import DefaultValue :: *;
+
+	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
+															numeric type linewidth, numeric type wordsize);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
+		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
+		method Action release_fb;
 		method Bool can_release;
 	endinterface
 
-	(*preempts="rl_operation, rl_serve_remaining_mshr_requests"*)
-	(*preempts=""*)
-	module mkfill_buffer#(linewidth) Ifc_fill_buffer#(paddr, data, buswidth)
+	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
+	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, wordsize))
 				 provisos(Log#(buswidth, buswidthbits),
 				 					Log#(linewidth, linewidthbits),
 			 						Div#(linewidth, buswidth, num_chunks),
-									Log#(num_chunks, num_chunkbits));
+									Log#(num_chunks, num_chunksbits),
+									Mul#(a__, data, linewidth),
+									Add#(b__, data, linewidth),
+									Add#(c__, buswidthbits, linewidth),	//for generate_masked_data_bus fn
+									Mul#(e__, buswidth, linewidth)			//for generate_masked_data_bus fn
+								);
 
-		let num_chunks_val= valueOf(num_chunks);
+		let paddr_val= valueOf(paddr);
 		let buswidthbits_val= valueOf(buswidthbits);
-		let num_chunkbits_val= valueOf(num_chunkbits);
+		let linewidthbits_val= valueOf(linewidthbits);
+		let num_chunksbits_val= valueOf(num_chunksbits);
 
-		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidthbits) core_data, Bit#(TLog#(num_chunks)) chunk_addr);
+		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidth) bus_data, Bit#(TLog#(num_chunks)) chunk_addr);
 			Bit#(buswidthbits) temp= '1;
     	Bit#(linewidth) mask = zeroExtend(temp);
 			Bit#(TLog#(buswidthbits)) zeros= 'd0;
     	mask = mask<<{chunk_addr,zeros};
-			let writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
+			let writedata= (mask & duplicate(bus_data)) |(~mask & sram_data);
 			return writedata;
 		endfunction
 
@@ -80,17 +91,27 @@ package fill_buffer;
 		Reg#(Bit#(num_chunks)) rg_valid <- mkReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
 		Reg#(Bool) rg_first_resp <- mkReg(False);
+		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
+		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkReg(0);
 
 		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
-		Wire#(Bit#(data)) wr_data_from_mem <- mkWire;
+		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;
 
 		let all_valid= (rg_valid=='1);
 
-		rule rl_operation;
+		//When the first reponse from memory comes for a request, rg_first_resp will be True. In this
+		//case, set the value of rg_first_resp to be False and also set rg_fb_addr as the line address
+		//of the current request. Since, when the memory responds the first data for a request, the MSHR
+		//also sends a first request. Therefore, there will never be a case when wr_data_from_mem holds
+		//a value in the first response, and wr_req does not hold anything.
+		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
+		//should be set as True.
+		rule rl_update_rg_first_resp;
 			if(rg_first_resp) begin
+				rg_fb_addr<= wr_req.addr[paddr_val-1:linewidthbits_val];
 				rg_first_resp<= False;
 			end
-			else if(wr_data_from_mem.rlast) begin
+			else if(tpl_2(wr_data_from_mem)) begin
 				rg_first_resp<= True;
 			end
 		endrule
@@ -104,7 +125,7 @@ package fill_buffer;
 			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
 			//it does not matter.
 			if(rg_first_resp) begin
-				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunks_val + buswidthbits_val -1 : buswidthbits_val];
+				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + buswidthbits_val -1 : buswidthbits_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
 			end
@@ -114,12 +135,12 @@ package fill_buffer;
 			end
 
 			//Mix the fill buffer and the data from memory response
-			Bit#(linewidthbits) write_linedata= generate_masked_data_bus(rg_fill_buffer, wr_data_from_mem, lv_index);
+			Bit#(linewidth) write_linedata= generate_masked_data_bus(rg_fill_buffer, tpl_1(wr_data_from_mem), lv_index);
 
 			//For a store commit combine the above data along with that of the request
 			if(req.origin==Store_commit) begin
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
-				write_linedata= generate_masked_data(write_linedata, req.rdata, write_reqaddr);
+				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
 			//When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
@@ -130,21 +151,23 @@ package fill_buffer;
 			rg_valid[lv_index]<= 1'b1;
 		endrule
 
-		rule rl_serve_remaining_mshr_requests;
+		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
-			Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
-			Bit#(linewidthbits) write_linedata= generate_masked_data(rg_fill_buffer, req.rdata, write_reqaddr);
-			rg_fill_buffer<= write_linedata;
+			if(req.origin==Store_commit) begin
+				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, req.payload, write_reqaddr, req.access_size);
+				rg_fill_buffer<= write_linedata;
+			end
 		endrule
 	
 		//Assigning req to wr_req, for a write req will perform the write even when corresponding fb
 		//entry is invalid. This does not matter however as this method returns "tagged Invalid" as the 
 		//result, and in the subsequent clock cycles, the same request will again be sent by the MSHR.
 		//For a request from ff_first_stage, they will get enqueued to ff_second_stage.
-		method ActionValue#(Maybe#(Bit#(data))) request(Req_from_core#(paddr, data) req);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[linewidthbits_val -1 : buswidthbits_val];
 			wr_req<= req;
-			if(rg_valid[valid_index] && req.addr[paddr_val-1:linewidthbits_val]==rg_fb_addr) begin
+			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:linewidthbits_val]==rg_fb_addr) begin
 				return tagged Valid rg_fill_buffer;
 			end
 			else begin
@@ -152,12 +175,11 @@ package fill_buffer;
 			end
 		endmethod
 
-		method Action data_from_mem(Bit#(data) mem_resp) if(!all_valid);
-			wr_data_from_mem<= mem_resp;	
+		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last) if(!all_valid);
+			wr_data_from_mem<= tuple2(mem_resp, last);
 		endmethod
 
-		method Action release_fb(all_valid);
-			for(Integer i=0; i<
+		method Action release_fb if(all_valid);
 			rg_valid<= 'd0;
 		endmethod
 
@@ -167,4 +189,10 @@ package fill_buffer;
 
 	endmodule
 
+  (*synthesize*)
+	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 8));
+    let ifc();
+    mkfill_buffer _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage

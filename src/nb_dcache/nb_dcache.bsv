@@ -249,10 +249,9 @@ package nb_dcache;
 			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
 			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
 
+			//Send the req to fill buffer and check if it's a hit
 			wr_MSHR_req_to_fb<= req_from_mshr;
 			wr_MSHR<= True;
-			//Send the req to fill buffer and check if it's a hit
-			let fb_resp<- fill_buffer.request(req_from_mshr);
 		endrule
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);
