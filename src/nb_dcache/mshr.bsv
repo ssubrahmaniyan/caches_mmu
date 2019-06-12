@@ -29,52 +29,60 @@ Details:
 --------------------------------------------------------------------------------------------------
 */
 package mshr;
+  import nb_dcache_types::*; 	         
+	import DefaultValue :: *;
+  `include "Logger.bsv"           // for logging
+	import FIFO::*;
+	import FIFOF::*;
 
 	interface Ifc_mshr#(numeric type paddr,
+											numeric type linewidthbits,
 											numeric type data,
-											numeric type id_bits);
-		method ActionValue#(Maybe#(Read_req_to_mem)) allocate (Req_from_core#(paddr, data) req);
-		method Req_from_core#(paddr, data) req_to_fb(Bit#(id_bits) rid, Bool rlast);
+											numeric type mshrsize);
+		method Action allocate (Req_from_core#(paddr, data) req);
+		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(TAdd#(TLog#(mshrsize),1)) req_rid);
 		method Action ack_from_fb;
 	endinterface
 
-	module mkmshr#(linewidthbits, mshrsize) (Ifc_mshr#(paddr, linewidthbits, data, id_bits, prfindex, mshrsize)
-				 provisos (	Log#(mshrsize, mshrbits),
-				 						Add#(paddr, linewidthbits, addr_in_mshr)
-			 						 ));
+	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize))
+				 provisos (	Log#(mshrsize, mshrsize_log),
+				 						Add#(mshrsize_log, 1, mshrbits),
+				 						Add#(addr_in_mshr, linewidthbits, paddr)
+										//Add#(a__, addr_in_mshr, linewidthbits)		
+			 						 );
+		let paddr_val= valueOf(paddr);
+		let linewidthbits_val= valueOf(linewidthbits);
+		let mshrsize_val= valueOf(mshrsize);
 
-		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize];
-		Reg#(Bool) rg_mshr_valid [mshrsize];
-		Reg#(Bit#(id_bits)) rg_curr_fb_id <- mkReg(0);
+		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
+		Reg#(Bool) rg_mshr_valid [mshrsize_val];
+		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
+		Reg#(Maybe#(Bit#(mshrbits))) rg_curr_fb_id <- mkReg(tagged Invalid);
 
-		FIFO#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize];
+		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
+
+		Wire#(Bit#(mshrbits)) wr_curr_req_mshr_id <- mkDWire('1);
 
 		Bool one_mshr_fifo_full= False;
 		Bool mshr_full= True;
 		Bool mshr_not_empty= False;
-		for(Integer i=0; i<mshrsize; i=i+1) begin
-			rg_line_addr[i] <- mkReg(0);
+		for(Integer i=0; i<mshrsize_val; i=i+1) begin
+			rg_mshr_line_addr[i] <- mkReg(0);
 			rg_mshr_valid[i] <- mkReg(False);
-			ff_mshr[i] <- mkUGFIFOF(defaultValue);
-			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr.not_full[i];
+			ff_mshr[i] <- mkGFIFOF(True, True);	//TODO check if both enq and deq should be unguarded
+			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr[i].notFull;
 			mshr_full= mshr_full && rg_mshr_valid[i];
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
 
-		rule rl_free_one_MSHR;
-			if(rg_curr_fb_id matched tagged Valid .fb_id &&& !ff_mshr[fb_id].notEmpty && wr_curr_req_mshr_id!=rg_curr_fb_id) begin
-				rg_curr_fb_id<= tagged Invalid;
-			end
-		endrule
-		
-		method Action allocate (Req_from_core#(paddr, data, prfindex) req) if(!one_mshr_fifo_full && !mshr_full);
+		method Action allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(mshrbits) mshr_allocated_id= 0;
-			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr-1:linewidthbits];
-			for(Integer i=0; i<mshrsize; i=i+1) begin
+			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
+			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
-					mshr_allocated_id= i;
+					mshr_allocated_id= fromInteger(i);
 				end
 			end
 			wr_curr_req_mshr_id<= mshr_allocated_id;
@@ -83,24 +91,25 @@ package mshr;
 				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
 				rg_mshr_valid[mshr_allocated_id]<= True;
 			end
-			ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req_line_addr,
+			ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
 																										access_size: req.access_size,
 																										payload: req.payload,
 																										origin: req.origin });
 		endmethod
 
-		//TODO make the FIFO unguarded and put explicit conditions wherever requried
+		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method Req_from_core#(paddr, data) req_to_fb(Bit#(id_bits) req_rid) if(mshr_not_empty);
+		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(mshrbits) req_rid);
 			Req_from_core#(paddr, data) req= defaultValue;
 			if(rg_curr_fb_id matches tagged Invalid &&& req_rid!='1) begin
 				rg_curr_fb_id<= tagged Valid req_rid;
 				if(rg_mshr_valid[req_rid]) begin
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], ff_mshr[req_rid].addr},
-																access_size: ff_mshr[req_rid].access_size,
-																payload: ff_mshr[req_rid].payload,
-																origin: ff_mshr[req_rid].origin });
+					let fifo_top= ff_mshr[req_rid].first;
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+																access_size: fifo_top.access_size,
+																payload: fifo_top.payload,
+																origin: fifo_top.origin });
 				end
 				//This condition should never happen as if the MSHR is not empty, and a response comes from
 				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
@@ -113,16 +122,17 @@ package mshr;
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
 				
 				if(ff_mshr[curr_rid].notEmpty) begin
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], ff_mshr[curr_rid].addr},
-																access_size: ff_mshr[curr_rid].access_size,
-																payload: ff_mshr[curr_rid].payload,
-																origin: ff_mshr[curr_rid].origin });
+					let fifo_top= ff_mshr[curr_rid].first;
+					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+																access_size: fifo_top.access_size,
+																payload: fifo_top.payload,
+																origin: fifo_top.origin });
 				end
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
 				//so that in the next cycle it will be assigned the value
-				else if(!ff_mshr[curr_rid].notEmpty && wr_curr_req_mshr_id!=curr_id) begin
-					rg_curr_fb_id<= tagged Invalid
+				else if(wr_curr_req_mshr_id!=curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
+					rg_curr_fb_id<= tagged Invalid;
 				end
 
 			end
@@ -130,7 +140,7 @@ package mshr;
 		endmethod
 
 		method Action ack_from_fb if(mshr_not_empty);
-			if(rg_curr_fb_id matches tagged Valid fb_id &&& ff_mshr[fb_id].notEmpty) begin
+			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
       	`logLevel( nb_dcache, 1, $format("DCACHE: ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
 			end
@@ -143,4 +153,10 @@ package mshr;
 		
 	endmodule
 
+  (*synthesize*)
+	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3));
+    let ifc();
+    mkmshr _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage

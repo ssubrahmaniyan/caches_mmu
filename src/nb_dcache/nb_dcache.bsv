@@ -167,7 +167,7 @@ package nb_dcache;
 			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
 			Bit#(tagbits) tag= req.addr[paddr_val-1: tagpos_val];
 
-			for(Integer i = 0;i<v_ways;i = i+1)begin
+			for(Integer i = 0; i<v_ways; i = i+1) begin
 				dataline[i] <- data_arr[i].read_response();
 				tag[i] <- tag_arr[i].read_response();
 				//If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
@@ -186,6 +186,7 @@ package nb_dcache;
 				if(send_resp) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
 					Bit#(data) data_to_core= fn_extract_data(line);	//TODO Make UniqueWrapper for this fn
+					if(req.origin==Load_b
 					wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																					 prf_index: req.prf_index,
 																					 exception: None };
