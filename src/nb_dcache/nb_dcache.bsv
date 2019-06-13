@@ -36,18 +36,19 @@ TODO
 package nb_dcache;
 	import cache_types::*;          // for local cache types
 
-	interface Ifc_nbdcache#(numeric type wordsize, 
-													numeric type linesize,
-													numeric type setsize,
-													numeric type ways,
-													numeric type paddr,
-													numeric type vaddr,
-													numeric type dbanks,
-													numeric type tbanks,
-													numeric type prf_index,
-													numeric type id_bits,
-													numeric type mshrsize,
-													numeric type buswidth);
+	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
+													numeric type linesize,	//number of words in a cache line
+													numeric type setsize,		//number of sets
+													numeric type ways,			//number of ways
+													numeric type paddr,			//physical address width in bits
+													numeric type vaddr,			//virtual address width in bits
+													numeric type dbanks,		//no. of banks that the data array of cache is organised into
+													numeric type tbanks,		//no. of banks that the tag array of cache is organised into
+													numeric type prf_index,	//no. of bits to index the prf
+													numeric type id_bits,		//no. of bits of the bus transaction id
+													numeric type mshrsize,	//no. of fully associative entries in the mshr
+													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
+													numeric type buswidth);	//width of the bus in bits
 		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) subifc_req_from_core;
 		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))         subifc_resp_to_core;
 		interface Get#(Req_to_ptw#(vaddr))                                  subifc_req_to_ptw;
@@ -58,7 +59,7 @@ package nb_dcache;
 		
 	endinterface
 
-	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, prf_index, id_bits, mshrsize)
+	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
 		provisos(
 			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
 			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
@@ -67,11 +68,9 @@ package nb_dcache;
 			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
 			Add#(mshrsize, 2, temp1),
 			Log#(temp1, temp1_bits),
-			Add#(temp1_bits, a__, id_bits)				// id_bits should be greater than Log(mshrsize+2)
+			Add#(temp1_bits, a__, id_bits),				// id_bits should be greater than Log(mshrsize+2)
 			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
-			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
-
-
+			Add#(tagbits, tagpos, paddr)					// tagbits = paddr - (linewidthbits + setbits)
 		);
 
 		let ways_val= valueOf(ways);
@@ -92,11 +91,11 @@ package nb_dcache;
 
 		//These handle the interface signals
 		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_req_from_core <- mkBypassFIFO;
-		FIFO#(Resp_to_core#(TMul#(wordsize,8), prf_index)) ff_read_resp_to_core <- mkFIFO;
+		FIFO#(Resp_to_core#(TMul#(wordsize,8), prf_index)) wr_resp_to_core <- mkWire;
 		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_req_to_ptw <- mkFIFO;
-		FIFO#(Read_req_to_mem(vaddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
-		Wire#(Read_resp_from_mem(data, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
-		Wire#(Write_req_to_mem(vaddr, data)) wr_write_req_to_mem <- mkWire;
+		FIFO#(Read_req_to_mem#(vaddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
+		Wire#(Read_resp_from_mem#(data, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
+		Wire#(Write_req_to_mem#(vaddr, data)) wr_write_req_to_mem <- mkWire;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
 		//Within the module
@@ -113,7 +112,8 @@ package nb_dcache;
     	Bit#(linewidth) mask = zeroExtend(temp);
     	Bit#(datawidth) zeros = 0;
     	mask = mask<<{line_addr,3'd0};
-			let writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
+			Bit#(linewidth) writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
+			return writedata;
 		endfunction
 
 		rule rl_handle_req_from_core;
@@ -134,6 +134,7 @@ package nb_dcache;
 			if(req.origin!=PTW) begin
 				let resp_from_tlb= tlb.response;
 				if(resp_from_tlb.is_hit) begin			//Hit in the TLB
+
 					if(resp_from_tlb.is_fault) begin	//Access fault
 						wr_resp_to_core<= Resp_to_core { data: ?,
 																						 prf_index: req.prf_index,
@@ -142,12 +143,16 @@ package nb_dcache;
 					else begin	//Access is valid
 						//The virtual address is not required here after. Hence, the addr in the req is replaced
 						//with the physical address
+						req.addr= zeroExtend(resp_from_tlb.paddr);
 						if(resp_from_tlb.is_io) begin
 							//Enqueue into a separate FIFO that handles IO Requests
 							ff_io_request.enq(req);
-						req.addr= zeroExtend(resp_from_tlb.paddr);
-						ff_first_stage.enq(req);
+						end
+						else begin	//Else it's a cacheable request and therefore enqueue in the first stage FIFO.
+							ff_first_stage.enq(req);
+						end
 					end
+
 				end
 				else begin		//Miss in the TLB
 					ff_req_to_ptw.enq(req);		//TODO PTW will store the req and send it again, once PTW is done.
@@ -172,7 +177,7 @@ package nb_dcache;
 				tag[i] <- tag_arr[i].read_response();
 				//If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
 				if(tag[i][tagbits_val]==1 && tag[i][tagbits_val-1:0]==tag) begin		
-					way_num== fromInteger(i);	//Store the index of the tag match
+					way_num= fromInteger(i);	//Store the index of the tag match
 				end
 			end
 
@@ -257,7 +262,11 @@ package nb_dcache;
 		
 		interface subifc_req_from_core= to_Put(ff_req_from_core);
 
-		interface subifc_resp_to_core= to_Get(ff_read_resp_to_core);
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index)) subifc_resp_to_core;
+			method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index)) get;
+				return wr_resp_to_core;
+			endmethod
+		endinterface
 
 		interface subifc_req_to_ptw= to_Get(ff_req_to_ptw);		
 
@@ -270,13 +279,13 @@ package nb_dcache;
 			endmethod
 		endinterface
 
-		interface Get#(Write_req_to_mem#(vaddr, data))                     subifc_write_req_to_mem;
+		interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
 			method ActionValue#(Write_req_to_mem) get;
 				return wr_write_req_to_mem;
 			endmethod
 		endinterface
 
-		interface Put#(Bool)                                               subifc_write_resp_from_mem;
+		interface Put#(Bool) subifc_write_resp_from_mem;
 			method Action#(Bool) put;
 				return wr_write_resp_from_mem;
 			endmethod
@@ -287,4 +296,26 @@ package nb_dcache;
 		endmethod
 
 	endmodule
+
+  (*synthesize*)
+	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
+													numeric type linesize,	//number of words in a cache line
+													numeric type setsize,		//number of sets
+													numeric type ways,			//number of ways
+													numeric type paddr,			//physical address width in bits
+													numeric type vaddr,			//virtual address width in bits
+													numeric type dbanks,		//no. of banks that the data array of cache is organised into
+													numeric type tbanks,		//no. of banks that the tag array of cache is organised into
+													numeric type prf_index,	//no. of bits to index the prf
+													numeric type id_bits,		//no. of bits of the bus transaction id
+													numeric type mshrsize,	//no. of fully associative entries in the mshr
+													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
+													numeric type buswidth);	//width of the bus in bits
+
+	(*synthesize*)
+	module mk_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 7, 4, 5, 7, 128);
+    let ifc();
+    mk_dcache _temp(ifc);
+    return (ifc);
+  endmodule
 endpackage

@@ -38,13 +38,14 @@ package mshr;
 	interface Ifc_mshr#(numeric type paddr,
 											numeric type linewidthbits,
 											numeric type data,
-											numeric type mshrsize);
+											numeric type mshrsize,
+											numeric type mshrfifo_depth);
 		method Action allocate (Req_from_core#(paddr, data) req);
 		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(TAdd#(TLog#(mshrsize),1)) req_rid);
 		method Action ack_from_fb;
 	endinterface
 
-	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize))
+	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth))
 				 provisos (	Log#(mshrsize, mshrsize_log),
 				 						Add#(mshrsize_log, 1, mshrbits),
 				 						Add#(addr_in_mshr, linewidthbits, paddr)
@@ -53,6 +54,7 @@ package mshr;
 		let paddr_val= valueOf(paddr);
 		let linewidthbits_val= valueOf(linewidthbits);
 		let mshrsize_val= valueOf(mshrsize);
+		let mshrfifo_depth_val= valueOf(mshrfifo_depth);
 
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
@@ -69,7 +71,7 @@ package mshr;
 		for(Integer i=0; i<mshrsize_val; i=i+1) begin
 			rg_mshr_line_addr[i] <- mkReg(0);
 			rg_mshr_valid[i] <- mkReg(False);
-			ff_mshr[i] <- mkGFIFOF(True, True);	//TODO check if both enq and deq should be unguarded
+			ff_mshr[i] <- mkGSizedFIFOF(True, True, mshrfifo_depth_val);	//TODO check if both enq and deq should be unguarded
 			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr[i].notFull;
 			mshr_full= mshr_full && rg_mshr_valid[i];
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
@@ -154,7 +156,7 @@ package mshr;
 	endmodule
 
   (*synthesize*)
-	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3));
+	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3, 4));
     let ifc();
     mkmshr _temp(ifc);
     return (ifc);
