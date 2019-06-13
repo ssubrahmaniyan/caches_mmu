@@ -34,20 +34,20 @@ package mshr;
   `include "Logger.bsv"           // for logging
 	import FIFO::*;
 	import FIFOF::*;
+	import ConfigReg::*;
 
 	interface Ifc_mshr#(numeric type paddr,
 											numeric type linewidthbits,
 											numeric type data,
 											numeric type mshrsize,
 											numeric type mshrfifo_depth);
-		method Action allocate (Req_from_core#(paddr, data) req);
-		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(TAdd#(TLog#(mshrsize),1)) req_rid);
+		method ActionValue#(Maybe#(Tuple2#(Bit#(paddr), Bit#(TLog#(TAdd#(mshrsize,1)))))) allocate (Req_from_core#(paddr, data) req);
+		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(TLog#(TAdd#(mshrsize,1))) req_rid);
 		method Action ack_from_fb;
 	endinterface
 
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth))
-				 provisos (	Log#(mshrsize, mshrsize_log),
-				 						Add#(mshrsize_log, 1, mshrbits),
+				 provisos ( Log#(TAdd#(mshrsize,1), mshrbits),
 				 						Add#(addr_in_mshr, linewidthbits, paddr)
 										//Add#(a__, addr_in_mshr, linewidthbits)		
 			 						 );
@@ -69,34 +69,42 @@ package mshr;
 		Bool mshr_full= True;
 		Bool mshr_not_empty= False;
 		for(Integer i=0; i<mshrsize_val; i=i+1) begin
-			rg_mshr_line_addr[i] <- mkReg(0);
-			rg_mshr_valid[i] <- mkReg(False);
+			rg_mshr_line_addr[i] <- mkConfigReg(0);
+			rg_mshr_valid[i] <- mkConfigReg(False);
 			ff_mshr[i] <- mkGSizedFIFOF(True, True, mshrfifo_depth_val);	//TODO check if both enq and deq should be unguarded
 			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr[i].notFull;
 			mshr_full= mshr_full && rg_mshr_valid[i];
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
 
-		method Action allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
+		method ActionValue#(Maybe#(Tuple2#(Bit#(paddr), Bit#(mshrbits)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
-			Bit#(mshrbits) mshr_allocated_id= 0;
+			Bit#(mshrbits) mshr_allocated_id= '1;
+			Bit#(mshrbits) mshr_unallocated_id= '1;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
 					mshr_allocated_id= fromInteger(i);
 				end
+				else if(!rg_mshr_valid[i]) begin	//If an MSHR entry is not allocated
+					mshr_unallocated_id= fromInteger(i);
+				end
 			end
 			wr_curr_req_mshr_id<= mshr_allocated_id;
-
-			if(!mshr_allocated) begin
-				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
-				rg_mshr_valid[mshr_allocated_id]<= True;
-			end
 			ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
 																										access_size: req.access_size,
 																										payload: req.payload,
 																										origin: req.origin });
+
+			if(!mshr_allocated) begin
+				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
+				rg_mshr_valid[mshr_allocated_id]<= True;
+				return tagged Valid tuple2(req.addr, mshr_unallocated_id);
+			end
+			else begin
+				return tagged Invalid;
+			end
 		endmethod
 
 		//TODO make the FIFO guarded and put explicit conditions wherever requried

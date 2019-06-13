@@ -32,9 +32,26 @@ TODO
    Instead, when you get the physical page number, concat that with the offset address and send it to 
 	 the next stage.
 2. Change appropriate interface parameters to module parameters
+3. Add flush logic
+4. Add fill buffer release logic
+5. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
+	 be directly given through a separate master, or can be muxed with the existing master.
+6. Integrate TLB
+7. Optimization: Remove TLB and Load_buffer type, and have one instead.
 */
 package nb_dcache;
-	import cache_types::*;          // for local cache types
+	import nb_dcache_types::*;          // for local cache types
+	import DefaultValue :: *;
+  `include "Logger.bsv"           // for logging
+	import FIFO::*;
+	import DefaultValue :: *;
+	import GetPut::*;
+  import mem_config::*;
+	import SpecialFIFOs ::*;
+  import BUtils::*;
+	import mshr::*;
+	import fill_buffer::*;
+	import tlb::*;
 
 	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
 													numeric type linesize,	//number of words in a cache line
@@ -49,62 +66,93 @@ package nb_dcache;
 													numeric type mshrsize,	//no. of fully associative entries in the mshr
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth);	//width of the bus in bits
-		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) subifc_req_from_core;
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))         subifc_resp_to_core;
-		interface Get#(Req_to_ptw#(vaddr))                                  subifc_req_to_ptw;
-		interface Get#(Read_req_to_mem#(vaddr, id_bits))                    subifc_read_req_to_mem;
-		interface Put#(Read_resp_from_mem#(buswidth, id_bits))              subifc_read_resp_from_mem;
-		interface Get#(Write_req_to_mem#(vaddr, buswidth))                  subifc_write_req_to_mem;
-		interface Put#(Bool)                                                subifc_write_resp_from_mem;
-		
+		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8))) 		subifc_req_from_core;
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))	subifc_resp_to_core;
+		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8))))	subifc_req_to_ptw;
+		interface Get#(Read_req_to_mem#(paddr, id_bits))            subifc_read_req_to_mem;
+		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      subifc_read_resp_from_mem;
+		interface Get#(Write_req_to_mem#(paddr, buswidth))          subifc_write_req_to_mem;
+		interface Put#(Bool)                                        subifc_write_resp_from_mem;
+		method Bool cache_busy;
 	endinterface
 
-	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
+	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dbanks, tbanks, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
 		provisos(
 			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
 			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
 			Log#(linewidth, linewidthbits),			// linewidthbits is no. of bits to indicate byte offset within a line
 			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
 			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
-			Add#(mshrsize, 2, temp1),
-			Log#(temp1, temp1_bits),
-			Add#(temp1_bits, a__, id_bits),				// id_bits should be greater than Log(mshrsize+2)
+			//Add#(, a__, id_bits),				// id_bits should be greater than Log(mshrsize+2)
 			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
-			Add#(tagbits, tagpos, paddr)					// tagbits = paddr - (linewidthbits + setbits)
+			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
+			Log#(buswidth, buswidthbits),
+			Add#(b__, prf_index, datawidth),
+			//Add#(c__, linewidthbits, TLog#(TAdd#(ways, 1))),	//check again
+			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),		//Bluespec cribs
+			Add#(e__, TLog#(TAdd#(mshrsize, 1)), id_bits),
+			Add#(f__, paddr, vaddr),
+			Mul#(g__, buswidth, linewidth),
+			Add#(h__, buswidthbits, linewidth),
+			Add#(i__, datawidth, linewidth),
+			Add#(j__, linewidthbits,  paddr),
+			Add#(k__, TDiv#(TAdd#(tagbits, 2), tbanks), TAdd#(tagbits, 2)),
+			//Mul#(TDiv#(TAdd#(tagbits, 2), tbanks), tbanks, TAdd#(tagbits, 2)),
+			Add#(l__, TDiv#(linewidth, dbanks), linewidth)
+			//Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth)
+
 		);
 
 		let ways_val= valueOf(ways);
+		let paddr_val= valueOf(paddr);
 		let datawidth_val= valueOf(datawidth);
 		let linewidthbits_val= valueOf(linewidthbits);
 		let setbits_val= valueOf(setbits);
 		let tagbits_val= valueOf(tagbits);
 		let tagpos_val= valueOf(tagpos);
+		let buswidthbits_val= valueOf(buswidthbits);
 
 
 		Ifc_mem_config1r1w#(setsize, linewidth, dbanks) data_arr [ways_val]; 				// data array
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tbanks) tag_arr [ways_val]; // extra valid and dirty bits
+		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
+		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, wordsize) fill_buffer <-mkfill_buffer;
+		Ifc_mshr#(paddr, linewidthbits, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
 
-		for(Integer i = 0;i<v_ways;i = i+1)begin
+		for(Integer i = 0;i<ways_val;i = i+1)begin
 			data_arr[i] <- mkmem_config1r1w(False, "single"); 
 			tag_arr[i] <- mkmem_config1r1w(False, "single");
 		end
 
 		//These handle the interface signals
-		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_req_from_core <- mkBypassFIFO;
-		FIFO#(Resp_to_core#(TMul#(wordsize,8), prf_index)) wr_resp_to_core <- mkWire;
-		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_req_to_ptw <- mkFIFO;
-		FIFO#(Read_req_to_mem#(vaddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
-		Wire#(Read_resp_from_mem#(data, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
-		Wire#(Write_req_to_mem#(vaddr, data)) wr_write_req_to_mem <- mkWire;
+		FIFO#(Req_from_core#(vaddr, datawidth)) ff_req_from_core <- mkBypassFIFO;
+		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
+		
+		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
+		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
+		//to the cache. Now, this request will be a hit in the TLB. This FIFO is used to send the req to
+		//the PTW module
+		Wire#(Req_from_core#(vaddr, datawidth)) wr_req_to_ptw <- mkWire;
+		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
+		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
+		Wire#(Write_req_to_mem#(paddr, buswidth)) wr_write_req_to_mem <- mkWire;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
-		//Within the module
-		FIFO#(Req_from_core#(vaddr, TMul#(wordsize,8), prf_index)) ff_first_stage <- mkFIFO;
+		//TODO change these to RWires
+		Wire#(Req_from_core#(paddr, datawidth)) wr_stage1_req_to_fb <- mkDWire(defaultValue);
+		Wire#(Bool) wr_stage1 <- mkDWire(False);
+		Wire#(Req_from_core#(paddr, datawidth)) wr_MSHR_req_to_fb <- mkDWire(defaultValue); 
+		Wire#(Bool) wr_MSHR <- mkDWire(False);
 
-		Reg#(Bool) rg_cache_busy <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
+		//Within the module
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
+
+		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
 		
-		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(linewidthbits) line_addr);
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(linewidthbits) line_addr, Bit#(2) size);
     	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
@@ -116,34 +164,50 @@ package nb_dcache;
 			return writedata;
 		endfunction
 
+		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(linewidthbits) line_addr, Bit#(2) size);
+    	Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
+    	                       size[1 : 0] == 1?'hFFFF : 
+    	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+    	line = line>>{line_addr,3'd0};
+			Bit#(datawidth) readdata= truncate(line) & mask;
+			return readdata;
+		endfunction
+
 		rule rl_handle_req_from_core;
 			let req= ff_req_from_core.first;
-			Bool is_actual_load= (req.origin == Load_buffer);
+			Bool is_actual_store= (req.origin == Store_commit);
 			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-			for(Integer i = 0;i<v_ways;i = i+1) begin
-				data_arr[i].request(0, set_index, ?);
-				tag_arr[i].request(0, set_index, ?);
+			for(Integer i = 0;i<ways_val;i = i+1) begin
+				data_arr[i].read(set_index);
+				tag_arr[i].read(set_index);
 			end
 			if(req.origin!=PTW)
-				tlb.send_req(req.addr, is_actual_load);
+				tlb.send_req(req.addr, is_actual_store);
 		endrule
 
 		rule rl_get_response_from_TLB;
-			let req= ff_req_from_core.first;
+			let orig_req= ff_req_from_core.first;
+
+			Req_from_core#(paddr, datawidth) req= Req_from_core {	addr: orig_req.addr[paddr_val-1:0],
+																														access_size: orig_req.access_size,
+																														payload: orig_req.payload,
+																														origin: orig_req.origin };
 			ff_req_from_core.deq;
 			if(req.origin!=PTW) begin
 				let resp_from_tlb= tlb.response;
 				if(resp_from_tlb.is_hit) begin			//Hit in the TLB
 
 					if(resp_from_tlb.is_fault) begin	//Access fault
+						Bit#(prf_index) lv_prf_index= truncate(orig_req.payload);
 						wr_resp_to_core<= Resp_to_core { data: ?,
-																						 prf_index: req.prf_index,
+																						 prf_index: lv_prf_index,
 																						 exception: Access_fault };
 					end
 					else begin	//Access is valid
 						//The virtual address is not required here after. Hence, the addr in the req is replaced
 						//with the physical address
-						req.addr= zeroExtend(resp_from_tlb.paddr);
+						req.addr= resp_from_tlb.paddr;
 						if(resp_from_tlb.is_io) begin
 							//Enqueue into a separate FIFO that handles IO Requests
 							ff_io_request.enq(req);
@@ -155,28 +219,31 @@ package nb_dcache;
 
 				end
 				else begin		//Miss in the TLB
-					ff_req_to_ptw.enq(req);		//TODO PTW will store the req and send it again, once PTW is done.
+					wr_req_to_ptw<= orig_req;		//TODO PTW will store the req and send it again, once PTW is done.
 					rg_cache_busy[0]<= True;
 				end
 			end
 			else begin	//PTW request
 				ff_first_stage.enq(req);
+				//ff_first_stage.enq(Req_from_core {addr: truncate(req.addr),
+				//																	access_size: req.access_size,
+				//																	payload: req.payload,
+				//																	origin: req.origin });
 			end
 		endrule
 
 		rule rl_tag_and_data_array_read_response;
 			let req= ff_first_stage.first;
-			ff_first_stage.deq;
-			Bit#(linewidth) dataline [v_ways];
-			Bit#(tagbits) tag [v_ways];
+			Bit#(linewidth) dataline [ways_val];
+			Bit#(TAdd#(tagbits,2)) tag;
 			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
-			Bit#(tagbits) tag= req.addr[paddr_val-1: tagpos_val];
+			Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
 
-			for(Integer i = 0; i<v_ways; i = i+1) begin
-				dataline[i] <- data_arr[i].read_response();
-				tag[i] <- tag_arr[i].read_response();
+			for(Integer i = 0; i<ways_val; i = i+1) begin
+				dataline[i] = data_arr[i].read_response();
+				tag = tag_arr[i].read_response();
 				//If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
-				if(tag[i][tagbits_val]==1 && tag[i][tagbits_val-1:0]==tag) begin		
+				if(tag[tagbits_val]==1 && tag[tagbits_val-1:0]== req_tag) begin		
 					way_num= fromInteger(i);	//Store the index of the tag match
 				end
 			end
@@ -186,27 +253,35 @@ package nb_dcache;
 				send_resp= True;
 			end
 
-			if(way_num!='d-1) begin																			//It's a line hit
-				let line= dataline[truncate(way_num)];
+			if(way_num!='1) begin																			//It's a line hit
+				Bit#(TLog#(ways)) hit_index= truncate(way_num);
+				let line= dataline[hit_index];
 				if(send_resp) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
-					Bit#(data) data_to_core= fn_extract_data(line);	//TODO Make UniqueWrapper for this fn
-					if(req.origin==Load_b
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: req.prf_index,
-																					 exception: None };
+					Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
+					if(req.origin==Load_buffer || req.origin==PTW) begin
+						wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																						 prf_index: truncate(req.payload),
+																						 exception: No_exception };
+					end
 				end
 				else if(req.origin==Store_commit) begin								//Store instruction
 					Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-    			Bit#(linewidthbits) line_addr= req.addr[lineoffsetbits_val-1:0];
-					let write_data= generate_masked_data(dataline[i], req.data, line_addr);
-      		data_arr[truncate(way_num)].request(1, set_index, write_data);
+    			Bit#(linewidthbits) line_addr= req.addr[linewidthbits_val-1:0];
+					let write_data= generate_masked_data(line, req.payload, line_addr, req.access_size);
+					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
+      		data_arr[data_arr_index].write(1, set_index, write_data);
 				end
 			end
 			else begin																							//Line miss
 				wr_stage1_req_to_fb<= req;
 				wr_stage1<= True;
 			end
+		endrule
+
+		//Dequeue entry from the FIFO only when no request from MSHR comes in that cycle
+		rule rl_deq_first_fifo(!wr_MSHR);
+			ff_first_stage.deq;
 		endrule
 
 		rule rl_send_req_to_fb(wr_stage1 || wr_MSHR);
@@ -225,12 +300,12 @@ package nb_dcache;
 					mshr.ack_from_fb;
 				end
 
-				Bool send_resp= (req.origin==Load || req.origin==PTW);
+				Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
 				if(send_resp) begin
-					Bit#(data) data_to_core= fn_extract_data(fb_data);
+					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
 					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: req.prf_index,
-																					 exception: None };
+																					 prf_index: truncate(req.payload),
+																					 exception: No_exception };
 				end
 				//else do nothing
 			end
@@ -244,15 +319,19 @@ package nb_dcache;
 			let req= ff_second_stage.first;
 			ff_second_stage.deq;
 			let mshr_resp<- mshr.allocate(req);
-			if(mshr_resp matches tagged Valid .read_req) begin
-				ff_read_req_to_mem.enq(read_req);
+			if(mshr_resp matches tagged Valid .read_req_from_mshr) begin
+				Bit#(TSub#(paddr, buswidthbits)) read_addr= tpl_1(read_req_from_mshr)[paddr_val-1:buswidthbits_val];
+				let read_id= tpl_2(read_req_from_mshr);
+				ff_read_req_to_mem.enq(Read_req_to_mem {addr: zeroExtend(read_addr),
+																								id: zeroExtend(read_id),
+																								is_burst: True });
 			end
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
-			let req_from_mshr= mshr.req_to_fb(resp_from_mem.rid);		//Receive the request from MSHR corresponding to the rid
+			let req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
 			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
 
 			//Send the req to fill buffer and check if it's a hit
@@ -260,60 +339,49 @@ package nb_dcache;
 			wr_MSHR<= True;
 		endrule
 		
-		interface subifc_req_from_core= to_Put(ff_req_from_core);
+		interface subifc_req_from_core= toPut(ff_req_from_core);
 
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index)) subifc_resp_to_core;
-			method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index)) get;
-				return wr_resp_to_core;
-			endmethod
-		endinterface
+		interface subifc_resp_to_core= toGet(wr_resp_to_core);
+		//interface Get#(Resp_to_core#(datawidth, prf_index)) subifc_resp_to_core;
+		//	method ActionValue#(Resp_to_core#(datawidth, prf_index)) get;
+		//		return wr_resp_to_core;
+		//	endmethod
+		//endinterface
 
-		interface subifc_req_to_ptw= to_Get(ff_req_to_ptw);		
+		interface subifc_req_to_ptw= toGet(wr_req_to_ptw);
+	//		method ActionValue#((Req_from_core#(vaddr, datawidth, prf_index))) get;
+	//			return wr
+		interface subifc_read_req_to_mem= toGet(ff_read_req_to_mem);
 
-		interface subifc_read_req_to_mem= to_Get(ff_read_req_to_mem);
-
-		interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
-			method Action put(Read_resp_from_mem#(data, id_bits) resp);
+		interface subifc_read_resp_from_mem= interface Put
+		//interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
+			method Action put(Read_resp_from_mem#(buswidth, id_bits) resp);
 				wr_read_resp_from_mem<= resp;
-				fill_buffer_resp.data_from_mem(resp.data);
+				fill_buffer.data_from_mem(resp.data, resp.last);
 			endmethod
-		endinterface
+		endinterface;
 
-		interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
-			method ActionValue#(Write_req_to_mem) get;
-				return wr_write_req_to_mem;
+		interface subifc_write_req_to_mem= toGet(wr_write_req_to_mem);
+		//interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
+		//	method ActionValue#(Write_req_to_mem) get;
+		//		return wr_write_req_to_mem;
+		//	endmethod
+		//endinterface
+
+		interface subifc_write_resp_from_mem= interface Put
+			method Action put(Bool resp);
+				 wr_write_resp_from_mem<= resp;
 			endmethod
-		endinterface
+		endinterface;
 
-		interface Put#(Bool) subifc_write_resp_from_mem;
-			method Action#(Bool) put;
-				return wr_write_resp_from_mem;
-			endmethod
-		endinterface
-
-		method Bool mv_cache_bust;
+		method Bool cache_busy;
 			return rg_cache_busy[1];
 		endmethod
 
 	endmodule
 
-  (*synthesize*)
-	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
-													numeric type linesize,	//number of words in a cache line
-													numeric type setsize,		//number of sets
-													numeric type ways,			//number of ways
-													numeric type paddr,			//physical address width in bits
-													numeric type vaddr,			//virtual address width in bits
-													numeric type dbanks,		//no. of banks that the data array of cache is organised into
-													numeric type tbanks,		//no. of banks that the tag array of cache is organised into
-													numeric type prf_index,	//no. of bits to index the prf
-													numeric type id_bits,		//no. of bits of the bus transaction id
-													numeric type mshrsize,	//no. of fully associative entries in the mshr
-													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
-													numeric type buswidth);	//width of the bus in bits
-
 	(*synthesize*)
-	module mk_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 7, 4, 5, 7, 128);
+	module mk_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 4, 4, 7, 4, 5, 7, 128));
     let ifc();
     mk_dcache _temp(ifc);
     return (ifc);

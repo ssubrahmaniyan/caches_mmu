@@ -61,20 +61,29 @@ package nb_dcache_types;
 		Bit#(addr) addr;
 		Bit#(id_bits) id;
 		Bool is_burst;
-	} Read_req_to_mem#(numeric type addr, numeric type data, numeric type id_bits) deriving (Bits, Eq, FShow);
+	} Read_req_to_mem#(numeric type addr, numeric type id_bits) deriving (Bits, Eq, FShow);
 	
 	typedef struct {
 		Bit#(data) data;
 		Bit#(id_bits) id;
+		Bool last;
 	} Read_resp_from_mem#(numeric type data, numeric type id_bits) deriving (Bits, Eq, FShow);
 	instance DefaultValue#(Read_resp_from_mem#(addr, data));
 		defaultValue= Read_resp_from_mem { data: 'd0,
-																			 id: '1 };
+																			 id: '1,
+																		 	 last: False};
 	endinstance
 	
 	typedef struct {
 		Bit#(addr) addr;
 		Bit#(data) data;
 	} Write_req_to_mem#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
+
+	typedef struct {
+		Bool is_hit;
+		Bool is_fault;
+		Bit#(addr) paddr;
+		Bool is_io;
+	} Resp_from_tlb#(numeric type addr) deriving (Bits, Eq, FShow);
 
 endpackage
