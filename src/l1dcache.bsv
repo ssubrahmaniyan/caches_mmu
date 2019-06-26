@@ -593,14 +593,14 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
 
       Bit#(TSub#(paddr,wordbits)) compareaddr1=truncateLSB(store_addr[rg_storetail-1]);
       Bit#(TSub#(paddr,wordbits)) compareaddr2=truncateLSB(store_addr[rg_storetail]);
-      if(compareaddr1 == wordaddr && validm1)begin
+      if(compareaddr1 == wordaddr /*&& validm1*/)begin
         Bit#(respwidth) temp = store_size[rg_storetail-1]==0?'hff:
                           store_size[rg_storetail-1]==1?'hffff:
                           store_size[rg_storetail-1]==2?'hffffffff:'1;
         temp = temp << shiftamt1; 
         storemask1 = temp;  
       end
-      if(compareaddr2 == wordaddr && valid)begin
+      if(compareaddr2 == wordaddr /*&& valid*/)begin
         Bit#(TLog#(respwidth)) shiftamt2 = {store_addr[rg_storetail][v_wordbits - 1:0], 3'b0};
         Bit#(respwidth) temp = store_size[rg_storetail]==0?'hff:
                           store_size[rg_storetail]==1?'hffff:
@@ -641,7 +641,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       store_size[sbindex] <= truncate(request.size);
       store_addr[sbindex] <= phy_addr;
       store_fbindex[sbindex]<=fbindex;
-      store_io[sbindex]<=pack(wr_allocate_storebuffer);
+      store_io[sbindex]<=pack(wr_allocate_storebuffer || wr_nc_response == Hit);
       store_epoch[sbindex] <= request.epochs;
       rg_storetail<=rg_storetail+1;
       `logLevel( dcache, 0, $format("DCACHE : Allocating SB. sbindex:%d, data:%h addr:%h, \
@@ -686,7 +686,9 @@ fbindex:%d", sbindex, request.data, phy_addr, fbindex))
         `endif
       end
       else if(wr_nc_response==Hit)begin
-        word=wr_nc_word;
+        Bit#(respwidth) updated_word = wr_nc_word<<loadoffset;
+        updated_word = (updated_word&~wr_sb_mask)|(wr_sb_hitword);
+        word = updated_word>>loadoffset;
         err=wr_nc_err;
         `ifdef perf
           wr_total_io<=1;
@@ -853,6 +855,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     endrule
     rule receive_nc_response;
       let response = ff_nc_read_response.first;
+      `logLevel( dcache, 1, $format("DCACHE: received IO response: ", fshow(response)))
       ff_nc_read_response.deq;
       wr_nc_err <= response.err;
       wr_nc_word <= response.data;
