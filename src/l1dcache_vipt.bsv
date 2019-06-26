@@ -706,7 +706,10 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
         `endif
       end
       else if(wr_nc_response == Hit)begin
-        word = wr_nc_word;
+          Bit#(respwidth) updated_word = wr_nc_word<<loadoffset;
+          updated_word = (updated_word&~wr_sb_mask)|(wr_sb_hitword);
+          word = updated_word>>loadoffset;
+        //word = wr_nc_word;
         err = wr_nc_err;
         `ifdef perf
           wr_total_io <= 1;
@@ -890,6 +893,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     endrule
     rule receive_nc_response;
       let response = ff_nc_read_response.first;
+      `logLevel( dcache, 1, $format("DCACHE: received IO response: ",fshow(response)))
       ff_nc_read_response.deq;
       wr_nc_err <= response.err;
       wr_nc_word <= response.data;
