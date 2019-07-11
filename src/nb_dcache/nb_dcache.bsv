@@ -59,8 +59,8 @@ package nb_dcache;
 													numeric type ways,			//number of ways
 													numeric type paddr,			//physical address width in bits
 													numeric type vaddr,			//virtual address width in bits
-													numeric type dbanks,		//no. of banks that the data array of cache is organised into
-													numeric type tbanks,		//no. of banks that the tag array of cache is organised into
+													numeric type dsram,			//no. of bits in a row of SRAM cells for the data array
+													numeric type tsram,			//no. of bits in a row of SRAM cells for the tag array
 													numeric type prf_index,	//no. of bits to index the prf
 													numeric type id_bits,		//no. of bits of the bus transaction id
 													numeric type mshrsize,	//no. of fully associative entries in the mshr
@@ -76,31 +76,35 @@ package nb_dcache;
 		method Bool cache_busy;
 	endinterface
 
-	module mk_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dbanks, tbanks, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
+	(*descending_urgency = "rl_MSHR_req_to_fill_buffer, rl_tag_and_data_array_read_response"*)
+	module mknb_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
 		provisos(
 			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
 			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
-			Log#(linewidth, linewidthbits),			// linewidthbits is no. of bits to indicate byte offset within a line
+			Log#(linewidth, linewidthbits),				// linewidthbits is no. of bits to indicate byte offset within a line
 			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
 			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
-			//Add#(, a__, id_bits),				// id_bits should be greater than Log(mshrsize+2)
+			//Add#(, a__, id_bits),								// id_bits should be greater than Log(mshrsize+2)
 			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
 			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
 			Log#(buswidth, buswidthbits),
 			Add#(b__, prf_index, datawidth),
 			//Add#(c__, linewidthbits, TLog#(TAdd#(ways, 1))),	//check again
-			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),		//Bluespec cribs
+			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
 			Add#(e__, TLog#(TAdd#(mshrsize, 1)), id_bits),
 			Add#(f__, paddr, vaddr),
 			Mul#(g__, buswidth, linewidth),
 			Add#(h__, buswidthbits, linewidth),
 			Add#(i__, datawidth, linewidth),
 			Add#(j__, linewidthbits,  paddr),
-			Add#(k__, TDiv#(TAdd#(tagbits, 2), tbanks), TAdd#(tagbits, 2)),
-			//Mul#(TDiv#(TAdd#(tagbits, 2), tbanks), tbanks, TAdd#(tagbits, 2)),
-			Add#(l__, TDiv#(linewidth, dbanks), linewidth)
-			//Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth)
-
+			Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2))
+			//Mul#(TDiv#(TAdd#(tagbits, 2), tsram), tsram, TAdd#(tagbits, 2)),
+			//Add#(l__, TDiv#(linewidth, dsram), linewidth),
+			//Add#(m__, TSub#(TAdd#(tagbits, 2), TMul#(tsram, TDiv#(TAdd#(tagbits, 2),tsram))), tsram),
+			//Add#(n__, tsram, TAdd#(tagbits, 2)),
+			//Add#(o__, TSub#(linewidth, TMul#(dsram, TDiv#(linewidth, dsram))), dsram),
+			//Add#(p__, dsram, linewidth)
+			//Mul#(TDiv#(linewidth, dsram), dsram, linewidth)
 		);
 
 		let ways_val= valueOf(ways);
@@ -113,15 +117,16 @@ package nb_dcache;
 		let buswidthbits_val= valueOf(buswidthbits);
 
 
-		Ifc_mem_config1r1w#(setsize, linewidth, dbanks) data_arr [ways_val]; 				// data array
-		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tbanks) tag_arr [ways_val]; // extra valid and dirty bits
+		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
+		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
+		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
 		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, wordsize) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, linewidthbits, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
-			data_arr[i] <- mkmem_config1r1w(False, "single"); 
-			tag_arr[i] <- mkmem_config1r1w(False, "single");
+			data_arr[i] <- mkmem_config1r1w(False); 
+			tag_arr[i] <- mkmem_config1r1w(False);
 		end
 
 		//These handle the interface signals
@@ -137,12 +142,6 @@ package nb_dcache;
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		Wire#(Write_req_to_mem#(paddr, buswidth)) wr_write_req_to_mem <- mkWire;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
-
-		//TODO change these to RWires
-		Wire#(Req_from_core#(paddr, datawidth)) wr_stage1_req_to_fb <- mkDWire(defaultValue);
-		Wire#(Bool) wr_stage1 <- mkDWire(False);
-		Wire#(Req_from_core#(paddr, datawidth)) wr_MSHR_req_to_fb <- mkDWire(defaultValue); 
-		Wire#(Bool) wr_MSHR <- mkDWire(False);
 
 		//Within the module
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkFIFO;
@@ -234,10 +233,12 @@ package nb_dcache;
 
 		rule rl_tag_and_data_array_read_response;
 			let req= ff_first_stage.first;
+			ff_first_stage.deq;
 			Bit#(linewidth) dataline [ways_val];
 			Bit#(TAdd#(tagbits,2)) tag;
 			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
 			Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
+			Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
 
 			for(Integer i = 0; i<ways_val; i = i+1) begin
 				dataline[i] = data_arr[i].read_response();
@@ -246,11 +247,6 @@ package nb_dcache;
 				if(tag[tagbits_val]==1 && tag[tagbits_val-1:0]== req_tag) begin		
 					way_num= fromInteger(i);	//Store the index of the tag match
 				end
-			end
-
-			Bool send_resp= False;
-			if(req.origin==Load_buffer || req.origin==PTW) begin
-				send_resp= True;
 			end
 
 			if(way_num!='1) begin																			//It's a line hit
@@ -273,46 +269,25 @@ package nb_dcache;
       		data_arr[data_arr_index].write(1, set_index, write_data);
 				end
 			end
-			else begin																							//Line miss
-				wr_stage1_req_to_fb<= req;
-				wr_stage1<= True;
-			end
-		endrule
-
-		//Dequeue entry from the FIFO only when no request from MSHR comes in that cycle
-		rule rl_deq_first_fifo(!wr_MSHR);
-			ff_first_stage.deq;
-		endrule
-
-		rule rl_send_req_to_fb(wr_stage1 || wr_MSHR);
-			let req= wr_stage1_req_to_fb;
-			if(wr_MSHR) begin
-				req= wr_MSHR_req_to_fb;
-			end
-
-			let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
-			let fill_buffer_resp<- fill_buffer.request(req); 			//Send request to fill buffer
-			//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
-			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
-			//Here, fb_data is the complete fill buffer line
-			if(fill_buffer_resp matches tagged Valid .fb_data) begin
-				if(wr_MSHR) begin
-					mshr.ack_from_fb;
+			else begin																							//Line miss; send req to fill buffer
+				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
+				let fill_buffer_resp<- fill_buffer.request(req); 			//Req and resp to/from fill buffer
+				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
+				//if a response needs to be sent (i.e. a load_buffer or a PTW request).
+				//Here, fb_data is the complete fill buffer line
+				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					if(send_resp) begin
+						Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
+						wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																						 prf_index: truncate(req.payload),
+																						 exception: No_exception };
+					end
+					//else do nothing
 				end
-
-				Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
-				if(send_resp) begin
-					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: truncate(req.payload),
-																					 exception: No_exception };
+				else begin
+					ff_second_stage.enq(req);														//Pass the req to the next stage
 				end
-				//else do nothing
 			end
-			else if(wr_stage1) begin															//Fill buffer miss
-				ff_second_stage.enq(req);														//Pass the req to the next stage
-			end
-			//else do nothing
 		endrule
 
 		rule rl_access_MSHRs;
@@ -332,11 +307,21 @@ package nb_dcache;
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
 			let req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
-			let fb_addr= req_from_mshr.addr;												//Compute the address to match in the MSHR
 
 			//Send the req to fill buffer and check if it's a hit
-			wr_MSHR_req_to_fb<= req_from_mshr;
-			wr_MSHR<= True;
+			let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
+			let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
+			if(fill_buffer_resp matches tagged Valid .fb_data) begin
+				mshr.ack_from_fb;
+				Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
+				if(send_resp) begin
+					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: truncate(req_from_mshr.payload),
+																					 exception: No_exception };
+				end
+				//else do nothing
+			end
 		endrule
 		
 		interface subifc_req_from_core= toPut(ff_req_from_core);
@@ -381,9 +366,9 @@ package nb_dcache;
 	endmodule
 
 	(*synthesize*)
-	module mk_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 4, 4, 7, 4, 5, 7, 128));
+	module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
     let ifc();
-    mk_dcache _temp(ifc);
+    mknb_dcache _temp(ifc);
     return (ifc);
   endmodule
 endpackage

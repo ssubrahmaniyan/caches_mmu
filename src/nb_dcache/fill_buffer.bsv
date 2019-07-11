@@ -39,6 +39,7 @@ package fill_buffer;
   import nb_dcache_types::*; 	         
   import BUtils::*;
 	import DefaultValue :: *;
+	import ConfigReg::*;
 
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
 															numeric type linewidth, numeric type wordsize);
@@ -87,12 +88,12 @@ package fill_buffer;
 			return writedata;
 		endfunction
 
-		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkReg(0);
-		Reg#(Bit#(num_chunks)) rg_valid <- mkReg(0);
+		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
+		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
 		Reg#(Bool) rg_first_resp <- mkReg(False);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
-		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkReg(0);
+		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkConfigReg(0);
 
 		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;

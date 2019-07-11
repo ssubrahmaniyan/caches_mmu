@@ -59,7 +59,7 @@ package mshr;
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
-		Reg#(Maybe#(Bit#(mshrbits))) rg_curr_fb_id <- mkReg(tagged Invalid);
+		Reg#(Maybe#(Bit#(mshrbits))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
 
 		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
