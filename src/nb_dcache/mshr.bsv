@@ -42,7 +42,7 @@ package mshr;
 											numeric type mshrsize,
 											numeric type mshrfifo_depth);
 		method ActionValue#(Maybe#(Tuple2#(Bit#(paddr), Bit#(TLog#(TAdd#(mshrsize,1)))))) allocate (Req_from_core#(paddr, data) req);
-		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(TLog#(TAdd#(mshrsize,1))) req_rid);
+		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Bit#(TLog#(TAdd#(mshrsize,1))) req_rid);
 		method Action ack_from_fb;
 	endinterface
 
@@ -110,16 +110,16 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Req_from_core#(paddr, data)) req_to_fb(Bit#(mshrbits) req_rid);
-			Req_from_core#(paddr, data) req= defaultValue;
+		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Bit#(mshrbits) req_rid);
+			Maybe#(Req_from_core#(paddr, data)) req= tagged Invalid;
 			if(rg_curr_fb_id matches tagged Invalid &&& req_rid!='1) begin
 				rg_curr_fb_id<= tagged Valid req_rid;
 				if(rg_mshr_valid[req_rid]) begin
 					let fifo_top= ff_mshr[req_rid].first;
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
-																access_size: fifo_top.access_size,
-																payload: fifo_top.payload,
-																origin: fifo_top.origin });
+					req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+																							access_size: fifo_top.access_size,
+																							payload: fifo_top.payload,
+																							origin: fifo_top.origin });
 				end
 				//This condition should never happen as if the MSHR is not empty, and a response comes from
 				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
@@ -133,10 +133,10 @@ package mshr;
 				
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
-					req= (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
-																access_size: fifo_top.access_size,
-																payload: fifo_top.payload,
-																origin: fifo_top.origin });
+					req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+																							access_size: fifo_top.access_size,
+																							payload: fifo_top.payload,
+																							origin: fifo_top.origin });
 				end
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it

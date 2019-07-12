@@ -47,6 +47,7 @@ package fill_buffer;
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
 		method Action release_fb;
 		method Bool can_release;
+		method Tuple2#(Bool, Bit#(linewidth)) data;
 	endinterface
 
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
@@ -140,6 +141,7 @@ package fill_buffer;
 
 			//For a store commit combine the above data along with that of the request
 			if(req.origin==Store_commit) begin
+				rg_dirty<= True;
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
 				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
@@ -182,10 +184,15 @@ package fill_buffer;
 
 		method Action release_fb if(all_valid);
 			rg_valid<= 'd0;
+			rg_dirty<= False;
 		endmethod
 
 		method Bool can_release;
 			return all_valid;
+		endmethod
+
+		method Tuple2#(Bool, Bit#(linewidth)) data;
+			return tuple2(rg_dirty, rg_fill_buffer);
 		endmethod
 
 	endmodule

@@ -38,6 +38,7 @@ TODO
 	 be directly given through a separate master, or can be muxed with the existing master.
 6. Integrate TLB
 7. Optimization: Remove TLB and Load_buffer type, and have one instead.
+8. The replacement bits need to be updated on a hit
 */
 package nb_dcache;
 	import nb_dcache_types::*;          // for local cache types
@@ -77,7 +78,10 @@ package nb_dcache;
 	endinterface
 
 	(*descending_urgency = "rl_MSHR_req_to_fill_buffer, rl_tag_and_data_array_read_response"*)
-	module mknb_dcache(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
+	(*descending_urgency = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
+	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+	module mknb_dcache#(parameter String alg)
+		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
 		provisos(
 			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
 			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
@@ -123,6 +127,7 @@ package nb_dcache;
 		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, wordsize) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, linewidthbits, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
+    Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
 			data_arr[i] <- mkmem_config1r1w(False); 
@@ -249,8 +254,9 @@ package nb_dcache;
 				end
 			end
 
-			if(way_num!='1) begin																			//It's a line hit
+			if(way_num!='1) begin																		//It's a line hit
 				Bit#(TLog#(ways)) hit_index= truncate(way_num);
+				Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
 				let line= dataline[hit_index];
 				if(send_resp) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
@@ -262,12 +268,12 @@ package nb_dcache;
 					end
 				end
 				else if(req.origin==Store_commit) begin								//Store instruction
-					Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
     			Bit#(linewidthbits) line_addr= req.addr[linewidthbits_val-1:0];
 					let write_data= generate_masked_data(line, req.payload, line_addr, req.access_size);
 					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
-      		data_arr[data_arr_index].write(1, set_index, write_data);
+      		data_arr[data_arr_index].write(set_index, write_data);
 				end
+      	repl.update_set(set_index, hit_index);
 			end
 			else begin																							//Line miss; send req to fill buffer
 				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
@@ -306,24 +312,64 @@ package nb_dcache;
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
-			let req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
+			let maybe_req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
 
 			//Send the req to fill buffer and check if it's a hit
-			let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
-			let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
-			if(fill_buffer_resp matches tagged Valid .fb_data) begin
-				mshr.ack_from_fb;
-				Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
-				if(send_resp) begin
-					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: truncate(req_from_mshr.payload),
-																					 exception: No_exception };
+			if(maybe_req_from_mshr matches tagged Valid .req_from_mshr) begin
+				wr_is_mshr_req_to_fb_valid<= True;
+				let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
+				let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
+				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					mshr.ack_from_fb;
+					Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
+					if(send_resp) begin
+						Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
+						wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																						 prf_index: truncate(req_from_mshr.payload),
+																						 exception: No_exception };
+					end
+					//else do nothing
 				end
-				//else do nothing
 			end
 		endrule
 		
+		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False);
+			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
+			for(Integer i = 0;i<ways_val;i = i+1) begin
+				data_arr[i].read(set_index);
+				tag_arr[i].read(set_index);
+			end
+			rg_release_fb_cycle2<= True;
+		endrule
+
+		rule rl_release_fb_cycle2(rg_release_fb_cycle2);
+			let line_addr= fill_buffer.line_addr;
+			Bit#(setbits) set_index= line_addr[setbits_val-1:0];
+			Bit#(linewidth) dataline [ways_val];
+			Bit#(tagbits) tag [ways_val];
+			Bit#(ways) valid;
+			Bit#(ways) dirty;
+
+			for(Integer i = 0; i<ways_val; i = i+1) begin
+				dataline[i] = data_arr[i].read_response();
+				let lv_tag_arr = tag_arr[i].read_response();
+				tag[i]= truncate(lv_tag_arr);
+				valid[i]= lv_tag_arr[tagbits_val];
+				dirty[i]= lv_tag_arr[tagbits_val+1];
+			end
+      let waynum <- repl.line_replace(set_index, valid, dirty);
+      repl.update_set(set_index, waynum);
+     	data_arr[way_num].write(set_index, write_data);
+
+			let fb_data= fill_buffer.data;
+			Bit#(tagbits) lv_tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
+			Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {tpl_1(fb_data), 1'b1, lv_tag};
+			data_arr[way_num].write(set_index, tpl_2(fb_data));
+			tag_arr[way_num].write(set_index, lv_dirty_valid_tag);
+			rg_eviction_buffer<= tuple2(line_addr, dataline[waynum]);
+		endrule
+
+
 		interface subifc_req_from_core= toPut(ff_req_from_core);
 
 		interface subifc_resp_to_core= toGet(wr_resp_to_core);
@@ -368,7 +414,7 @@ package nb_dcache;
 	(*synthesize*)
 	module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
     let ifc();
-    mknb_dcache _temp(ifc);
+    mknb_dcache _temp#("PLRU")(ifc);
     return (ifc);
   endmodule
 endpackage
