@@ -319,6 +319,15 @@ package nb_dcache;
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
+		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
+		//rid exists in the MSHR FIFOs. Also, when there is no read response from memory, the MSHR sends
+		//any requests that are pending corresponding to the current entry in the fill buffer.
+		//These requests are then sent to the fill buffer to check if they were a hit (Note that there
+		//can be a miss in the fill buffer if only the first chunk has arrived from the memory, but the
+		//request is to data in the third chunk). If it's a hit, an ack is sent to the MSHR to dequeue
+		//that FIFO entry, and send the next request. If it's a miss, no ack is sent, and in the subsequent
+		//clock cycles, the same request is sent by the MSHR to the fill buffer.
+		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
 			let maybe_req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
@@ -342,6 +351,12 @@ package nb_dcache;
 			end
 		endrule
 		
+		//Once the fill buffer indicates that it can be released(i.e. the complete line is available,
+		//and no pending MSHR requests exist to the same line*), the data and tag SRAMs are issued a read
+		//request to determine which way should be assigned for this line.
+		//*Caveat: Though the FIFOs, corresponding to the MSHR entry (corresponding to the line address)
+		//				 might be empty, there might be a request pending in the ff_second_stage. This is fine
+		//				 as the fill buffer is invalidated only after 3 clock cycles.
 		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue);
 			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
 			for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -351,6 +366,10 @@ package nb_dcache;
 			rg_fb_state<= Write_SRAMs;
 		endrule
 
+		//This rule performs actions for the second cycle of fill buffer release. In this cycle, the
+		//line from the fill buffer is written onto one of the ways depending on the replacement policy.
+		//Also, if the existing line was a dirty line, it is written onto the eviction buffer.
+		//The tag bits along with the valid and replacement bits are also updated in this cycle.
 		rule rl_release_fb_cycle2(rg_fb_state==Write_SRAMs);
 			let line_addr= fill_buffer.line_addr;
 			Bit#(setbits) set_index= line_addr[setbits_val-1:0];
@@ -362,12 +381,15 @@ package nb_dcache;
 			for(Integer i = 0; i<ways_val; i = i+1) begin
 				dataline[i] = data_arr[i].read_response();
 				let lv_tag_arr = tag_arr[i].read_response();
-				tag[i]= truncate(lv_tag_arr);
-				valid[i]= lv_tag_arr[tagbits_val];
-				dirty[i]= lv_tag_arr[tagbits_val+1];
+				tag[i]= truncate(lv_tag_arr);					//Lower bits hold the value of the tags
+				valid[i]= lv_tag_arr[tagbits_val];		//Valid bits
+				dirty[i]= lv_tag_arr[tagbits_val+1];	//Dirty bits
 			end
+
+			//waynum indicates the way number to which the fill buffer contents will be written to.
+			//The replacement bits decide the value of way num depending on the replacement policy used.
       let waynum <- repl.line_replace(set_index, valid, dirty);
-      repl.update_set(set_index, waynum);
+      repl.update_set(set_index, waynum);	//Update the replacement bits
 
 			let {fb_dirty,fb_data}= fill_buffer.data;
 			Bit#(tagbits) lv_tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
@@ -380,23 +402,25 @@ package nb_dcache;
 
 		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
 		//because in this cycle there might be a request that is pending in ff_first_stage. Therefore in the
-		//cycle where this rule is getting executed, that request is serviced, and also the FB registers change
-		//their state to invalid in the next clock cycle.
+		//cycle where this rule is getting executed, the request from ff_first_stage is serviced.
+		//This rule executes for evict_iter number of cycles. This keeps sending buswidth bits of data in
+		//a cycle untill the line is completely written onto the fabric.
 		rule rl_release_eviction_buffer(rg_fb_state==Release_eviction_buffer);
-			if(rg_evict_index==0) begin
+			if(rg_evict_index==0) begin	//In the first cycle, release the fill buffer entry
 				fill_buffer.release_fb;
 			end
 
-			if(rg_evict_index==fromInteger(evict_iter_val-1)) begin
+			if(rg_evict_index==fromInteger(evict_iter_val-1)) begin	//In the last cycle, reset the variables
 				rg_fb_state<= defaultValue;
 				rg_evict_index<= 0;
 			end
-			else begin
+			else begin		//Increment the index variable that is used to extract the appropriate bits of line
 				rg_evict_index<= rg_evict_index+1;
 			end
 
 			let {line_addr, data}= rg_eviction_buffer;
 			Bit#(linewidthbits) zeros= 0;
+			//Send a write request to the memory
 			wr_write_req_to_mem<= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], zeros},
 																							 data: data[(rg_evict_index+1)<<buswidthbits_val: rg_evict_index<<buswidthbits_val]};
 		endrule
