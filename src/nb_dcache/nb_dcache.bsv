@@ -399,7 +399,8 @@ package nb_dcache;
 
 			//Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
 			if(valid[waynum]==1 && dirty[waynum]==1) begin
-				rg_eviction_buffer<= tuple2(line_addr, dataline[waynum]);
+				Bit#(TAdd#(tagbits, setbits)) evict_lineaddr= {set_index, tag[waynum]};
+				rg_eviction_buffer<= tuple2(evict_lineaddr, dataline[waynum]);
 				rg_fb_state<= Release_eviction_buffer;
 			end
 			else begin
@@ -426,9 +427,9 @@ package nb_dcache;
 			end
 
 			let {line_addr, data}= rg_eviction_buffer;
-			Bit#(linewidthbits) zeros= 0;
+			Bit#(linewidthbits) some_zeros= 0;
 			//Send a write request to the memory
-			wr_write_req_to_mem<= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], zeros},
+			wr_write_req_to_mem<= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], some_zeros},
 																							 data: data[(rg_evict_index+1)<<buswidthbits_val: rg_evict_index<<buswidthbits_val]};
 		endrule
 
