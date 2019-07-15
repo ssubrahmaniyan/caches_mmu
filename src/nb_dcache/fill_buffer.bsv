@@ -32,6 +32,7 @@ TODO
 2. UniqueWrapper for function
 3. Instead of combining fill buffer and memory resp first, and then combining mshr_req, first combine
    MSHR req and memory.
+4. Add appropriate always_ready and always_enabled signals
 */
 package fill_buffer;
 
@@ -47,7 +48,8 @@ package fill_buffer;
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
 		method Action release_fb;
 		method Bool can_release;
-		method Tuple2#(Bool, Bit#(linewidth)) data;
+		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
+		(*always_ready, always_enabled*) method Bit#(TSub#(paddr, TLog#(linewidth))) line_addr;
 	endinterface
 
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
@@ -95,6 +97,7 @@ package fill_buffer;
 		Reg#(Bool) rg_first_resp <- mkReg(False);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
 		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkConfigReg(0);
+		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
 
 		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;
@@ -141,7 +144,7 @@ package fill_buffer;
 
 			//For a store commit combine the above data along with that of the request
 			if(req.origin==Store_commit) begin
-				rg_dirty<= True;
+				rg_dirty<= 1;
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
 				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
@@ -184,15 +187,19 @@ package fill_buffer;
 
 		method Action release_fb if(all_valid);
 			rg_valid<= 'd0;
-			rg_dirty<= False;
+			rg_dirty<= 0;
 		endmethod
 
 		method Bool can_release;
 			return all_valid;
 		endmethod
 
-		method Tuple2#(Bool, Bit#(linewidth)) data;
+		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
 			return tuple2(rg_dirty, rg_fill_buffer);
+		endmethod
+
+		method Bit#(TSub#(paddr, linewidthbits)) line_addr;
+			return rg_fb_addr;
 		endmethod
 
 	endmodule

@@ -36,6 +36,12 @@ package nb_dcache_types;
 		defaultValue= Store_buffer;
 	endinstance
 
+	typedef enum { Read_SRAMs, Write_SRAMs, Release_eviction_buffer	} FB_state deriving (Bits, Eq, FShow);
+	instance DefaultValue#(FB_state);
+		defaultValue= Read_SRAMs;
+	endinstance
+
+
 	typedef struct {
 		Bit#(addr) addr;
 		Bit#(2) access_size;

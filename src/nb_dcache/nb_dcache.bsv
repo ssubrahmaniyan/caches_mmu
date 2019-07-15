@@ -33,12 +33,9 @@ TODO
 	 the next stage.
 2. Change appropriate interface parameters to module parameters
 3. Add flush logic
-4. Add fill buffer release logic
-5. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
+4. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
 	 be directly given through a separate master, or can be muxed with the existing master.
-6. Integrate TLB
-7. Optimization: Remove TLB and Load_buffer type, and have one instead.
-8. The replacement bits need to be updated on a hit
+5. Integrate TLB
 */
 package nb_dcache;
 	import nb_dcache_types::*;          // for local cache types
@@ -53,6 +50,7 @@ package nb_dcache;
 	import mshr::*;
 	import fill_buffer::*;
 	import tlb::*;
+	import replacement_dcache::*;
 
 	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
 													numeric type linesize,	//number of words in a cache line
@@ -78,7 +76,7 @@ package nb_dcache;
 	endinterface
 
 	(*descending_urgency = "rl_MSHR_req_to_fill_buffer, rl_tag_and_data_array_read_response"*)
-	(*descending_urgency = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
+	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
 	module mknb_dcache#(parameter String alg)
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
@@ -92,6 +90,7 @@ package nb_dcache;
 			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
 			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
 			Log#(buswidth, buswidthbits),
+			Mul#(TDiv#(buswidth, datawidth), linesize, evict_iter),	//evict_iter is the burst length while evicting a cache line
 			Add#(b__, prf_index, datawidth),
 			//Add#(c__, linewidthbits, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
@@ -101,7 +100,8 @@ package nb_dcache;
 			Add#(h__, buswidthbits, linewidth),
 			Add#(i__, datawidth, linewidth),
 			Add#(j__, linewidthbits,  paddr),
-			Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2))
+			Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
+			Add#(l__, TLog#(ways), 4)						//required by the mkreplace module
 			//Mul#(TDiv#(TAdd#(tagbits, 2), tsram), tsram, TAdd#(tagbits, 2)),
 			//Add#(l__, TDiv#(linewidth, dsram), linewidth),
 			//Add#(m__, TSub#(TAdd#(tagbits, 2), TMul#(tsram, TDiv#(TAdd#(tagbits, 2),tsram))), tsram),
@@ -114,11 +114,13 @@ package nb_dcache;
 		let ways_val= valueOf(ways);
 		let paddr_val= valueOf(paddr);
 		let datawidth_val= valueOf(datawidth);
+		let buswidth_val= valueOf(buswidth);
 		let linewidthbits_val= valueOf(linewidthbits);
 		let setbits_val= valueOf(setbits);
 		let tagbits_val= valueOf(tagbits);
 		let tagpos_val= valueOf(tagpos);
 		let buswidthbits_val= valueOf(buswidthbits);
+		let evict_iter_val= valueOf(evict_iter);
 
 
 		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
@@ -134,6 +136,7 @@ package nb_dcache;
 			tag_arr[i] <- mkmem_config1r1w(False);
 		end
 
+		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
 		FIFO#(Req_from_core#(vaddr, datawidth)) ff_req_from_core <- mkBypassFIFO;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
@@ -148,13 +151,19 @@ package nb_dcache;
 		Wire#(Write_req_to_mem#(paddr, buswidth)) wr_write_req_to_mem <- mkWire;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
-		//Within the module
+
+		///////////////////////////// Module signals ///////////////////////////////////////////////////
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
+		Reg#(Bit#(TLog#(evict_iter))) rg_evict_index <-mkReg(0);
+		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
+		Reg#(Tuple2#(Bit#(TSub#(paddr,linewidthbits)) , Bit#(linewidth))) rg_eviction_buffer <-mkReg(tuple2(0,0)); 
+
+		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(linewidthbits) line_addr, Bit#(2) size);
     	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
@@ -273,7 +282,7 @@ package nb_dcache;
 					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
       		data_arr[data_arr_index].write(set_index, write_data);
 				end
-      	repl.update_set(set_index, hit_index);
+      	repl.update_set(set_index, hit_index);								//Update the replacement bits on a hit
 			end
 			else begin																							//Line miss; send req to fill buffer
 				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
@@ -333,16 +342,16 @@ package nb_dcache;
 			end
 		endrule
 		
-		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False);
+		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue);
 			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
 			for(Integer i = 0;i<ways_val;i = i+1) begin
 				data_arr[i].read(set_index);
 				tag_arr[i].read(set_index);
 			end
-			rg_release_fb_cycle2<= True;
+			rg_fb_state<= Write_SRAMs;
 		endrule
 
-		rule rl_release_fb_cycle2(rg_release_fb_cycle2);
+		rule rl_release_fb_cycle2(rg_fb_state==Write_SRAMs);
 			let line_addr= fill_buffer.line_addr;
 			Bit#(setbits) set_index= line_addr[setbits_val-1:0];
 			Bit#(linewidth) dataline [ways_val];
@@ -359,16 +368,38 @@ package nb_dcache;
 			end
       let waynum <- repl.line_replace(set_index, valid, dirty);
       repl.update_set(set_index, waynum);
-     	data_arr[way_num].write(set_index, write_data);
 
-			let fb_data= fill_buffer.data;
+			let {fb_dirty,fb_data}= fill_buffer.data;
 			Bit#(tagbits) lv_tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
-			Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {tpl_1(fb_data), 1'b1, lv_tag};
-			data_arr[way_num].write(set_index, tpl_2(fb_data));
-			tag_arr[way_num].write(set_index, lv_dirty_valid_tag);
+			Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {fb_dirty, 1'b1, lv_tag};
+			data_arr[waynum].write(set_index, fb_data);
+			tag_arr[waynum].write(set_index, lv_dirty_valid_tag);
 			rg_eviction_buffer<= tuple2(line_addr, dataline[waynum]);
+			rg_fb_state<= Release_eviction_buffer;
 		endrule
 
+		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
+		//because in this cycle there might be a request that is pending in ff_first_stage. Therefore in the
+		//cycle where this rule is getting executed, that request is serviced, and also the FB registers change
+		//their state to invalid in the next clock cycle.
+		rule rl_release_eviction_buffer(rg_fb_state==Release_eviction_buffer);
+			if(rg_evict_index==0) begin
+				fill_buffer.release_fb;
+			end
+
+			if(rg_evict_index==fromInteger(evict_iter_val-1)) begin
+				rg_fb_state<= defaultValue;
+				rg_evict_index<= 0;
+			end
+			else begin
+				rg_evict_index<= rg_evict_index+1;
+			end
+
+			let {line_addr, data}= rg_eviction_buffer;
+			Bit#(linewidthbits) zeros= 0;
+			wr_write_req_to_mem<= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], zeros},
+																							 data: data[(rg_evict_index+1)<<buswidthbits_val: rg_evict_index<<buswidthbits_val]};
+		endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
 
@@ -414,7 +445,7 @@ package nb_dcache;
 	(*synthesize*)
 	module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
     let ifc();
-    mknb_dcache _temp#("PLRU")(ifc);
+    mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
   endmodule
 endpackage
