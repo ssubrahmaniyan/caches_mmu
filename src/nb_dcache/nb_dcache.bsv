@@ -396,8 +396,15 @@ package nb_dcache;
 			Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {fb_dirty, 1'b1, lv_tag};
 			data_arr[waynum].write(set_index, fb_data);
 			tag_arr[waynum].write(set_index, lv_dirty_valid_tag);
-			rg_eviction_buffer<= tuple2(line_addr, dataline[waynum]);
-			rg_fb_state<= Release_eviction_buffer;
+
+			//Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
+			if(valid[waynum]==1 && dirty[waynum]==1) begin
+				rg_eviction_buffer<= tuple2(line_addr, dataline[waynum]);
+				rg_fb_state<= Release_eviction_buffer;
+			end
+			else begin
+				rg_fb_state<= defaultValue;
+			end
 		endrule
 
 		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
