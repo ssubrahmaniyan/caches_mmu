@@ -51,13 +51,13 @@ int main (int argc, char **argv, char **env) {
   while (! Verilated::gotFinish ()) {
 	  main_time++;
 
-        if ((main_time % 10) == 3) {
+        if ((main_time % 10) == 5) {
             mkTbSoC->CLK = 1;
         }
-        if ((main_time % 10) == 8) {
+        if ((main_time % 10) == 0) {
             mkTbSoC->CLK = 0;
         }
-        if (main_time > 1 && main_time < 100) {
+        if (main_time > 1 && main_time < 107) {
             mkTbSoC->RST_N = !1;  // Assert reset
         } else {
             mkTbSoC->RST_N = !0;  // Deassert reset
