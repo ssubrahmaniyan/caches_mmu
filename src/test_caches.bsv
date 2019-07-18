@@ -94,7 +94,7 @@ package test_caches;
         Bit#(respwidth) write_word=~mask&loaded_data|mask&data;
         $display($time,"\tTEST: addr: %h index: %d access: %d size: %b Loadeddata: %h mask: %h write_Word:%h",
             addr, index, access, size, loaded_data, mask, write_word);
-        if(access==2)
+        if(access==1)
           mem.upd(index,write_word);
         return response_word;
     endmethod
