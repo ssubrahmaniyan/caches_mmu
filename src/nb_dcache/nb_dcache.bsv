@@ -51,7 +51,10 @@ package nb_dcache;
 	import fill_buffer::*;
 	import tlb::*;
 	import replacement_dcache::*;
+	`include "parameters.txt"
 
+  String dcache=""; // defined for Logger
+	 
 	interface Ifc_nbdcache#(numeric type wordsize,	//size of data in bytes 
 													numeric type linesize,	//number of words in a cache line
 													numeric type setsize,		//number of sets
@@ -74,6 +77,41 @@ package nb_dcache;
 		interface Put#(Bool)                                        subifc_write_resp_from_mem;
 		method Bool cache_busy;
 	endinterface
+
+//	(*synthesize*)
+//	module dataarr(Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram));
+//		let ifc();
+//		mkmem_config1r1w#(False) _temp(ifc);
+//		return ifc;
+//	endmodule
+//
+//	(*synthesize*)
+//	module tagarr(Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram));
+//		let ifc();
+//		mkmem_config1r1w#(False) _temp(ifc);
+//		return ifc;
+//	endmodule
+//
+//	(*synthesize*)
+//	module fillbuffer(Ifc_fill_buffer#(`Paddr, TMul#(`Wordsize, 8), `Buswidth, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Wordsize));
+//		let ifc();
+//		mkfill_buffer _temp(ifc);
+//		return ifc;
+//	endmodule
+//
+	//(*synthesize*)
+	//module mshrmod(Ifc_mshr#(`Paddr, TMul#(`Linesize, TMul#(`Wordsize, 8)), TMul#(`Wordsize, 8), `Mshrsize, `Mshrfifo_depth));
+	//	let ifc();
+	//	mkmshr _temp(ifc);
+	//	return ifc;
+	//endmodule
+
+	//(*synthesize*)
+	//module replace(Ifc_replace#(`Setsize, `Ways));
+	//	let ifc();
+	//	mkreplace#("PLRU") _temp(ifc);
+	//	return ifc;
+	//endmodule
 
 	(*descending_urgency = "rl_MSHR_req_to_fill_buffer, rl_tag_and_data_array_read_response"*)
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
@@ -132,9 +170,21 @@ package nb_dcache;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
-			data_arr[i] <- mkmem_config1r1w(False); 
-			tag_arr[i] <- mkmem_config1r1w(False);
+			data_arr[i] <- mkmem_config1r1w(False, fromInteger(i)+'habc0);
+			tag_arr[i] <- mkmem_config1r1w(False, 'h30000);
 		end
+
+		//Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val]; 				// data array
+		//Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram) tag_arr [ways_val]; // extra valid and dirty bits
+		//Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
+		//let fill_buffer <-fillbuffer;
+		//let mshr <-mshrmod;
+		//let repl <-replace;
+
+		//for(Integer i = 0;i<ways_val;i = i+1)begin
+		//	data_arr[i] <-dataarr;
+		//	tag_arr[i] <- tagarr;
+		//end
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
@@ -191,6 +241,8 @@ package nb_dcache;
 			let req= ff_req_from_core.first;
 			Bool is_actual_store= (req.origin == Store_commit);
 			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+      `logLevel( dcache, 2, $format("DCACHE : Core_req: ", fshow(req)))
+			
 			for(Integer i = 0;i<ways_val;i = i+1) begin
 				data_arr[i].read(set_index);
 				tag_arr[i].read(set_index);
@@ -211,6 +263,7 @@ package nb_dcache;
 				let resp_from_tlb= tlb.response;
 				if(resp_from_tlb.is_hit) begin			//Hit in the TLB
 
+      		`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
 					if(resp_from_tlb.is_fault) begin	//Access fault
 						Bit#(prf_index) lv_prf_index= truncate(orig_req.payload);
 						wr_resp_to_core<= Resp_to_core { data: ?,
@@ -221,6 +274,7 @@ package nb_dcache;
 						//The virtual address is not required here after. Hence, the addr in the req is replaced
 						//with the physical address
 						req.addr= resp_from_tlb.paddr;
+      			`logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 						if(resp_from_tlb.is_io) begin
 							//Enqueue into a separate FIFO that handles IO Requests
 							ff_io_request.enq(req);
@@ -232,11 +286,13 @@ package nb_dcache;
 
 				end
 				else begin		//Miss in the TLB
+      		`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
 					wr_req_to_ptw<= orig_req;		//TODO PTW will store the req and send it again, once PTW is done.
 					rg_cache_busy[0]<= True;
 				end
 			end
 			else begin	//PTW request
+      	`logLevel( dcache, 2, $format("DCACHE : Req from PTW: ", fshow(req)))
 				ff_first_stage.enq(req);
 				//ff_first_stage.enq(Req_from_core {addr: truncate(req.addr),
 				//																	access_size: req.access_size,
@@ -267,10 +323,14 @@ package nb_dcache;
 				Bit#(TLog#(ways)) hit_index= truncate(way_num);
 				Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
 				let line= dataline[hit_index];
+      	`logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
+      	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: ", set_index, hit_index, line))
+
 				if(send_resp) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
 					Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
-					if(req.origin==Load_buffer || req.origin==PTW) begin
+      		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc for load: %h", data_to_core))
+					if(req.origin==Load_buffer || req.origin==PTW) begin	//TODO remove this
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																						 prf_index: truncate(req.payload),
 																						 exception: No_exception };
@@ -281,16 +341,19 @@ package nb_dcache;
 					let write_data= generate_masked_data(line, req.payload, line_addr, req.access_size);
 					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
       		data_arr[data_arr_index].write(set_index, write_data);
+      		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
 				end
       	repl.update_set(set_index, hit_index);								//Update the replacement bits on a hit
 			end
 			else begin																							//Line miss; send req to fill buffer
-				let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
+				//let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
 				let fill_buffer_resp<- fill_buffer.request(req); 			//Req and resp to/from fill buffer
 				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
 				//if a response needs to be sent (i.e. a load_buffer or a PTW request).
 				//Here, fb_data is the complete fill buffer line
+      	`logLevel( dcache, 2, $format("DCACHE : Miss in the dcache for req:", fshow(req)))
 				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h",  fb_data))
 					if(send_resp) begin
 						Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
@@ -300,6 +363,7 @@ package nb_dcache;
 					//else do nothing
 				end
 				else begin
+					`logLevel( dcache, 2, $format("DCACHE : Fill buffer miss"))
 					ff_second_stage.enq(req);														//Pass the req to the next stage
 				end
 			end
@@ -312,6 +376,7 @@ package nb_dcache;
 			if(mshr_resp matches tagged Valid .read_req_from_mshr) begin
 				Bit#(TSub#(paddr, buswidthbits)) read_addr= tpl_1(read_req_from_mshr)[paddr_val-1:buswidthbits_val];
 				let read_id= tpl_2(read_req_from_mshr);
+				`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, read_addr))
 				ff_read_req_to_mem.enq(Read_req_to_mem {addr: zeroExtend(read_addr),
 																								id: zeroExtend(read_id),
 																								is_burst: True });
@@ -330,14 +395,17 @@ package nb_dcache;
 		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
+			`logLevel( dcache, 2, $format("DCACHE : Response from memory: ", fshow(resp_from_mem)))
 			let maybe_req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
 
 			//Send the req to fill buffer and check if it's a hit
 			if(maybe_req_from_mshr matches tagged Valid .req_from_mshr) begin
+				`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(req_from_mshr)))
 				wr_is_mshr_req_to_fb_valid<= True;
 				let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
 				let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
 				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					`logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
 					mshr.ack_from_fb;
 					Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
 					if(send_resp) begin
@@ -347,6 +415,9 @@ package nb_dcache;
 																						 exception: No_exception };
 					end
 					//else do nothing
+					else begin
+						`logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
+					end
 				end
 			end
 		endrule
@@ -359,6 +430,7 @@ package nb_dcache;
 		//				 as the fill buffer is invalidated only after 3 clock cycles.
 		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue);
 			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
+			`logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
 			for(Integer i = 0;i<ways_val;i = i+1) begin
 				data_arr[i].read(set_index);
 				tag_arr[i].read(set_index);
@@ -396,15 +468,18 @@ package nb_dcache;
 			Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {fb_dirty, 1'b1, lv_tag};
 			data_arr[waynum].write(set_index, fb_data);
 			tag_arr[waynum].write(set_index, lv_dirty_valid_tag);
+			`logLevel( dcache, 2, $format("DCACHE : Updating way_num: %d and set_index: %d with data: %h and tag: %h", waynum, set_index, fb_data, lv_dirty_valid_tag))
 
 			//Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
 			if(valid[waynum]==1 && dirty[waynum]==1) begin
 				Bit#(TAdd#(tagbits, setbits)) evict_lineaddr= {set_index, tag[waynum]};
 				rg_eviction_buffer<= tuple2(evict_lineaddr, dataline[waynum]);
 				rg_fb_state<= Release_eviction_buffer;
+				`logLevel( dcache, 2, $format("DCACHE : Eviction buffer being written with line_address: %h and data: %h", evict_lineaddr, dataline[waynum]))
 			end
 			else begin
 				rg_fb_state<= defaultValue;
+				`logLevel( dcache, 2, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
 			end
 		endrule
 
@@ -416,6 +491,7 @@ package nb_dcache;
 		rule rl_release_eviction_buffer(rg_fb_state==Release_eviction_buffer);
 			if(rg_evict_index==0) begin	//In the first cycle, release the fill buffer entry
 				fill_buffer.release_fb;
+				`logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
 			end
 
 			if(rg_evict_index==fromInteger(evict_iter_val-1)) begin	//In the last cycle, reset the variables
@@ -429,8 +505,10 @@ package nb_dcache;
 			let {line_addr, data}= rg_eviction_buffer;
 			Bit#(linewidthbits) some_zeros= 0;
 			//Send a write request to the memory
-			wr_write_req_to_mem<= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], some_zeros},
+			Write_req_to_mem#(paddr, buswidth) lv_write_req= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], some_zeros},
 																							 data: data[(rg_evict_index+1)<<buswidthbits_val: rg_evict_index<<buswidthbits_val]};
+			wr_write_req_to_mem<= lv_write_req;
+			`logLevel( dcache, 2, $format("DCACHE : Write request to mem from eviction buffer: ", fshow(lv_write_req)))
 		endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
@@ -474,10 +552,17 @@ package nb_dcache;
 
 	endmodule
 
-	(*synthesize*)
-	module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
+  (*synthesize*)
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
   endmodule
+
+	//(*synthesize*)
+	//module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
+  //  let ifc();
+  //  mknb_dcache#("PLRU") _temp(ifc);
+  //  return (ifc);
+  //endmodule
 endpackage
