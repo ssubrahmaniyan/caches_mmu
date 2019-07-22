@@ -41,7 +41,7 @@ package mshr;
 											numeric type data,
 											numeric type mshrsize,
 											numeric type mshrfifo_depth);
-		method ActionValue#(Maybe#(Tuple2#(Bit#(paddr), Bit#(TLog#(TAdd#(mshrsize,1)))))) allocate (Req_from_core#(paddr, data) req);
+		method ActionValue#(Maybe#(Bit#(TLog#(TAdd#(mshrsize,1))))) allocate (Req_from_core#(paddr, data) req);
 		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Bit#(TLog#(TAdd#(mshrsize,1))) req_rid);
 		method Action ack_from_fb;
 	endinterface
@@ -77,7 +77,7 @@ package mshr;
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
 
-		method ActionValue#(Maybe#(Tuple2#(Bit#(paddr), Bit#(mshrbits)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
+		method ActionValue#(Maybe#(Bit#(mshrbits))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(mshrbits) mshr_allocated_id= '1;
 			Bit#(mshrbits) mshr_unallocated_id= '1;
@@ -100,7 +100,7 @@ package mshr;
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
 				rg_mshr_valid[mshr_allocated_id]<= True;
-				return tagged Valid tuple2(req.addr, mshr_unallocated_id);
+				return tagged Valid mshr_unallocated_id;
 			end
 			else begin
 				return tagged Invalid;

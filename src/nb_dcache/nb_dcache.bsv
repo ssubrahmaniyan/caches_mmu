@@ -373,11 +373,12 @@ package nb_dcache;
 			let req= ff_second_stage.first;
 			ff_second_stage.deq;
 			let mshr_resp<- mshr.allocate(req);
-			if(mshr_resp matches tagged Valid .read_req_from_mshr) begin
-				Bit#(TSub#(paddr, buswidthbits)) read_addr= tpl_1(read_req_from_mshr)[paddr_val-1:buswidthbits_val];
-				let read_id= tpl_2(read_req_from_mshr);
-				`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, read_addr))
-				ff_read_req_to_mem.enq(Read_req_to_mem {addr: zeroExtend(read_addr),
+			if(mshr_resp matches tagged Valid .read_id) begin
+				Bit#(TSub#(paddr,linewidthbits)) line_addr= req.addr[paddr_val-1:linewidthbits_val];
+				Bit#(linewidthbits) zeros= 'd0;
+				Bit#(paddr) mem_addr= {line_addr, zeros};
+				`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, mem_addr))
+				ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
 																								id: zeroExtend(read_id),
 																								is_burst: True });
 			end
