@@ -95,7 +95,7 @@ package fill_buffer;
 		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
 		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
-		Reg#(Bool) rg_first_resp <- mkReg(False);
+		Reg#(Bool) rg_first_resp[2] <- mkCReg(2, True);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
 		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkConfigReg(0);
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
@@ -113,15 +113,17 @@ package fill_buffer;
 		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
 		//should be set as True.
 		rule rl_update_rg_first_resp;
-			if(rg_first_resp) begin
+			if(rg_first_resp[0]) begin
 				rg_fb_addr<= wr_req.addr[paddr_val-1:linewidthbits_val];
-				rg_first_resp<= False;
+				rg_first_resp[0]<= False;
 			end
 			else if(tpl_2(wr_data_from_mem)) begin
-				rg_first_resp<= True;
+				rg_first_resp[0]<= True;
 			end
 		endrule
 
+		//This rule fires when the fill buffer is not full, and the response from mem is valid (which
+		//is an implicit confition as wr_data_from_mem is a mkWire, whose value is read in this rule)
 		rule rl_operation(!all_valid);
 			let req= wr_req;
 			`logLevel( dcache, 2, $format("FB : rl_operation firing. data_from_mem: %h req_from_mshr: ", tpl_1(wr_data_from_mem), fshow(req)))
@@ -131,7 +133,7 @@ package fill_buffer;
 			//corresponding address to the memory response's rid. In the subsequent cycles, the index is
 			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
 			//it does not matter.
-			if(rg_first_resp) begin
+			if(rg_first_resp[1]) begin
 				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + buswidthbits_val -1 : buswidthbits_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
