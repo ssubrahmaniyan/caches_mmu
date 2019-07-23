@@ -41,6 +41,7 @@ package fill_buffer;
   import BUtils::*;
 	import DefaultValue :: *;
 	import ConfigReg::*;
+  `include "Logger.bsv"           // for logging
 
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
 															numeric type linewidth, numeric type wordsize);
@@ -123,6 +124,7 @@ package fill_buffer;
 
 		rule rl_operation(!all_valid);
 			let req= wr_req;
+			`logLevel( dcache, 2, $format("FB : rl_operation firing. data_from_mem: %h req_from_mshr: ", tpl_1(wr_data_from_mem), fshow(req)))
 			Bit#(TLog#(num_chunks)) lv_index;
 			//For the first response from memory, since the critical data arrives first, the index to be written
 			//in the FB is computed. In the first cycle, the MSHR will definitely send a request with the
@@ -133,6 +135,7 @@ package fill_buffer;
 				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + buswidthbits_val -1 : buswidthbits_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
+				`logLevel( dcache, 2, $format("FB : First response from Mem. Valid index in FB: %d for req: ", valid_index, fshow(req)))
 			end
 			else begin
 				rg_index<= rg_index + 1;

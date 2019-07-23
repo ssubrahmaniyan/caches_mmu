@@ -381,6 +381,9 @@ package nb_dcache;
 																								id: zeroExtend(read_id),
 																								is_burst: True });
 			end
+			else begin
+				`logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req"))
+			end
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
@@ -533,6 +536,7 @@ package nb_dcache;
 		//interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
 			method Action put(Read_resp_from_mem#(buswidth, id_bits) resp);
 				wr_read_resp_from_mem<= resp;
+				`logLevel( dcache, 2, $format("DCACHE : Read response from mem: ", fshow(resp)))
 				fill_buffer.data_from_mem(resp.data, resp.last);
 			endmethod
 		endinterface;
