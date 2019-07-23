@@ -41,14 +41,13 @@ package mshr;
 											numeric type data,
 											numeric type mshrsize,
 											numeric type mshrfifo_depth);
-		method ActionValue#(Maybe#(Bit#(TLog#(TAdd#(mshrsize,1))))) allocate (Req_from_core#(paddr, data) req);
-		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Bit#(TLog#(TAdd#(mshrsize,1))) req_rid);
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req);
+		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		method Action ack_from_fb;
 	endinterface
 
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth))
-				 provisos ( Log#(TAdd#(mshrsize,1), mshrbits),
-				 						Add#(addr_in_mshr, linewidthbits, paddr)
+				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr)
 										//Add#(a__, addr_in_mshr, linewidthbits)		
 			 						 );
 		let paddr_val= valueOf(paddr);
@@ -59,11 +58,11 @@ package mshr;
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
-		Reg#(Maybe#(Bit#(mshrbits))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
+		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
 
 		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
-		Wire#(Bit#(mshrbits)) wr_curr_req_mshr_id <- mkDWire('1);
+		Wire#(Bit#(TLog#(mshrsize))) wr_curr_req_mshr_id <- mkDWire(0);
 
 		Bool one_mshr_fifo_full= False;
 		Bool mshr_full= True;
@@ -77,10 +76,10 @@ package mshr;
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
 
-		method ActionValue#(Maybe#(Bit#(mshrbits))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
-			Bit#(mshrbits) mshr_allocated_id= '1;
-			Bit#(mshrbits) mshr_unallocated_id= '1;
+			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
+			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
@@ -92,17 +91,22 @@ package mshr;
 				end
 			end
 			wr_curr_req_mshr_id<= mshr_allocated_id;
-			ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
-																										access_size: req.access_size,
-																										payload: req.payload,
-																										origin: req.origin });
 
 			if(!mshr_allocated) begin
-				rg_mshr_line_addr[mshr_allocated_id]<= req_line_addr;
-				rg_mshr_valid[mshr_allocated_id]<= True;
+				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
+				rg_mshr_valid[mshr_unallocated_id]<= True;
+				ff_mshr[mshr_unallocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
+																												access_size: req.access_size,
+																												payload: req.payload,
+																												origin: req.origin });
+				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
 			else begin
+				ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
+																											access_size: req.access_size,
+																											payload: req.payload,
+																											origin: req.origin });
 				return tagged Invalid;
 			end
 		endmethod
@@ -110,9 +114,11 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Bit#(mshrbits) req_rid);
+		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 			Maybe#(Req_from_core#(paddr, data)) req= tagged Invalid;
-			if(rg_curr_fb_id matches tagged Invalid &&& req_rid!='1) begin
+			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
+			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
+			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
 				rg_curr_fb_id<= tagged Valid req_rid;
 				if(rg_mshr_valid[req_rid]) begin
 					let fifo_top= ff_mshr[req_rid].first;
@@ -120,12 +126,13 @@ package mshr;
 																							access_size: fifo_top.access_size,
 																							payload: fifo_top.payload,
 																							origin: fifo_top.origin });
+					`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 				end
 				//This condition should never happen as if the MSHR is not empty, and a response comes from
 				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
 				else begin
 					`ifdef ASSERT
-						dynamicAssert(req_rid=='1,"Invalid memory response"); 
+						dynamicAssert(!isValid(v_req_rid),"Invalid memory response"); 
 					`endif
 				end
 			end
@@ -137,12 +144,14 @@ package mshr;
 																							access_size: fifo_top.access_size,
 																							payload: fifo_top.payload,
 																							origin: fifo_top.origin });
+					`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 				end
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
 				//so that in the next cycle it will be assigned the value
 				else if(wr_curr_req_mshr_id!=curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
 					rg_curr_fb_id<= tagged Invalid;
+					`logLevel( dcache, 2, $format("MSHR : No more pending requests of id: %d", curr_rid))
 				end
 
 			end
@@ -151,12 +160,12 @@ package mshr;
 
 		method Action ack_from_fb if(mshr_not_empty);
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
-      	`logLevel( nb_dcache, 1, $format("DCACHE: ack from fb for id: %d", fb_id))
+      	`logLevel( nb_dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
 			end
 			else begin
       `ifdef ASSERT
-        dynamicAssert(True,"Ack from fb called when ff_mshr empty");
+        dynamicAssert(True,"MSHR : Ack from fb called when ff_mshr empty");
       `endif
 			end
 		endmethod

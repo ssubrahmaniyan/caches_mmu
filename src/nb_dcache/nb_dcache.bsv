@@ -123,7 +123,6 @@ package nb_dcache;
 			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
 			Log#(linewidth, linewidthbits),				// linewidthbits is no. of bits to indicate byte offset within a line
 			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
-			Log#(mshrsize, mshrbits),							// mshrbits is the no. of bits used to index the MSHRs
 			//Add#(, a__, id_bits),								// id_bits should be greater than Log(mshrsize+2)
 			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
 			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
@@ -132,7 +131,7 @@ package nb_dcache;
 			Add#(b__, prf_index, datawidth),
 			//Add#(c__, linewidthbits, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
-			Add#(e__, TLog#(TAdd#(mshrsize, 1)), id_bits),
+			Add#(e__, TLog#(mshrsize), id_bits),
 			Add#(f__, paddr, vaddr),
 			Mul#(g__, buswidth, linewidth),
 			Add#(h__, buswidthbits, linewidth),
@@ -396,8 +395,12 @@ package nb_dcache;
 		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
 		rule rl_MSHR_req_to_fill_buffer;
 			let resp_from_mem= wr_read_resp_from_mem;
-			`logLevel( dcache, 2, $format("DCACHE : Response from memory: ", fshow(resp_from_mem)))
-			let maybe_req_from_mshr<- mshr.req_to_fb(truncate(resp_from_mem.id));		//Receive the request from MSHR corresponding to the rid
+			Maybe#(Bit#(TLog#(mshrsize))) lv_id_to_mshr;
+			if(resp_from_mem.id=='1)
+				lv_id_to_mshr= tagged Invalid;
+			else
+				lv_id_to_mshr= tagged Valid truncate(resp_from_mem.id);
+			let maybe_req_from_mshr<- mshr.req_to_fb(lv_id_to_mshr);		//Receive the request from MSHR corresponding to the rid
 
 			//Send the req to fill buffer and check if it's a hit
 			if(maybe_req_from_mshr matches tagged Valid .req_from_mshr) begin
