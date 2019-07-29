@@ -73,7 +73,7 @@ package nb_dcache;
 		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8))))	subifc_req_to_ptw;
 		interface Get#(Read_req_to_mem#(paddr, id_bits))            subifc_read_req_to_mem;
 		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      subifc_read_resp_from_mem;
-		interface Get#(Write_req_to_mem#(paddr, buswidth))          subifc_write_req_to_mem;
+		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) subifc_write_req_to_mem;
 		interface Put#(Bool)                                        subifc_write_resp_from_mem;
 		method Bool cache_busy;
 	endinterface
@@ -134,7 +134,7 @@ package nb_dcache;
 			Add#(e__, TLog#(mshrsize), id_bits),
 			Add#(f__, paddr, vaddr),
 			Mul#(g__, buswidth, linewidth),
-			Add#(h__, buswidthbits, linewidth),
+			Add#(h__, buswidth, linewidth),
 			Add#(i__, datawidth, linewidth),
 			Add#(j__, linewidthbits,  paddr),
 			Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
@@ -197,7 +197,7 @@ package nb_dcache;
 		Wire#(Req_from_core#(vaddr, datawidth)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkFIFO;
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
-		Wire#(Write_req_to_mem#(paddr, buswidth)) wr_write_req_to_mem <- mkWire;
+		FIFO#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFO;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
 
@@ -208,9 +208,7 @@ package nb_dcache;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
-		Reg#(Bit#(TLog#(evict_iter))) rg_evict_index <-mkReg(0);
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
-		Reg#(Tuple2#(Bit#(TSub#(paddr,linewidthbits)) , Bit#(linewidth))) rg_eviction_buffer <-mkReg(tuple2(0,0)); 
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		
@@ -325,9 +323,9 @@ package nb_dcache;
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
       	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: ", set_index, hit_index, line))
 
+				Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
 				if(send_resp) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
-					Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
       		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc for load: %h", data_to_core))
 					if(req.origin==Load_buffer || req.origin==PTW) begin	//TODO remove this
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
@@ -341,6 +339,9 @@ package nb_dcache;
 					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
       		data_arr[data_arr_index].write(set_index, write_data);
       		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,		//TODO remove this? For testing
+																					 prf_index: truncate(req.payload),
+																					 exception: No_exception };
 				end
       	repl.update_set(set_index, hit_index);								//Update the replacement bits on a hit
 			end
@@ -353,13 +354,18 @@ package nb_dcache;
       	`logLevel( dcache, 2, $format("DCACHE : Miss in the dcache for req:", fshow(req)))
 				if(fill_buffer_resp matches tagged Valid .fb_data) begin
 					`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h",  fb_data))
+					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
 					if(send_resp) begin
-						Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																						 prf_index: truncate(req.payload),
 																						 exception: No_exception };
 					end
 					//else do nothing
+					else begin
+						wr_resp_to_core<= Resp_to_core { data: data_to_core,		//TODO remove this? For testing
+																						 prf_index: truncate(req.payload),
+																						 exception: No_exception };
+					end
 				end
 				else begin
 					`logLevel( dcache, 2, $format("DCACHE : Fill buffer miss"))
@@ -422,9 +428,10 @@ package nb_dcache;
 																						 exception: No_exception };
 					end
 					//else do nothing
-					else begin
-						`logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
-					end
+				end
+				//else do nothing
+				else begin
+					`logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
 				end
 			end
 		endrule
@@ -479,10 +486,13 @@ package nb_dcache;
 
 			//Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
 			if(valid[waynum]==1 && dirty[waynum]==1) begin
-				Bit#(TAdd#(tagbits, setbits)) evict_lineaddr= {set_index, tag[waynum]};
-				rg_eviction_buffer<= tuple2(evict_lineaddr, dataline[waynum]);
-				rg_fb_state<= Release_eviction_buffer;
-				`logLevel( dcache, 2, $format("DCACHE : Eviction buffer being written with line_address: %h and data: %h", evict_lineaddr, dataline[waynum]))
+				Bit#(linewidthbits) some_zeros= 0;
+				Bit#(paddr) evict_lineaddr= {set_index, tag[waynum], some_zeros};
+				ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+																									data: dataline[waynum],
+																									is_burst: True });
+				rg_fb_state<= Release_FB;
+				`logLevel( dcache, 2, $format("DCACHE : Evicting cache line. Addr: %x Data: %x ", evict_lineaddr, dataline[waynum]))
 			end
 			else begin
 				rg_fb_state<= defaultValue;
@@ -493,29 +503,10 @@ package nb_dcache;
 		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
 		//because in this cycle there might be a request that is pending in ff_first_stage. Therefore in the
 		//cycle where this rule is getting executed, the request from ff_first_stage is serviced.
-		//This rule executes for evict_iter number of cycles. This keeps sending buswidth bits of data in
-		//a cycle untill the line is completely written onto the fabric.
-		rule rl_release_eviction_buffer(rg_fb_state==Release_eviction_buffer);
-			if(rg_evict_index==0) begin	//In the first cycle, release the fill buffer entry
-				fill_buffer.release_fb;
-				`logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
-			end
-
-			if(rg_evict_index==fromInteger(evict_iter_val-1)) begin	//In the last cycle, reset the variables
-				rg_fb_state<= defaultValue;
-				rg_evict_index<= 0;
-			end
-			else begin		//Increment the index variable that is used to extract the appropriate bits of line
-				rg_evict_index<= rg_evict_index+1;
-			end
-
-			let {line_addr, data}= rg_eviction_buffer;
-			Bit#(linewidthbits) some_zeros= 0;
-			//Send a write request to the memory
-			Write_req_to_mem#(paddr, buswidth) lv_write_req= Write_req_to_mem { addr: {line_addr[paddr_val-linewidthbits_val-1:0], some_zeros},
-																							 data: data[(rg_evict_index+1)<<buswidthbits_val: rg_evict_index<<buswidthbits_val]};
-			wr_write_req_to_mem<= lv_write_req;
-			`logLevel( dcache, 2, $format("DCACHE : Write request to mem from eviction buffer: ", fshow(lv_write_req)))
+		rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
+			fill_buffer.release_fb;
+			rg_fb_state<= defaultValue;
+			`logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
 		endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
@@ -541,7 +532,7 @@ package nb_dcache;
 			endmethod
 		endinterface;
 
-		interface subifc_write_req_to_mem= toGet(wr_write_req_to_mem);
+		interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
 		//interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
 		//	method ActionValue#(Write_req_to_mem) get;
 		//		return wr_write_req_to_mem;
