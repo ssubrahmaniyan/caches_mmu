@@ -61,8 +61,8 @@ package fill_buffer;
 									Log#(num_chunks, num_chunksbits),
 									Mul#(a__, data, linewidth),
 									Add#(b__, data, linewidth),
-									Add#(c__, buswidthbits, linewidth),	//for generate_masked_data_bus fn
-									Mul#(e__, buswidth, linewidth)			//for generate_masked_data_bus fn
+									Add#(c__, buswidth, linewidth),			//for generate_masked_data_bus fn
+									Mul#(d__, buswidth, linewidth)			//for generate_masked_data_bus fn
 								);
 
 		let paddr_val= valueOf(paddr);
@@ -71,9 +71,9 @@ package fill_buffer;
 		let num_chunksbits_val= valueOf(num_chunksbits);
 
 		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidth) bus_data, Bit#(TLog#(num_chunks)) chunk_addr);
-			Bit#(buswidthbits) temp= '1;
+			Bit#(buswidth) temp= '1;
     	Bit#(linewidth) mask = zeroExtend(temp);
-			Bit#(TLog#(buswidthbits)) zeros= 'd0;
+			Bit#(buswidthbits) zeros= 'd0;
     	mask = mask<<{chunk_addr,zeros};
 			let writedata= (mask & duplicate(bus_data)) |(~mask & sram_data);
 			return writedata;
@@ -95,7 +95,7 @@ package fill_buffer;
 		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
 		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
-		Reg#(Bool) rg_first_resp[2] <- mkCReg(2, True);
+		Reg#(Bool) rg_first_resp <- mkReg(True);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
 		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkConfigReg(0);
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
@@ -113,12 +113,13 @@ package fill_buffer;
 		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
 		//should be set as True.
 		rule rl_update_rg_first_resp;
-			if(rg_first_resp[0]) begin
+			//`logLevel( dcache, 2, $format("FB : rg_first_resp: %b rlast: %b wr_req: %h", rg_first_resp, tpl_2(wr_data_from_mem), wr_req))
+			if(rg_first_resp) begin
 				rg_fb_addr<= wr_req.addr[paddr_val-1:linewidthbits_val];
-				rg_first_resp[0]<= False;
+				rg_first_resp<= False;
 			end
 			else if(tpl_2(wr_data_from_mem)) begin
-				rg_first_resp[0]<= True;
+				rg_first_resp<= True;
 			end
 		endrule
 
@@ -133,7 +134,7 @@ package fill_buffer;
 			//corresponding address to the memory response's rid. In the subsequent cycles, the index is
 			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
 			//it does not matter.
-			if(rg_first_resp[1]) begin
+			if(rg_first_resp) begin
 				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + buswidthbits_val -1 : buswidthbits_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
@@ -162,6 +163,10 @@ package fill_buffer;
 			rg_valid[lv_index]<= 1'b1;
 		endrule
 
+		rule rl_disp;
+			`logLevel( dcache, 2, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+		endrule
+
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
 			if(req.origin==Store_commit) begin
@@ -178,6 +183,8 @@ package fill_buffer;
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[linewidthbits_val -1 : buswidthbits_val];
 			wr_req<= req;
+			Bit#(TSub#(paddr, linewidthbits)) lv_req_addr= req.addr[paddr_val-1:linewidthbits_val];
+			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d index_valid: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid[valid_index] ))
 			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:linewidthbits_val]==rg_fb_addr) begin
 				return tagged Valid rg_fill_buffer;
 			end
