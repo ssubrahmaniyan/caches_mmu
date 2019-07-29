@@ -36,7 +36,7 @@ package nb_dcache_types;
 		defaultValue= Store_buffer;
 	endinstance
 
-	typedef enum { Read_SRAMs, Write_SRAMs, Release_eviction_buffer	} FB_state deriving (Bits, Eq, FShow);
+	typedef enum { Read_SRAMs, Write_SRAMs, Release_FB	} FB_state deriving (Bits, Eq, FShow);
 	instance DefaultValue#(FB_state);
 		defaultValue= Read_SRAMs;
 	endinstance
@@ -83,6 +83,7 @@ package nb_dcache_types;
 	typedef struct {
 		Bit#(addr) addr;
 		Bit#(data) data;
+		Bool is_burst;
 	} Write_req_to_mem#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
 
 	typedef struct {
