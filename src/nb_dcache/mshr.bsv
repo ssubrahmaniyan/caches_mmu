@@ -81,7 +81,9 @@ package mshr;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
+			`logLevel( dcache, 2, $format("MSHR : New req for line_addr: %h", req_line_addr))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
+				`logLevel( dcache, 2, $format("MSHR[%d]: Valid: %b line_addr: %h", i, rg_mshr_valid[i], rg_mshr_line_addr[i]))
 				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
 					mshr_allocated_id= fromInteger(i);
