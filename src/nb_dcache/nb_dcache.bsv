@@ -213,6 +213,8 @@ package nb_dcache;
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
+		Wire#(Bool) wr_stage2_check_fb <-mkWire;
+		Wire#(Bool) wr_mshr_resp_to_core <- mkDWire(False);
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
     	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
@@ -302,7 +304,6 @@ package nb_dcache;
 
 		rule rl_tag_and_data_array_read_response;
 			let req= ff_first_stage.first;
-			ff_first_stage.deq;
 			Bit#(linewidth) dataline [ways_val];
 			Bit#(TAdd#(tagbits,2)) tag;
 			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
@@ -326,50 +327,47 @@ package nb_dcache;
       	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: ", set_index, hit_way, line))
 
 				Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
-				if(send_resp) begin
+				if(!wr_mshr_resp_to_core || req.origin==Store_buffer) begin
+					ff_first_stage.deq;
+				end
+				if(send_resp && !wr_mshr_resp_to_core) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
+					wr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: truncate(req.payload),
+																					 exception: No_exception };
+      		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
       		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc for load: %h", data_to_core))
-					if(req.origin==Load_buffer || req.origin==PTW) begin	//TODO remove this
-						wr_resp_to_core<= Resp_to_core { data: data_to_core,
-																						 prf_index: truncate(req.payload),
-																						 exception: No_exception };
-					end
 				end
 				else if(req.origin==Store_commit) begin								//Store instruction
     			Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
 					let write_data= generate_masked_data(line, req.payload, line_offset, req.access_size);
       		data_arr[hit_way].write(set_index, write_data);
+      		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
       		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
-					wr_resp_to_core<= Resp_to_core { data: data_to_core,		//TODO remove this? For testing
-																					 prf_index: truncate(req.payload),
-																					 exception: No_exception };
 				end
-      	repl.update_set(set_index, hit_way);								//Update the replacement bits on a hit
 			end
-			else begin																							//Line miss; send req to fill buffer
-				//let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
+			else if(!wr_is_mshr_req_to_fb_valid) begin	//Line miss; send req to FB if MSHR is not sending
 				let fill_buffer_resp<- fill_buffer.request(req); 			//Req and resp to/from fill buffer
 				//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
 				//if a response needs to be sent (i.e. a load_buffer or a PTW request).
 				//Here, fb_data is the complete fill buffer line
       	`logLevel( dcache, 2, $format("DCACHE : Miss in the dcache for req:", fshow(req)))
 				if(fill_buffer_resp matches tagged Valid .fb_data) begin
+					if(!wr_mshr_resp_to_core || req.origin==Store_buffer) begin
+						ff_first_stage.deq;
+					end
 					`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h",  fb_data))
 					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
-					if(send_resp) begin
+					if(send_resp && !wr_mshr_resp_to_core) begin
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																						 prf_index: truncate(req.payload),
 																						 exception: No_exception };
 					end
 					//else do nothing
-					else begin
-						wr_resp_to_core<= Resp_to_core { data: data_to_core,		//TODO remove this? For testing
-																						 prf_index: truncate(req.payload),
-																						 exception: No_exception };
-					end
 				end
 				else begin
 					`logLevel( dcache, 2, $format("DCACHE : Fill buffer miss"))
+					ff_first_stage.deq;
 					ff_second_stage.enq(req);														//Pass the req to the next stage
 				end
 			end
@@ -427,6 +425,7 @@ package nb_dcache;
 						wr_resp_to_core<= Resp_to_core { data: data_to_core,
 																						 prf_index: truncate(req_from_mshr.payload),
 																						 exception: No_exception };
+						wr_mshr_resp_to_core<= True;
 					end
 					//else do nothing
 				end
@@ -492,13 +491,12 @@ package nb_dcache;
 				ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
 																									data: dataline[waynum],
 																									is_burst: True });
-				rg_fb_state<= Release_FB;
 				`logLevel( dcache, 2, $format("DCACHE : Evicting cache line. Addr: %x Data: %x ", evict_lineaddr, dataline[waynum]))
 			end
 			else begin
-				rg_fb_state<= defaultValue;
 				`logLevel( dcache, 2, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
 			end
+			rg_fb_state<= Release_FB;
 		endrule
 
 		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
