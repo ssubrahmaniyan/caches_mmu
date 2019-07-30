@@ -44,19 +44,18 @@ package fill_buffer;
   `include "Logger.bsv"           // for logging
 
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
-															numeric type linewidth, numeric type wordsize);
+															numeric type linewidth, numeric type lineoffset, numeric type wordsize);
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
 		method Action release_fb;
 		method Bool can_release;
 		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
-		(*always_ready, always_enabled*) method Bit#(TSub#(paddr, TLog#(linewidth))) line_addr;
+		(*always_ready, always_enabled*) method Bit#(TSub#(paddr, lineoffset)) line_addr;
 	endinterface
 
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
-	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, wordsize))
-				 provisos(Log#(buswidth, buswidthbits),
-				 					Log#(linewidth, linewidthbits),
+	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, lineoffset, wordsize))
+				 provisos(Log#(TDiv#(buswidth,8), busoffset),
 			 						Div#(linewidth, buswidth, num_chunks),
 									Log#(num_chunks, num_chunksbits),
 									Mul#(a__, data, linewidth),
@@ -66,21 +65,21 @@ package fill_buffer;
 								);
 
 		let paddr_val= valueOf(paddr);
-		let buswidthbits_val= valueOf(buswidthbits);
-		let linewidthbits_val= valueOf(linewidthbits);
+		let busoffset_val= valueOf(busoffset);
+		let lineoffset_val= valueOf(lineoffset);
 		let num_chunksbits_val= valueOf(num_chunksbits);
 
 		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidth) bus_data, Bit#(TLog#(num_chunks)) chunk_addr);
 			Bit#(buswidth) temp= '1;
     	Bit#(linewidth) mask = zeroExtend(temp);
-			Bit#(buswidthbits) zeros= 'd0;
+			Bit#(busoffset) zeros= 'd0;
     	mask = mask<<{chunk_addr,zeros};
 			let writedata= (mask & duplicate(bus_data)) |(~mask & sram_data);
 			return writedata;
 		endfunction
 
 		//TODO Make a UniqueWrapper for this
-		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(buswidthbits) line_addr, Bit#(2) size);
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(busoffset) line_addr, Bit#(2) size);
     	Bit#(data) temp = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
@@ -97,7 +96,7 @@ package fill_buffer;
 		Reg#(Bool) rg_can_release <- mkReg(False);
 		Reg#(Bool) rg_first_resp <- mkReg(True);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
-		Reg#(Bit#(TSub#(paddr, linewidthbits))) rg_fb_addr <- mkConfigReg(0);
+		Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fb_addr <- mkConfigReg(0);
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
 
 		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
@@ -115,7 +114,7 @@ package fill_buffer;
 		rule rl_update_rg_first_resp;
 			//`logLevel( dcache, 2, $format("FB : rg_first_resp: %b rlast: %b wr_req: %h", rg_first_resp, tpl_2(wr_data_from_mem), wr_req))
 			if(rg_first_resp) begin
-				rg_fb_addr<= wr_req.addr[paddr_val-1:linewidthbits_val];
+				rg_fb_addr<= wr_req.addr[paddr_val-1:lineoffset_val];
 				rg_first_resp<= False;
 			end
 			else if(tpl_2(wr_data_from_mem)) begin
@@ -135,7 +134,7 @@ package fill_buffer;
 			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
 			//it does not matter.
 			if(rg_first_resp) begin
-				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + buswidthbits_val -1 : buswidthbits_val];
+				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
 				`logLevel( dcache, 2, $format("FB : First response from Mem. Valid index in FB: %d for req: ", valid_index, fshow(req)))
@@ -151,7 +150,7 @@ package fill_buffer;
 			//For a store commit combine the above data along with that of the request
 			if(req.origin==Store_commit) begin
 				rg_dirty<= 1;
-				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+				Bit#(busoffset) write_reqaddr= req.addr[busoffset_val-1:0];
 				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
@@ -170,7 +169,7 @@ package fill_buffer;
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
 			if(req.origin==Store_commit) begin
-				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+				Bit#(busoffset) write_reqaddr= req.addr[busoffset_val-1:0];
 				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
@@ -181,11 +180,11 @@ package fill_buffer;
 		//result, and in the subsequent clock cycles, the same request will again be sent by the MSHR.
 		//For a request from ff_first_stage, they will get enqueued to ff_second_stage.
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
-			Bit#(TLog#(num_chunks)) valid_index= req.addr[linewidthbits_val -1 : buswidthbits_val];
+			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
 			wr_req<= req;
-			Bit#(TSub#(paddr, linewidthbits)) lv_req_addr= req.addr[paddr_val-1:linewidthbits_val];
+			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
 			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d index_valid: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid[valid_index] ))
-			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:linewidthbits_val]==rg_fb_addr) begin
+			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:lineoffset_val]==rg_fb_addr) begin
 				return tagged Valid rg_fill_buffer;
 			end
 			else begin
@@ -210,14 +209,14 @@ package fill_buffer;
 			return tuple2(rg_dirty, rg_fill_buffer);
 		endmethod
 
-		method Bit#(TSub#(paddr, linewidthbits)) line_addr;
+		method Bit#(TSub#(paddr, lineoffset)) line_addr;
 			return rg_fb_addr;
 		endmethod
 
 	endmodule
 
   (*synthesize*)
-	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 8));
+	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 6, 8));
     let ifc();
     mkfill_buffer _temp(ifc);
     return (ifc);

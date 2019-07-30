@@ -117,27 +117,30 @@ package nb_dcache;
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
 	module mknb_dcache#(parameter String alg)
+	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
+	// 4,				 3,							 128
 		provisos(
-			Mul#(wordsize, 8, datawidth),					// datawidth is the total bits in a word
-			Mul#(linesize, datawidth, linewidth),	// linewidth is the total bits in a cache line
-			Log#(linewidth, linewidthbits),				// linewidthbits is no. of bits to indicate byte offset within a line
-			Log#(setsize, setbits),								// setbits is the no. of bits used as index in BRAMs
+			Log#(wordsize, wordbits),
+			Mul#(wordsize, 8, datawidth),					//64 datawidth is the total bits in a word
+			Mul#(linesize, datawidth, linewidth),	//512 linewidth is the total bits in a cache line
+			Add#(wordbits, TLog#(linesize), lineoffset),	//6 lineoffset is no. of bits to indicate byte offset within a line
+			Log#(setsize, setbits),								//7 setbits is the no. of bits used as index in BRAMs
 			//Add#(, a__, id_bits),								// id_bits should be greater than Log(mshrsize+2)
-			Add#(linewidthbits, setbits, tagpos),	// tagpos total bits for index + offset, 
-			Add#(tagbits, tagpos, paddr),					// tagbits = paddr - (linewidthbits + setbits)
-			Log#(buswidth, buswidthbits),
-			Mul#(TDiv#(buswidth, datawidth), linesize, evict_iter),	//evict_iter is the burst length while evicting a cache line
+			Add#(lineoffset, setbits, tagpos),		//13 tagpos total bits for index + offset, 
+			Add#(tagbits, tagpos, paddr),					//19 tagbits = paddr - (lineoffset + setbits)
+			Log#(TDiv#(buswidth, 8), busoffset),	//4 busoffset is no. of bits to indicate a byte offset within a buswidth data 
+			Div#(linewidth, buswidth, evict_iter),//4 evict_iter is the burst length while evicting a cache line
 			Add#(b__, prf_index, datawidth),
-			//Add#(c__, linewidthbits, TLog#(TAdd#(ways, 1))),	//check again
+			//Add#(c__, lineoffset, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
 			Add#(e__, TLog#(mshrsize), id_bits),
 			Add#(f__, paddr, vaddr),
 			Mul#(g__, buswidth, linewidth),
 			Add#(h__, buswidth, linewidth),
 			Add#(i__, datawidth, linewidth),
-			Add#(j__, linewidthbits,  paddr),
-			Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
+			Add#(j__, lineoffset,  paddr),
+			//Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
 			Add#(l__, TLog#(ways), 4)						//required by the mkreplace module
 			//Mul#(TDiv#(TAdd#(tagbits, 2), tsram), tsram, TAdd#(tagbits, 2)),
 			//Add#(l__, TDiv#(linewidth, dsram), linewidth),
@@ -152,25 +155,24 @@ package nb_dcache;
 		let paddr_val= valueOf(paddr);
 		let datawidth_val= valueOf(datawidth);
 		let buswidth_val= valueOf(buswidth);
-		let linewidthbits_val= valueOf(linewidthbits);
+		let busoffset_val= valueOf(busoffset);
+		let linewidthbits_val= valueOf(lineoffset);
 		let setbits_val= valueOf(setbits);
 		let tagbits_val= valueOf(tagbits);
 		let tagpos_val= valueOf(tagpos);
-		let buswidthbits_val= valueOf(buswidthbits);
 		let evict_iter_val= valueOf(evict_iter);
-
 
 		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
 		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
-		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, wordsize) fill_buffer <-mkfill_buffer;
-		Ifc_mshr#(paddr, linewidthbits, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
+		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize) fill_buffer <-mkfill_buffer;
+		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
-			data_arr[i] <- mkmem_config1r1w(False, fromInteger(i)+'habc0);
-			tag_arr[i] <- mkmem_config1r1w(False, 'h30000);
+			data_arr[i] <- mkmem_config1r1w(False);
+			tag_arr[i] <- mkmem_config1r1w(False);
 		end
 
 		//Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val]; 				// data array
@@ -212,24 +214,24 @@ package nb_dcache;
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		
-		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(linewidthbits) line_addr, Bit#(2) size);
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
     	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
 
     	Bit#(linewidth) mask = zeroExtend(temp);
     	Bit#(datawidth) zeros = 0;
-    	mask = mask<<{line_addr,3'd0};
+    	mask = mask<<{line_offset,3'd0};
 			Bit#(linewidth) writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
 			return writedata;
 		endfunction
 
-		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(linewidthbits) line_addr, Bit#(2) size);
+		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size);
     	Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
 
-    	line = line>>{line_addr,3'd0};
+    	line = line>>{line_offset,3'd0};
 			Bit#(datawidth) readdata= truncate(line) & mask;
 			return readdata;
 		endfunction
@@ -317,11 +319,11 @@ package nb_dcache;
 			end
 
 			if(way_num!='1) begin																		//It's a line hit
-				Bit#(TLog#(ways)) hit_index= truncate(way_num);
+				Bit#(TLog#(ways)) hit_way= truncate(way_num);
 				Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-				let line= dataline[hit_index];
+				let line= dataline[hit_way];
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
-      	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: ", set_index, hit_index, line))
+      	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: ", set_index, hit_way, line))
 
 				Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
 				if(send_resp) begin
@@ -334,16 +336,15 @@ package nb_dcache;
 					end
 				end
 				else if(req.origin==Store_commit) begin								//Store instruction
-    			Bit#(linewidthbits) line_addr= req.addr[linewidthbits_val-1:0];
-					let write_data= generate_masked_data(line, req.payload, line_addr, req.access_size);
-					Bit#(TLog#(ways)) data_arr_index= truncate(way_num);
-      		data_arr[data_arr_index].write(set_index, write_data);
+    			Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
+					let write_data= generate_masked_data(line, req.payload, line_offset, req.access_size);
+      		data_arr[hit_way].write(set_index, write_data);
       		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
 					wr_resp_to_core<= Resp_to_core { data: data_to_core,		//TODO remove this? For testing
 																					 prf_index: truncate(req.payload),
 																					 exception: No_exception };
 				end
-      	repl.update_set(set_index, hit_index);								//Update the replacement bits on a hit
+      	repl.update_set(set_index, hit_way);								//Update the replacement bits on a hit
 			end
 			else begin																							//Line miss; send req to fill buffer
 				//let fb_addr= req.addr[paddr_val-1:linewidthbits_val];
@@ -379,8 +380,8 @@ package nb_dcache;
 			ff_second_stage.deq;
 			let mshr_resp<- mshr.allocate(req);
 			if(mshr_resp matches tagged Valid .read_id) begin
-				Bit#(TSub#(paddr,linewidthbits)) line_addr= req.addr[paddr_val-1:linewidthbits_val];
-				Bit#(linewidthbits) zeros= 'd0;
+				Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
+				Bit#(busoffset) zeros= 'd0;
 				Bit#(paddr) mem_addr= {line_addr, zeros};
 				`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, mem_addr))
 				ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
@@ -388,7 +389,7 @@ package nb_dcache;
 																								is_burst: True });
 			end
 			else begin
-				`logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req"))
+				`logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
 			end
 		endrule
 
@@ -486,7 +487,7 @@ package nb_dcache;
 
 			//Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
 			if(valid[waynum]==1 && dirty[waynum]==1) begin
-				Bit#(linewidthbits) some_zeros= 0;
+				Bit#(lineoffset) some_zeros= 0;
 				Bit#(paddr) evict_lineaddr= {set_index, tag[waynum], some_zeros};
 				ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
 																									data: dataline[waynum],
