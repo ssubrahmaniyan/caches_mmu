@@ -63,6 +63,7 @@ package mshr;
 		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
 		Wire#(Bit#(TLog#(mshrsize))) wr_curr_req_mshr_id <- mkDWire(0);
+		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 
 		Bool one_mshr_fifo_full= False;
 		Bool mshr_full= True;
@@ -75,6 +76,21 @@ package mshr;
 			mshr_full= mshr_full && rg_mshr_valid[i];
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
 		end
+
+		rule rl_update_mshr_valid;
+			if(wr_allocate_id matches tagged Valid .allocate_id) begin
+				rg_mshr_valid[allocate_id]<= True;
+			end
+
+			if(rg_curr_fb_id matches tagged Valid .curr_fb_id &&&  !ff_mshr[curr_fb_id].notEmpty) begin
+				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
+					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
+				end
+				else begin
+					rg_mshr_valid[curr_fb_id]<= False;
+				end
+			end
+		endrule
 
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
@@ -96,7 +112,7 @@ package mshr;
 
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
-				rg_mshr_valid[mshr_unallocated_id]<= True;
+				wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				ff_mshr[mshr_unallocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
 																												access_size: req.access_size,
 																												payload: req.payload,
@@ -121,8 +137,8 @@ package mshr;
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
-				rg_curr_fb_id<= tagged Valid req_rid;
-				if(rg_mshr_valid[req_rid] && ff_mshr[req_rid].notEmpty) begin
+				if(rg_mshr_valid[req_rid]) begin
+					rg_curr_fb_id<= tagged Valid req_rid;
 					let fifo_top= ff_mshr[req_rid].first;
 					req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																							access_size: fifo_top.access_size,
@@ -130,12 +146,9 @@ package mshr;
 																							origin: fifo_top.origin });
 					`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 				end
-				//This condition should never happen as if the MSHR is not empty, and a response comes from
-				//the memory, then there should be at least one request in the FIFO corresponding to MSHR[req_rid]
+				//Else no pending req of current MSHR are pending, hence wait for the fill buffer to get filled
 				else begin
-					`ifdef ASSERT
-						dynamicAssert(!isValid(v_req_rid),"Invalid memory response"); 
-					`endif
+					`logLevel( dcache, 2, $format("MSHR : Waiting for fill buffer to get filled for id: ", fshow(v_req_rid)))
 				end
 			end
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
