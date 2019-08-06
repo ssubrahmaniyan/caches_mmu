@@ -74,8 +74,9 @@ package nb_dcache_tb;
   endfunction
 
 
-	(*descending_urgency="drain_req, core_req"*)
+	//(*descending_urgency="drain_req, core_req"*)
 	(*descending_urgency="core_resp, core_req"*)
+	//(*descending_urgency="core_req, core_resp"*)
   (*synthesize*)
   module mknb_dcache_tb(Empty);
 
@@ -119,9 +120,16 @@ package nb_dcache_tb;
 
   rule core_req;
     let stime<-$stime;
+		$dumpfile("dcache.vcd");
+		$dumpvars;
+		$dumpon;
     if(stime>=(20)) begin
       let req=stim.sub(truncate(index));
-      // read/write : delay/nodelay : Fence/noFence : Null 
+     	index<=index+1;
+      // read/write : delay/nodelay : Fence/noFence : Null
+
+			$display($time,"\tTB: Req from file: ", req);
+    	// read/write : size: sign: delay/nodelay : Fence/noFence : Null : Addr
       Bit#(8) control = req[`Paddr + 7: `Paddr ];
       Bit#(2) readwrite=control[7:6];
       Bit#(3) size=control[5:3];
@@ -133,7 +141,6 @@ package nb_dcache_tb;
 			if(delay==0 && request!=0) begin // // not end of simulation
 				let new_token<- cbuf.reserve.get;
         ff_req.enq(req);
-     	  index<=index+1;
 				if(request!='1) begin		//not finish test 
 					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_buffer;
 					if(req_origin==Load_buffer) begin
@@ -150,8 +157,13 @@ package nb_dcache_tb;
 				end
 				else begin
 					$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
+        	ff_req.enq(req);
 				end
       end
+			else if(request==0) begin
+				$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
+        ff_req.enq(req);
+			end
       //if((delay==0) || request=='1)begin // if not a fence instruction
       //  //$display($time,"\tTB: Enquiing request: %h",req);
       //  ff_req.enq(req);
@@ -161,6 +173,18 @@ package nb_dcache_tb;
       //end
     end
   endrule
+
+	rule rl_endsim;
+		Bit#(TAdd#(`Paddr ,  8)) req = truncate(ff_req.first());
+		if(req==0) begin
+    `ifdef perf
+      for(Integer i=0;i<5;i=i+1)
+        $display($time,"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
+    `endif
+      $display($time, "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
+      $finish(0);
+		end
+	endrule
 
 	rule drain_req;
 		let read_data<- cbuf.drain.get;
@@ -296,6 +320,7 @@ package nb_dcache_tb;
 
   rule extra_line;
     $display("\n");
+		let x<- $stime;
   endrule
 
 endmodule
