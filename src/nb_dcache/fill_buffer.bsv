@@ -72,7 +72,7 @@ package fill_buffer;
 		function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidth) bus_data, Bit#(TLog#(num_chunks)) chunk_addr);
 			Bit#(buswidth) temp= '1;
     	Bit#(linewidth) mask = zeroExtend(temp);
-			Bit#(busoffset) zeros= 'd0;
+			Bit#(TLog#(buswidth)) zeros= 'd0;
     	mask = mask<<{chunk_addr,zeros};
 			let writedata= (mask & duplicate(bus_data)) |(~mask & sram_data);
 			return writedata;
