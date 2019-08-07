@@ -116,6 +116,7 @@ package nb_dcache;
 	(*descending_urgency = "rl_MSHR_req_to_fill_buffer, rl_tag_and_data_array_read_response"*)
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_get_response_from_TLB, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
@@ -211,6 +212,8 @@ package nb_dcache;
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
+		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
+		Reg#(Bool) rg_initialize_done <- mkReg(False);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
@@ -237,6 +240,16 @@ package nb_dcache;
 			Bit#(datawidth) readdata= truncate(line) & mask;
 			return readdata;
 		endfunction
+
+		rule rl_initialize(!rg_initialize_done);
+      `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
+			for(Integer i=0; i<ways_val; i=i+1) begin
+				tag_arr[i].write(rg_initialize_index, 'd0);
+			end
+			rg_initialize_index<= rg_initialize_index+1;
+			if(rg_initialize_index==fromInteger(valueOf(setsize)-1))
+				rg_initialize_done<= True;
+		endrule
 
 		rule rl_handle_req_from_core;
 			let req= ff_req_from_core.first;
