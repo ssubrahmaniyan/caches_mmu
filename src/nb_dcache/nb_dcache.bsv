@@ -210,7 +210,7 @@ package nb_dcache;
 
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
