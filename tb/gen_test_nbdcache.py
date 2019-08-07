@@ -149,6 +149,30 @@ def test02():
     entrycount=entrycount+1
     return 0
 
+
+# Primary miss to consecutive line addresses
+def test03():
+    global entrycount
+    address=4096
+    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    gold_file.write(miss)
+    entrycount=entrycount+1
+    for i in range(20):
+      write_to_file(address,read,word,unsigned,delay,nofence)
+      gold_file.write(miss)
+      entrycount=entrycount+1
+    address1=address
+    address=address+(word_size*line_size)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    gold_file.write(miss)
+    entrycount=entrycount+1
+    address=address1
+    address=address+(bus_width//8)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    gold_file.write(miss)
+    entrycount=entrycount+1
+    return 0
+
 # this test will generate consecutive requests on the same line.
 # each request will be a miss in the cache and probably a hit a in the Line
 # buffer if present.
@@ -176,32 +200,12 @@ def test1():
 # All should be a cold miss
 def test2():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-    address=4096
-    
-    for i in range(sets):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
-      gold_file.write(miss)
-      address=address+(word_size*line_size)
-      entrycount=entrycount+1
-
-    for i in range(40):
-      write_to_file(address,read,word,unsigned,delay,nofence)
-      gold_file.write(miss)
-      entrycount=entrycount+1
-
     address=4096
     for i in range(sets):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       gold_file.write(hit)
       address=address+(word_size*line_size)
       entrycount=entrycount+1
-
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
 # This test will first fill a line and then generate a request on the same line
 # after significant delay.
@@ -1036,7 +1040,7 @@ def test21():
     entrycount=entrycount+1
     return 0
 
-test02()
+test2()
 #test1()
 #test2()
 #test3()
