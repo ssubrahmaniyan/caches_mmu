@@ -211,7 +211,7 @@ package nb_dcache;
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkFIFO;
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkPipelineFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
@@ -221,6 +221,7 @@ package nb_dcache;
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
+		Wire#(Req_from_core#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
 		Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
 		Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
@@ -228,8 +229,10 @@ package nb_dcache;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_sram_resp_to_core <- mkWire;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_stage2_fb_resp_to_core <- mkWire;
 		Wire#(Bool) wr_stage1_deq <- mkDWire(False);
-		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_enq <- mkWire;
+		Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
+		Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
+		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_enq <- mkWire;
 		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_fb_enq <- mkWire;
 
 
@@ -418,23 +421,25 @@ package nb_dcache;
 			end
 			else begin
 				`logLevel( dcache, 2, $format("DCACHE : Fill buffer miss for req: ", fshow(req)))
-				wr_stage1_fb_deq<= True;
 				wr_stage2_fb_enq<= req;
 			end
 		endrule
 
-		rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq);
+		rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq || wr_stage1_fb_deq_enq || wr_stage1_deq_enq);
+				`logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b stage1_deq_enq:%b ", wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_deq_enq))
+
 			ff_first_stage.deq;
 		endrule
 
 		rule rl_enq_ff_second_stage;
 			`logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
-			wr_stage1_deq<= True;
+			wr_stage1_deq_enq<= True;
 			ff_second_stage.enq(wr_stage2_enq);
 		endrule
 
 		rule rl_fb_enq_ff_second_stage;
 			`logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
+			wr_stage1_fb_deq_enq<= True;
 			ff_second_stage.enq(wr_stage2_fb_enq);
 		endrule
 
@@ -474,7 +479,7 @@ package nb_dcache;
 		//that FIFO entry, and send the next request. If it's a miss, no ack is sent, and in the subsequent
 		//clock cycles, the same request is sent by the MSHR to the fill buffer.
 		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
-		rule rl_MSHR_req_to_fill_buffer;
+		rule rl_MSHR_req;
 			let resp_from_mem= wr_read_resp_from_mem;
 			Maybe#(Bit#(TLog#(mshrsize))) lv_id_to_mshr;
 			if(resp_from_mem.id=='1)
@@ -482,30 +487,35 @@ package nb_dcache;
 			else
 				lv_id_to_mshr= tagged Valid truncate(resp_from_mem.id);
 			let maybe_req_from_mshr<- mshr.req_to_fb(lv_id_to_mshr);		//Receive the request from MSHR corresponding to the rid
-
-			//Send the req to fill buffer and check if it's a hit
+			`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(maybe_req_from_mshr)))
 			if(maybe_req_from_mshr matches tagged Valid .req_from_mshr) begin
-				`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(req_from_mshr)))
-				wr_is_mshr_req_to_fb_valid<= True;
-				let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
-				let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
-				if(fill_buffer_resp matches tagged Valid .fb_data) begin
-					`logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
-					mshr.ack_from_fb;
-					Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
-					if(send_resp) begin
-						Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
-						wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
-																						 prf_index: truncate(req_from_mshr.payload),
-																						 exception: No_exception };
-						wr_is_mshr_resp_to_core<= True;
-					end
-					//else do nothing
+				wr_mshr_req_to_fb<= req_from_mshr;
+			end
+		endrule
+
+		rule rl_MSHR_req_to_fill_buffer;
+			let req_from_mshr= wr_mshr_req_to_fb;
+			`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(req_from_mshr)))
+			wr_is_mshr_req_to_fb_valid<= True;
+			let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
+			//Send the req to fill buffer and check if it's a hit
+			let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
+			if(fill_buffer_resp matches tagged Valid .fb_data) begin
+				`logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
+				mshr.ack_from_fb;
+				Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
+				if(send_resp) begin
+					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
+					wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
+																					 prf_index: truncate(req_from_mshr.payload),
+																					 exception: No_exception };
+					wr_is_mshr_resp_to_core<= True;
 				end
 				//else do nothing
-				else begin
-					`logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
-				end
+			end
+			//else do nothing
+			else begin
+				`logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
 			end
 		endrule
 
@@ -581,6 +591,7 @@ package nb_dcache;
 		//cycle where this rule is getting executed, the request from ff_first_stage is serviced.
 		rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
 			fill_buffer.release_fb;
+			//mshr.fb_released;
 			rg_fb_state<= defaultValue;
 			`logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
 		endrule
