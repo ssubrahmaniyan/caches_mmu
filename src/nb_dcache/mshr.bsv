@@ -62,7 +62,7 @@ package mshr;
 
 		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
-		Wire#(Bit#(TLog#(mshrsize))) wr_curr_req_mshr_id <- mkDWire(0);
+		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 
 		Bool one_mshr_fifo_full= False;
@@ -87,6 +87,7 @@ package mshr;
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
 				else begin
+					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
 			end
@@ -94,23 +95,26 @@ package mshr;
 
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
+			Bool mshr_unallocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
 			`logLevel( dcache, 2, $format("MSHR : New req for line_addr: %h req_addr: %h", req_line_addr, req.addr))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				`logLevel( dcache, 2, $format("MSHR[%d]: Valid: %b line_addr: %h", i, rg_mshr_valid[i], rg_mshr_line_addr[i]))
-				if(rg_mshr_valid[i] && ( req_line_addr == rg_mshr_line_addr[i])) begin
+				if(rg_mshr_valid[i] && (req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
 					mshr_allocated_id= fromInteger(i);
 				end
 				else if(!rg_mshr_valid[i]) begin	//If an MSHR entry is not allocated
+					mshr_unallocated= True;
 					mshr_unallocated_id= fromInteger(i);
 				end
 			end
-			wr_curr_req_mshr_id<= mshr_allocated_id;
+			if(mshr_allocated)
+				wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
 
-			if(!mshr_allocated) begin
+			if(mshr_unallocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
 				wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				ff_mshr[mshr_unallocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
@@ -120,11 +124,14 @@ package mshr;
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
-			else begin
+			else if(mshr_allocated) begin
 				ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
 																											access_size: req.access_size,
 																											payload: req.payload,
 																											origin: req.origin });
+				return tagged Invalid;
+			end
+			else begin
 				return tagged Invalid;
 			end
 		endmethod
@@ -164,7 +171,10 @@ package mshr;
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
 				//so that in the next cycle it will be assigned the value
-				else if(wr_curr_req_mshr_id!=curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
+				else if(wr_curr_req_mshr_id matches tagged Valid .curr_req_rid &&& curr_req_rid==curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
+					`logLevel( dcache, 2, $format("MSHR : New req from ff_second_stage to existing MSHR of id: %d", curr_rid))
+				end
+				else begin
 					rg_curr_fb_id<= tagged Invalid;
 					`logLevel( dcache, 2, $format("MSHR : No more pending requests of id: %d", curr_rid))
 				end
