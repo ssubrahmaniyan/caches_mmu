@@ -42,6 +42,7 @@ package nb_dcache;
 	import DefaultValue :: *;
   `include "Logger.bsv"           // for logging
 	import FIFO::*;
+	import ConfigReg::*;
 	import DefaultValue :: *;
 	import GetPut::*;
   import mem_config::*;
@@ -119,7 +120,8 @@ package nb_dcache;
 	(*conflict_free = "rl_stage2_fb_resp_to_core, rl_sram_resp_to_core"*)
 	(*execution_order = "rl_tag_and_data_array_read_response, rl_stage2_req_to_fb"*)
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
-	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+	(*preempts = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+	(*preempts = "rl_send_read_req_SRAM, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
 	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_get_response_from_TLB, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
 	module mknb_dcache#(parameter String alg)
@@ -177,8 +179,8 @@ package nb_dcache;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
-			data_arr[i] <- mkmem_config1r1w(False);
-			tag_arr[i] <- mkmem_config1r1w(False);
+			data_arr[i] <- mkmem_config1r1w(False, charToString(integerToChar(i))+"data_arr");
+			tag_arr[i] <- mkmem_config1r1w(False, charToString(integerToChar(i))+"tag_arr");
 		end
 
 		//Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val]; 				// data array
@@ -211,14 +213,16 @@ package nb_dcache;
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFO;
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkPipelineFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
-		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
+		Reg#(FB_state) rg_fb_state <- mkConfigReg(defaultValue);
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
+
+		Reg#(Bool) rg_replay_ff_first_stage_req[3] <- mkCReg(3, False);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(Req_from_core#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
@@ -269,7 +273,11 @@ package nb_dcache;
 				rg_initialize_done<= True;
 		endrule
 
-		rule rl_handle_req_from_core;
+		rule rl_disp1;
+      `logLevel( dcache, 2, $format("DCACHE : rg_replay_ff_first_stage_req: %b", rg_replay_ff_first_stage_req[2]))
+		endrule
+
+		rule rl_handle_req_from_core(!rg_replay_ff_first_stage_req[2]);
 			let req= ff_req_from_core.first;
 			Bool is_actual_store= (req.origin == Store_commit);
 			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
@@ -345,8 +353,9 @@ package nb_dcache;
 			Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
 
 			for(Integer i = 0; i<ways_val; i = i+1) begin
-				dataline[i] = data_arr[i].read_response();
-				tag = tag_arr[i].read_response();
+				dataline[i] <- data_arr[i].read_response();
+				tag <- tag_arr[i].read_response();
+      	`logLevel( dcache, 2, $format("DCACHE : Tag[%d]: %h",i, tag))
 				//If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
 				if(tag[tagbits_val]==1) begin
 					Bit#(setbits) dummy_set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
@@ -362,16 +371,14 @@ package nb_dcache;
 				Bit#(TLog#(ways)) hit_way= truncate(way_num);
 				Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
 				let line= dataline[hit_way];
-				let disp_tag= tag_arr[hit_way].read_response;
+				let disp_tag<- tag_arr[hit_way].read_response;
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
       	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, line, disp_tag))
 
 				Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
-				if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
-					wr_stage1_deq<= True;
-				end
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
 					//Get the right offset data and return to core (Even PTW will take it from here)
+					wr_stage1_deq<= True;
 					wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
 																					 prf_index: truncate(req.payload),
 																					 exception: No_exception };
@@ -384,6 +391,9 @@ package nb_dcache;
       		data_arr[hit_way].write(set_index, write_data);
       		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
       		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
+				end
+				else if(req.origin==Store_buffer) begin
+					wr_stage1_deq<= True;
 				end
 			end
 			else if(wr_is_mshr_req_to_fb_valid) begin		//Some pending MSHR request to FB, therefore, send it to the next FIFO
@@ -440,6 +450,7 @@ package nb_dcache;
 		rule rl_fb_enq_ff_second_stage;
 			`logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
 			wr_stage1_fb_deq_enq<= True;
+			rg_replay_ff_first_stage_req[1]<= False;
 			ff_second_stage.enq(wr_stage2_fb_enq);
 		endrule
 
@@ -552,8 +563,8 @@ package nb_dcache;
 			Bit#(ways) dirty;
 
 			for(Integer i = 0; i<ways_val; i = i+1) begin
-				dataline[i] = data_arr[i].read_response();
-				let lv_tag_arr = tag_arr[i].read_response();
+				dataline[i] <- data_arr[i].read_response();
+				let lv_tag_arr <- tag_arr[i].read_response();
 				tag[i]= truncate(lv_tag_arr);					//Lower bits hold the value of the tags
 				valid[i]= lv_tag_arr[tagbits_val];		//Valid bits
 				dirty[i]= lv_tag_arr[tagbits_val+1];	//Dirty bits
@@ -584,6 +595,18 @@ package nb_dcache;
 				`logLevel( dcache, 2, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
 			end
 			rg_fb_state<= Release_FB;
+		endrule
+
+		rule rl_send_read_req_SRAM(rg_fb_state==Write_SRAMs || rg_fb_state==Release_FB);
+			let req= ff_first_stage.first;
+			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+      `logLevel( dcache, 2, $format("DCACHE : Again sending read req to SRAM at index: %d for req: ", set_index, fshow(req)))
+			
+			for(Integer i = 0;i<ways_val;i = i+1) begin
+				data_arr[i].read(set_index);
+				tag_arr[i].read(set_index);
+			end
+			rg_replay_ff_first_stage_req[0]<= True;
 		endrule
 
 		//Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
