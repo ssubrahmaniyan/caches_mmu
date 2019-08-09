@@ -201,7 +201,7 @@ def test1():
 def test2():
     global entrycount
     address=4096
-    for i in range(sets):
+    for i in range(2*sets):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       gold_file.write(hit)
       address=address+(word_size*line_size)
@@ -211,10 +211,6 @@ def test2():
 # after significant delay.
 def test3():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(miss)
@@ -235,18 +231,11 @@ def test3():
     gold_file.write(hit)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 # This test will first fill a line and after significant delay fill up the
 # next line and immediately generate a request for the first line that was
 # filled.
 def test4():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -268,20 +257,12 @@ def test4():
     gold_file.write(hit)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-   
 # This test will first fill a line. After significant delay it will then
 # generate a request for all words within the same line. They should all be hits
 # in the cache.
 def test5():
     global entrycount
     
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(miss)
@@ -298,10 +279,6 @@ def test5():
       entrycount=entrycount+1
       address=address+word_size
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 # this test will generate a cache request and then a IO request
 def test6():
     global entrycount
@@ -331,10 +308,6 @@ def test6():
 def test7():
     global entrycount
   
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(miss)
@@ -354,10 +327,6 @@ def test7():
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(hit)
     entrycount=entrycount+1
-    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
 # the following test will check for a possibility where a LB miss and Cache miss will
 # occur for different addresses (cache array output is registered)
@@ -365,10 +334,6 @@ def test7():
 # Then req a line in diff set which would be miss.
 def test8():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -390,19 +355,11 @@ def test8():
     gold_file.write(miss)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 # this test creates a thrashing scenario on the same set. Total requests =
 # 2*ways
 def test9():
     global entrycount
     
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     for i in range(ways+ways+ways+1):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -410,10 +367,6 @@ def test9():
       entrycount=entrycount+1
       address=address+(word_size*line_size*sets)
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 
 
 # first fill a set completely. Then access the lines in that set from line 0 to 3.
@@ -423,10 +376,6 @@ def test9():
 # gold file w.r.t PLRU
 def test10():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     for i in range(ways):
@@ -482,10 +431,6 @@ def test10():
         gold_file.write(hit)
         entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 
 
 ## test consists of combination of misses and hits and then requesting certain lines.
@@ -494,10 +439,6 @@ def test10():
 def test11():
     global entrycount
    
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     for i in range(ways+1): #  1st miss after filling the set would replace line 3, next_repl would be set to line 0 
         write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -531,11 +472,6 @@ def test11():
     gold_file.write(hit)
     entrycount=entrycount+1
 
-    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 
 # fill a set completely, generate a miss (line 3 would be taken) but prevent lb writing back to cache.
 # generate requests to line 3 which would be hits, they would change next_repl lines.
@@ -545,10 +481,6 @@ def test11():
 
 def test12():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     for i in range(ways+1): # filling set completely + generating a miss
@@ -585,20 +517,12 @@ def test12():
         gold_file.write(hit)
         entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 # fill the set completely, req line 3(a hit), generate 2 misses, request line 3 again
 # this line 3 request should be a hit for PLRU and miss for RROBIN
 # gold file w.r.t RROBIN
 
 def test13():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     for i in range(ways):
@@ -637,10 +561,6 @@ def test13():
         gold_file.write(hit)
         entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 
 #Filling 2 lines in different sets, then requesting the same lines in same order
 #1st req would be a hit in cache and other in lb.
@@ -649,10 +569,6 @@ def test13():
 def test14a():
     global entrycount
     
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(miss)
@@ -678,10 +594,6 @@ def test14a():
     gold_file.write(hit)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-   
 
 #Same idea as test 14a, but after filling the lines, the requests are made in reverse order.
 #1st req would be hit in lb, 2nd one in cache.
@@ -690,10 +602,6 @@ def test14a():
 def test14b():
     global entrycount
     
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(miss)
@@ -717,10 +625,6 @@ def test14b():
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     gold_file.write(hit)
     entrycount=entrycount+1
-    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
  
 
 
@@ -731,10 +635,6 @@ def test14b():
 
 def test15():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4128
     for i in range(ways): # filling set completely
@@ -756,10 +656,6 @@ def test15():
     gold_file.write(miss)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
 ################### DCACHE Tests ##############################################
 
 # test will first generate a store miss to all words of a line. These are
@@ -767,10 +663,6 @@ def test15():
 # verify if the store as succeeded.
 def test16():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     for i in range(line_size):
@@ -782,10 +674,6 @@ def test16():
         gold_file.write(hit)
       address=address+word_size
     
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
     address=4096
     for i in range(line_size):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -796,9 +684,6 @@ def test16():
         gold_file.write(hit)
       address=address+word_size
 
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
 
@@ -808,10 +693,6 @@ def test16():
 # accesses should be a hit.
 def test17():
     global entrycount
-
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     write_to_file(address,write,byte,unsigned,nodelay,nofence)
@@ -833,9 +714,6 @@ def test17():
     entrycount=entrycount+1
     gold_file.write(hit)
 
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
 
@@ -845,11 +723,6 @@ def test18():
 
     global entrycount
 
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-
-    
     address=4128
     write_to_file(address,read,byte,signed,nodelay,nofence)
     entrycount=entrycount+1
@@ -881,9 +754,6 @@ def test18():
     entrycount=entrycount+1
     gold_file.write(hit)
    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
 def test19():
@@ -891,10 +761,6 @@ def test19():
 
     global entrycount
 
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
-    
     address=4096
     for i in range(line_size):
       write_to_file(address,write,word,unsigned,nodelay,nofence)
@@ -962,9 +828,6 @@ def test19():
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
 # This test will thrash a single set with requests which is equal to the number
@@ -974,9 +837,6 @@ def test19():
 # replay of the request
 def test20():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     address=4096
     for i in range(8):
         write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -995,19 +855,12 @@ def test20():
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
 
 def test21():
 
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence)
@@ -1035,12 +888,9 @@ def test21():
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     return 0
 
-test2()
+#test03()
 #test1()
 #test2()
 #test3()
@@ -1057,7 +907,7 @@ test2()
 #test14a()
 #test14b()
 #test15()
-#test16()
+test16()
 #test17()
 #test18()
 #test19()
@@ -1067,7 +917,7 @@ write_to_file(0,endsim,byte,signed,nodelay,nofence)
 gold_file.write(miss)
 entrycount=entrycount+1
 print("Total Entries in Test: "+str(entrycount))
-while entrycount<1024:
+while entrycount<2048:
     gold_file.write(miss)
     write_to_file(0,endsim,byte,signed,nodelay,nofence)
     entrycount=entrycount+1
