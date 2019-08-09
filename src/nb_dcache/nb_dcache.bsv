@@ -42,6 +42,7 @@ package nb_dcache;
 	import DefaultValue :: *;
   `include "Logger.bsv"           // for logging
 	import FIFO::*;
+	import FIFOF::*;
 	import DefaultValue :: *;
 	import GetPut::*;
   import mem_config::*;
@@ -210,7 +211,7 @@ package nb_dcache;
 
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFO;
+		FIFOF#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFOF;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
@@ -337,9 +338,10 @@ package nb_dcache;
 			end
 		endrule
 
-		rule rl_read_tag_response;
+		rule rl_read_tag_response(ff_first_stage.notEmpty);
 			for(Integer i = 0; i<ways_val; i = i+1) begin
 				let temp = tag_arr[i].read_response;
+      	`logLevel( dcache, 2, $format("DCACHE : Stage2 tag[%d] read: %h", i, temp))
 				ff_first_stage_tag[i].enq(temp);
 			end
 		endrule
