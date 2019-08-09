@@ -83,7 +83,7 @@ package nb_dcache_tb;
   let dcache <- mkdcache();
   let testcache<- mktest();
 
-  RegFile#(Bit#(10), Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr ) )) stim <- 
+  RegFile#(Bit#(11), Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr ) )) stim <- 
                                                                       mkRegFileFullLoad("test.mem");
   `ifdef pysimulate
   	RegFile#(Bit#(10), Bit#(1))  e_meta <- mkRegFileFullLoad("gold.mem");
