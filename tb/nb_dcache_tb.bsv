@@ -120,9 +120,6 @@ package nb_dcache_tb;
 
   rule core_req;
     let stime<-$stime;
-		$dumpfile("dcache.vcd");
-		$dumpvars;
-		$dumpon;
     if(stime>=(20)) begin
       let req=stim.sub(truncate(index));
      	index<=index+1;
@@ -256,8 +253,10 @@ package nb_dcache_tb;
     end
     let v_wordbits = valueOf(TLog#(`Wordsize));
     Bit#(19) index = truncate(addr>>v_wordbits);
-    let dat=data.sub(truncate(index));
-		let lv_read_resp=	Read_resp_from_mem {data: dat,
+    let datLSB=data.sub(truncate(index));
+  	let datMSB=data.sub(truncate(index+1));
+		
+		let lv_read_resp=	Read_resp_from_mem {data: {datMSB[63:0], datLSB[63:0]},
 																					id: req.id,
 																					last: (rg_read_burst_count==burst) };
 		dcache.subifc_read_resp_from_mem.put(lv_read_resp);
