@@ -86,7 +86,7 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-				else begin
+				else begin	//An MSHR should be invalidated only after the FB has been released
 					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
@@ -95,7 +95,6 @@ package mshr;
 
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
-			Bool mshr_unallocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
@@ -107,14 +106,13 @@ package mshr;
 					mshr_allocated_id= fromInteger(i);
 				end
 				else if(!rg_mshr_valid[i]) begin	//If an MSHR entry is not allocated
-					mshr_unallocated= True;
 					mshr_unallocated_id= fromInteger(i);
 				end
 			end
 			if(mshr_allocated)
 				wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
 
-			if(mshr_unallocated) begin
+			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
 				wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				ff_mshr[mshr_unallocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
