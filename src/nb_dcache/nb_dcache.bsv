@@ -36,6 +36,12 @@ TODO
 4. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
 	 be directly given through a separate master, or can be muxed with the existing master.
 5. Integrate TLB
+6. Optimize the FIFOs by :
+	 6.1 Changing PipelineFIFOs to normals FIFOs
+	 6.2 Check if release of FB can be done one cycle earlier
+7. Optimize the fill buffer logic by:
+	 7.1 Making rg_valid and rg_fill_buffer as CReg and then in the first cycle perform the MSHR requests.
+	 7.2 If the above results in the critical path, then perform stores in the subsequent cycle. Make sure that generate_masked_data and generate_masked_data_bus do not fall in the same cycle.
 */
 package nb_dcache;
 	import nb_dcache_types::*;          // for local cache types
@@ -148,7 +154,7 @@ package nb_dcache;
 			Add#(i__, datawidth, linewidth),
 			Add#(j__, lineoffset,  paddr),
 			//Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
-			Add#(l__, TLog#(ways), 4)						//required by the mkreplace module
+			Add#(l__, TLog#(ways), 4),						//required by the mkreplace module
 			//Mul#(TDiv#(TAdd#(tagbits, 2), tsram), tsram, TAdd#(tagbits, 2)),
 			//Add#(l__, TDiv#(linewidth, dsram), linewidth),
 			//Add#(m__, TSub#(TAdd#(tagbits, 2), TMul#(tsram, TDiv#(TAdd#(tagbits, 2),tsram))), tsram),
@@ -156,6 +162,10 @@ package nb_dcache;
 			//Add#(o__, TSub#(linewidth, TMul#(dsram, TDiv#(linewidth, dsram))), dsram),
 			//Add#(p__, dsram, linewidth)
 			//Mul#(TDiv#(linewidth, dsram), dsram, linewidth)
+			Mul#(m__, 8, linewidth),						//for generate_masked_data fn in FB
+			Mul#(n__, 16, linewidth),						//for generate_masked_data fn in FB
+			Mul#(o__, 32, linewidth)						//for generate_masked_data fn in FB
+
 		);
 
 		let ways_val= valueOf(ways);
@@ -206,7 +216,7 @@ package nb_dcache;
 		Wire#(Req_from_core#(vaddr, datawidth)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
-		FIFO#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFO;
+		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
 
@@ -215,7 +225,7 @@ package nb_dcache;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
-		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, False);	//TODO has to be reset depending upon when the leaf page is received
+		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, True);	//TODO has to be reset depending upon when the leaf page is received
 																									//		 or when PTW walk indicates so
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
@@ -269,8 +279,10 @@ package nb_dcache;
 				tag_arr[i].write(rg_initialize_index, 'd0);
 			end
 			rg_initialize_index<= rg_initialize_index+1;
-			if(rg_initialize_index==fromInteger(valueOf(setsize)-1))
+			if(rg_initialize_index==fromInteger(valueOf(setsize)-1)) begin
 				rg_initialize_done<= True;
+				rg_cache_busy[0]<= False;
+			end
 		endrule
 
 		rule rl_handle_req_from_core;
@@ -545,7 +557,7 @@ package nb_dcache;
 		//*Caveat: Though the FIFOs, corresponding to the MSHR entry (corresponding to the line address)
 		//				 might be empty, there might be a request pending in the ff_second_stage. This is fine
 		//				 as the fill buffer is invalidated only after 3 clock cycles.
-		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue);
+		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue && ff_write_req_to_mem.notFull);
 			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
 			`logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
 			for(Integer i = 0;i<ways_val;i = i+1) begin
