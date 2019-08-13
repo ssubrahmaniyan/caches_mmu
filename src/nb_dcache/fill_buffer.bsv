@@ -33,6 +33,7 @@ TODO
 3. Instead of combining fill buffer and memory resp first, and then combining mshr_req, first combine
    MSHR req and memory.
 4. Add appropriate always_ready and always_enabled signals
+5. Remove rg_first_resp and use all_invalid signal instead
 */
 package fill_buffer;
 
@@ -56,16 +57,21 @@ package fill_buffer;
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
 	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, lineoffset, wordsize))
 				 provisos(Log#(TDiv#(buswidth,8), busoffset),
+				 					Log#(buswidth, buswidthbits),
 			 						Div#(linewidth, buswidth, num_chunks),
 									Log#(num_chunks, num_chunksbits),
 									Mul#(a__, data, linewidth),
 									Add#(b__, data, linewidth),
 									Add#(c__, buswidth, linewidth),			//for generate_masked_data_bus fn
-									Mul#(d__, buswidth, linewidth)			//for generate_masked_data_bus fn
+									Mul#(d__, buswidth, linewidth),			//for generate_masked_data_bus fn
+									Mul#(e__, 8, linewidth),						//for generate_masked_data fn
+									Mul#(f__, 16, linewidth),						//for generate_masked_data fn
+									Mul#(g__, 32, linewidth)						//for generate_masked_data fn
 								);
 
 		let paddr_val= valueOf(paddr);
 		let busoffset_val= valueOf(busoffset);
+		let buswidthbits_val= valueOf(buswidthbits);
 		let lineoffset_val= valueOf(lineoffset);
 		let num_chunksbits_val= valueOf(num_chunksbits);
 
@@ -79,15 +85,18 @@ package fill_buffer;
 		endfunction
 
 		//TODO Make a UniqueWrapper for this
-		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(busoffset) line_addr, Bit#(2) size);
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(buswidthbits) line_addr, Bit#(2) size);
     	Bit#(data) temp = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
 
     	Bit#(linewidth) mask = zeroExtend(temp);
-			Bit#(wordsize) zeros= 'd0;
-    	mask = mask<<{line_addr,zeros};
-			let writedata= (mask & duplicate(core_data)) |(~mask & sram_data);
+    	mask = mask<<{line_addr, 3'd0};
+			Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+																		size=='d1? duplicate(core_data[15:0]) :
+																		size=='d2? duplicate(core_data[31:0]) :
+																							 duplicate(core_data);
+			let writedata= (mask & data_to_mask) |(~mask & sram_data);
 			return writedata;
 		endfunction
 
@@ -103,6 +112,7 @@ package fill_buffer;
 		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;
 
 		let all_valid= (rg_valid=='1);
+		let all_invalid= (rg_valid=='0);
 
 		//When the first reponse from memory comes for a request, rg_first_resp will be True. In this
 		//case, set the value of rg_first_resp to be False and also set rg_fb_addr as the line address
@@ -144,14 +154,36 @@ package fill_buffer;
 				lv_index= rg_index;
 			end
 
+			//Bit#(buswidth) temp= '1;
+    	//Bit#(linewidth) mask = zeroExtend(temp);
+			//Bit#(TLog#(buswidth)) zeros= 'd0;
+    	//mask = mask<<{lv_index,zeros};
+			//`logLevel( dcache, 2, $format("FB : Mask:%h data_from_mem: %h fb_data: %h ", mask, tpl_1(wr_data_from_mem), rg_fill_buffer))
+			//Bit#(linewidth) write_linedata= (mask & duplicate(tpl_1(wr_data_from_mem))) | (~mask & rg_fill_buffer);
 			//Mix the fill buffer and the data from memory response
 			Bit#(linewidth) write_linedata= generate_masked_data_bus(rg_fill_buffer, tpl_1(wr_data_from_mem), lv_index);
 
+				Bit#(TLog#(num_chunks)) lv_store_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 			//For a store commit combine the above data along with that of the request
-			if(req.origin==Store_commit) begin
+			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1) begin
 				rg_dirty<= 1;
-				Bit#(busoffset) write_reqaddr= req.addr[busoffset_val-1:0];
-				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
+				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+								let sram_data= write_linedata;
+								let core_data= req.payload;
+								let size= req.access_size;
+    						Bit#(data) temp = size[1 : 0] == 0?'hFF : 
+    						                  size[1 : 0] == 1?'hFFFF : 
+    						                  size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+    						Bit#(linewidth) mask = zeroExtend(temp);
+    						mask = mask<<{write_reqaddr, 3'd0};
+								Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+																							size=='d1? duplicate(core_data[15:0]) :
+																							size=='d2? duplicate(core_data[31:0]) :
+																												 duplicate(core_data);
+								write_linedata= (mask & data_to_mask) |(~mask & sram_data);
+			`logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h mask: %h",write_reqaddr, write_linedata, mask))
+				//write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
 			//When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
@@ -169,7 +201,7 @@ package fill_buffer;
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
 			if(req.origin==Store_commit) begin
-				Bit#(busoffset) write_reqaddr= req.addr[busoffset_val-1:0];
+				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
 				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
