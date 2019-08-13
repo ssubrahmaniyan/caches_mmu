@@ -66,6 +66,7 @@ package mem_config;
   import FIFOF::*;
   import SpecialFIFOs::*;
   import Assert::*;
+  `include "Logger.bsv"           // for logging
   
   interface Ifc_mem_config1r1w#( numeric type n_entries, numeric type datawidth, numeric type sram_width);
     method Action write(Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
@@ -73,21 +74,25 @@ package mem_config;
     method Bit#(datawidth) read_response;
   endinterface
   
-  module mkmem_config1r1w#(parameter Bool ramreg) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width));
+  module mkmem_config1r1w#(parameter Bool ramreg, parameter String memname) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width));
 
 		Reg#(Bit#(TLog#(n_entries))) rg_index <-mkReg(0);
-		RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileFull;
+		RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd127);
 
     method Action write(Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
+      `logLevel( dcache, 2, $format(memname,": writing data: %h at index: %d", data, index))
 			ram.upd(index, data);
 		endmethod
 
     method Action read(Bit#(TLog#(n_entries)) index);
+      `logLevel( dcache, 2, $format(memname,"Read from index: %d", index))
 			rg_index<= index;
 		endmethod
 
     method Bit#(datawidth) read_response;
-			return ram.sub(rg_index);
+			Bit#(datawidth) res= ram.sub(rg_index); 
+      //`logLevel( dcache, 2, $format(memname,": Reading data: %h from index: %d", res, rg_index))
+			return res;
 		endmethod
 	endmodule
 //  module mkmem_config1r1w#(parameter Bool ramreg) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width))
