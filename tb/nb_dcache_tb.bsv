@@ -32,6 +32,7 @@ package nb_dcache_tb;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
+	import ConfigReg::*;
   import SpecialFIFOs::*;
   import BRAMCore::*;
   import FIFO::*;
@@ -56,6 +57,7 @@ package nb_dcache_tb;
   `define addr_width 32
   `define ways 4
   `define repl RROBIN
+	`define ReadDelay 10 
 
   (*synthesize*)
   module mktest(Ifc_test_caches#(`Wordsize , `Linesize , `Setsize , `Ways , `Buswidth, `Paddr));
@@ -77,6 +79,8 @@ package nb_dcache_tb;
 	//(*descending_urgency="drain_req, core_req"*)
 	(*descending_urgency="core_resp, core_req"*)
 	//(*descending_urgency="core_req, core_resp"*)
+	(*preempts="core_resp, rl_complete_store_req_to_cbuf"*)
+	(*descending_urgency="core_req, rl_complete_store_req_to_cbuf"*)
   (*synthesize*)
   module mknb_dcache_tb(Empty);
 
@@ -98,15 +102,19 @@ package nb_dcache_tb;
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
+	Reg#(Bit#(32)) rg_read_delay <- mkConfigReg(0);
 
 	CompletionBuffer#(TExp#(`Prf_index), Bit#(TMul#(`Wordsize,8))) cbuf<- mkCompletionBuffer;
 	FIFO#(Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr))) ff_req <-mkSizedFIFO(64);
+	FIFO#(CBToken#(TExp#(`Prf_index))) ff_token <- mkSizedFIFO(64);
   `ifdef pysimulate
     FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(32);
   `endif
 
   `ifdef perf
   Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
+
+
   rule performance_counters;
     Bit#(5) incr = dcache.perf_counters;
     for(Integer i=0;i<5;i=i+1)
@@ -118,7 +126,7 @@ package nb_dcache_tb;
   //  dcache.cache_enable(True);
   //endrule
 
-  rule core_req;
+  rule core_req(!dcache.cache_busy);
     let stime<-$stime;
     if(stime>=(20)) begin
       let req=stim.sub(truncate(index));
@@ -136,12 +144,16 @@ package nb_dcache_tb;
       Bit#(TMul#(`Wordsize, 8)) writedata=truncateLSB(req);
 
 			if(delay==0 && request!=0) begin // // not end of simulation
+				ff_req.enq(req);
 				let new_token<- cbuf.reserve.get;
-        ff_req.enq(req);
 				if(request!='1) begin		//not finish test 
-					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_buffer;
+					//CBToken#(TExp#(`Prf_index)) new_token= unpack(0);
+					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_commit;
 					if(req_origin==Load_buffer) begin
 						writedata= zeroExtend(pack(new_token));
+					end
+					else begin
+						ff_token.enq(new_token);
 					end
 					Bit#(`Paddr) p_addr= request[`Paddr-1:0];
 					Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
@@ -154,20 +166,12 @@ package nb_dcache_tb;
 				end
 				else begin
 					$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
-        	ff_req.enq(req);
 				end
       end
 			else if(request==0) begin
 				$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
         ff_req.enq(req);
 			end
-      //if((delay==0) || request=='1)begin // if not a fence instruction
-      //  //$display($time,"\tTB: Enquiing request: %h",req);
-      //  ff_req.enq(req);
-      //  `ifdef pysimulate
-      //    ff_meta.enq(e_meta.sub(truncate(index)));
-      //  `endif
-      //end
     end
   endrule
 
@@ -197,7 +201,10 @@ package nb_dcache_tb;
     let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,zeroExtend(writedata));
     Bool datafail=False;
   
-    if(truncate(expected_data)!=read_data)begin
+		if(readwrite!='d1) begin
+			$display($time,"\tTB: Store request. No comparison being done.");
+		end
+    else if(truncate(expected_data)!=read_data)begin
         $display($time,"\tTB: Output from cache is wrong for Req: %h",req);
         $display($time,"\tTB: Expected: %h, Received: %h",expected_data,read_data);
         datafail=True;
@@ -231,13 +238,29 @@ package nb_dcache_tb;
 		cbuf.complete.put(tuple2(unpack(resp.prf_index), resp.data));
   endrule
 
-  rule read_mem_request(read_mem_req matches tagged Invalid);
+	rule rl_complete_store_req_to_cbuf;
+		let token= ff_token.first;
+		ff_token.deq;
+		cbuf.complete.put(tuple2(token, 'habcdef));
+	endrule
+
+  rule read_mem_request(read_mem_req matches tagged Invalid &&& rg_read_delay==0);
     let req<- dcache.subifc_read_req_to_mem.get;
     read_mem_req<=tagged Valid req;
     $display($time,"\tTB: Memory Read request",fshow(req));
   endrule
 
-  rule read_mem_resp(read_mem_req matches tagged Valid .req);
+	rule rl_read_delay(isValid(read_mem_req));
+		if(rg_read_delay==`ReadDelay+3)
+			rg_read_delay<= 0;
+		else
+			rg_read_delay<= rg_read_delay +1;
+	endrule
+	rule rl_disp1;
+			$display("######### valid: %b read_Delay: %d", isValid(read_mem_req), rg_read_delay);
+	endrule
+
+  rule read_mem_resp(read_mem_req matches tagged Valid .req &&& rg_read_delay>=`ReadDelay);
 		let addr= req.addr;
 		Bit#(3) size= fromInteger(valueOf(TLog#(`Buswidth)))-3;
 		let burst= (req.is_burst?8'd3:8'd0);
