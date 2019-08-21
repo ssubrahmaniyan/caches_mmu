@@ -74,7 +74,8 @@ package nb_dcache;
 													numeric type id_bits,		//no. of bits of the bus transaction id
 													numeric type mshrsize,	//no. of fully associative entries in the mshr
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
-													numeric type buswidth);	//width of the bus in bits
+													numeric type buswidth,
+													numeric type rob_index);	//width of the bus in bits
 		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8))) 		subifc_req_from_core;
 		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))	subifc_resp_to_core;
 		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8))))	subifc_req_to_ptw;
@@ -82,6 +83,7 @@ package nb_dcache;
 		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      subifc_read_resp_from_mem;
 		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) subifc_write_req_to_mem;
 		interface Put#(Bool)                                        subifc_write_resp_from_mem;
+		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 		method Bool cache_busy;
 	endinterface
 
@@ -131,7 +133,7 @@ package nb_dcache;
 	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_get_response_from_TLB, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
-		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth))
+		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, robindex))
 	// 4,				 3,							 128
 		provisos(
 			Log#(wordsize, wordbits),
@@ -222,14 +224,19 @@ package nb_dcache;
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
 		FIFOF#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFOF;
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFO;
+		FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
+		for(Integer i=0; i<ways_val; i=i+1)
+			ff_first_stage_tag[i]<- mkBypassFIFO;
+		FIFOF#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFOF;
 		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, True);	//TODO has to be reset depending upon when the leaf page is received
-																									//		 or when PTW walk indicates so
+																											//or when PTW walk indicates so
+
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
+		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, False);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(Req_from_core#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
@@ -246,9 +253,7 @@ package nb_dcache;
 		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_enq <- mkWire;
 		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_fb_enq <- mkWire;
 
-		FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
-		for(Integer i=0; i<ways_val; i=i+1)
-			ff_first_stage_tag[i]<- mkBypassFIFO;
+		Wire#(Bool) wr_second_stage_flush_over <- mkDWire(False);
 
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
@@ -420,6 +425,10 @@ package nb_dcache;
 			end
 		endrule
 
+		//This rule fires in the same cycle as rl_tag_and_data_array_read_response if tag match returned
+		//a miss.
+		//This rule sends a req to FB and checks if the response is a hit or not. If it's a hit, an
+		//acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
 		rule rl_stage2_req_to_fb(wr_stage2_req_to_fb);
 			let req= ff_first_stage.first;
 			let fill_buffer_resp<- fill_buffer.request(req); 			//Req and resp to/from fill buffer
@@ -482,19 +491,40 @@ package nb_dcache;
 		rule rl_access_MSHRs;
 			let req= ff_second_stage.first;
 			ff_second_stage.deq;
-			let mshr_resp<- mshr.allocate(req);
-			if(mshr_resp matches tagged Valid .read_id) begin
-				Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
-				Bit#(busoffset) zeros= 'd0;
-				Bit#(paddr) mem_addr= {line_addr, zeros};
-				`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, mem_addr))
-				ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
-																								id: zeroExtend(read_id),
-																								is_burst: True });
+			
+			//If rg_flush is Invalid, or when flush is happening, "req" is after flush in program order
+			let flush= rg_flush[1];
+			if(!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob)) begin
+				let mshr_resp<- mshr.allocate(req);
+				if(mshr_resp matches tagged Valid .read_id) begin
+					Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
+					Bit#(busoffset) zeros= 'd0;
+					Bit#(paddr) mem_addr= {line_addr, zeros};
+					`logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, mem_addr))
+					ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
+																									id: zeroExtend(read_id),
+																									is_burst: True });
+				end
+				else begin
+					`logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
+				end
 			end
 			else begin
-				`logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
+				`logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req))
 			end
+		endrule
+
+		rule rl_reset_rg_flush(rg_flush[0].valid);
+			//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush and also
+			//make cache_busy signal to be low in this cycle.
+			if(!ff_second_stage.notEmpty) begin
+				rg_flush[0].valid<= False;
+				wr_second_stage_flush_over<= True;
+			end
+		endrule
+
+		rule rl_send_flush_to_MSHR;
+			mshr.flush(rg_flush[1]);
 		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
@@ -662,21 +692,32 @@ package nb_dcache;
 			endmethod
 		endinterface;
 
+		//method Action fence;
+		//endmethod
+
+		//Cache is busy if a PTW is ongoing, or, (if a flush is ongoing and entries in ff_second_stage
+		//have not been resolved yet.
 		method Bool cache_busy;
-			return rg_cache_busy[1];
+			return rg_cache_busy[1] || (rg_flush[0].valid && !wr_second_stage_flush_over);
+		endmethod
+
+		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
+			rg_flush[0]<= Flush_type { valid: True,
+																head: head,
+																flush_rob: flush_rob }; 
 		endmethod
 
 	endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Robindex));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
   endmodule
 
 	//(*synthesize*)
-	//module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128));
+	//module mknb_dcache_instance(Ifc_nbdcache#(8, 8, 64, 4, 32, 49, 32, 32, 7, 4, 5, 7, 128, 7));
   //  let ifc();
   //  mknb_dcache#("PLRU") _temp(ifc);
   //  return (ifc);
