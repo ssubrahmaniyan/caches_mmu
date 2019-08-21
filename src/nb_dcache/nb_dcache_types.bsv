@@ -93,4 +93,10 @@ package nb_dcache_types;
 		Bool is_io;
 	} Resp_from_tlb#(numeric type addr) deriving (Bits, Eq, FShow);
 
+	typedef struct {
+		Bool valid;
+		Bit#(rob_index) head;
+		Bit#(rob_index) flush_rob;
+	} Flush_type#(numeric type rob_index) deriving (Bits, Eq, FShow);
+
 endpackage
