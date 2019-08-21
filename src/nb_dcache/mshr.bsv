@@ -40,13 +40,15 @@ package mshr;
 											numeric type linewidthbits,
 											numeric type data,
 											numeric type mshrsize,
-											numeric type mshrfifo_depth);
+											numeric type mshrfifo_depth,
+											numeric type rob_index);
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req);
 		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		method Action ack_from_fb;
+		method Action flush (Flush_type#(rob_index) bundle);
 	endinterface
 
-	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth))
+	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index))
 				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr)
 										//Add#(a__, addr_in_mshr, linewidthbits)		
 			 						 );
@@ -64,6 +66,29 @@ package mshr;
 
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
+
+		//Data structure to maintain ROB ids of the requests. The dimension is mshrsize x mshrfifo_depth x rob_index.
+		//Reg#(Bit#(rob_index)) rg_robs [mshrsize_val][mshrfifo_depth_val];
+		//for(Integer i=0; i<mshrsize_val; i=i+1) begin
+		//	for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
+		//		rg_robs[i][j]<- mkReg(0);
+		//	end
+		//end
+
+		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) ff_robs [mshrsize_val];
+
+		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
+		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
+		//any false response be sent to the processor? If it cannot be stalled, how to combine the data of
+		//enq and initialize method?
+		//Updating ff_valid at one shot would work as it would reset the valid bit to 0 if should_flush
+		//function returns True, and otherwise leave the entry unchanged. Also, whenever any corresponding
+		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, ff_valid is also dequeued.
+		Ifc_MESF_FIFO#(mshrfifo_depth, Bit#(1)) ff_valid [mshrsize_val];
+		for(Integer i=0; i< mshrsize_val; i=i+1) begin
+			ff_robs[i] <- mkSEMF_FIFO();
+			ff_valid[i] <- mkMESF_FIFO();
+		end
 
 		Bool one_mshr_fifo_full= False;
 		Bool mshr_full= True;
@@ -119,6 +144,7 @@ package mshr;
 																												access_size: req.access_size,
 																												payload: req.payload,
 																												origin: req.origin });
+				rg_rob[mshr_unallocated_id][
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
@@ -193,10 +219,13 @@ package mshr;
 			end
 		endmethod
 		
+		method Action flush (Flush_type#(rob_index) bundle);
+			rg_
+		endmethod
 	endmodule
 
   (*synthesize*)
-	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3, 4));
+	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3, 4, 7));
     let ifc();
     mkmshr _temp(ifc);
     return (ifc);
