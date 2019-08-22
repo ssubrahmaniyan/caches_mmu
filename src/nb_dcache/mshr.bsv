@@ -66,28 +66,21 @@ package mshr;
 
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
+		Wire#(Bool) wr_deq_ff_id <- mkWire();
 
-		//Data structure to maintain ROB ids of the requests. The dimension is mshrsize x mshrfifo_depth x rob_index.
-		//Reg#(Bit#(rob_index)) rg_robs [mshrsize_val][mshrfifo_depth_val];
-		//for(Integer i=0; i<mshrsize_val; i=i+1) begin
-		//	for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
-		//		rg_robs[i][j]<- mkReg(0);
-		//	end
-		//end
-
-		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) ff_robs [mshrsize_val];
+		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
 		//any false response be sent to the processor? If it cannot be stalled, how to combine the data of
 		//enq and initialize method?
-		//Updating ff_valid at one shot would work as it would reset the valid bit to 0 if should_flush
+		//Updating cff_valid at one shot would work as it would reset the valid bit to 0 if should_flush
 		//function returns True, and otherwise leave the entry unchanged. Also, whenever any corresponding
-		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, ff_valid is also dequeued.
-		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) ff_valid [mshrsize_val];
+		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, cff_valid is also dequeued.
+		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) cff_valid [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
-			ff_robs[i] <- mkSEMF_FIFO();
-			ff_valid[i] <- mkSESFMI_FIFO();
+			cff_rob[i] <- mkSEMF_FIFO();
+			cff_valid[i] <- mkSESFMI_FIFO();
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -118,6 +111,13 @@ package mshr;
 			end
 		endrule
 
+		rule rl_deq_ff;
+			let id= wr_deq_ff_id;
+			ff_mshr[id].deq;
+			cff_rob[id].deq;
+			cff_valid[id].deq;
+		endrule
+
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req)
 												if(!one_mshr_fifo_full && !mshr_full && !rg_flush[1].valid);
 			Bool mshr_allocated= False;
@@ -145,7 +145,8 @@ package mshr;
 																												access_size: req.access_size,
 																												payload: req.payload,
 																												origin: req.origin });
-				rg_rob[mshr_unallocated_id][
+				cff_rob[mshr_unallocated_id].enq(req.rob);
+				cff_valid[mshr_unallocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
@@ -154,6 +155,8 @@ package mshr;
 																											access_size: req.access_size,
 																											payload: req.payload,
 																											origin: req.origin });
+				cff_rob[mshr_unallocated_id].enq(req.rob);
+				cff_valid[mshr_unallocated_id].enq(1'b1);
 				return tagged Invalid;
 			end
 			else begin
@@ -172,11 +175,18 @@ package mshr;
 				if(rg_mshr_valid[req_rid]) begin
 					rg_curr_fb_id<= tagged Valid req_rid;
 					let fifo_top= ff_mshr[req_rid].first;
-					req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
-																							access_size: fifo_top.access_size,
-																							payload: fifo_top.payload,
-																							origin: fifo_top.origin });
-					`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
+					let cfifo_valid= cff_valid[req_rid].first;
+
+					if(cfifo_valid==1'b1) begin
+						req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+																								access_size: fifo_top.access_size,
+																								payload: fifo_top.payload,
+																								origin: fifo_top.origin });
+						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
+					end
+					else begin
+						wr_deq_ff_id<= req_rid;
+					end
 				end
 				//Else no pending req of current MSHR are pending, hence wait for the fill buffer to get filled
 				else begin
@@ -187,11 +197,18 @@ package mshr;
 				
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
-					req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
-																							access_size: fifo_top.access_size,
-																							payload: fifo_top.payload,
-																							origin: fifo_top.origin });
-					`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
+					let cfifo_valid= cff_valid[curr_rid].first;
+
+					if(cfifo_valid==1'b1) begin
+						req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+																								access_size: fifo_top.access_size,
+																								payload: fifo_top.payload,
+																								origin: fifo_top.origin });
+						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
+					end
+					else begin
+						wr_deq_ff_id<= curr_rid;
+					end
 				end
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
