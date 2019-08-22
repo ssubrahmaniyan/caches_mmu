@@ -84,10 +84,10 @@ package mshr;
 		//Updating ff_valid at one shot would work as it would reset the valid bit to 0 if should_flush
 		//function returns True, and otherwise leave the entry unchanged. Also, whenever any corresponding
 		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, ff_valid is also dequeued.
-		Ifc_MESF_FIFO#(mshrfifo_depth, Bit#(1)) ff_valid [mshrsize_val];
+		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) ff_valid [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
 			ff_robs[i] <- mkSEMF_FIFO();
-			ff_valid[i] <- mkMESF_FIFO();
+			ff_valid[i] <- mkSESFMI_FIFO();
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -118,7 +118,8 @@ package mshr;
 			end
 		endrule
 
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req) if(!one_mshr_fifo_full && !mshr_full);
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req)
+												if(!one_mshr_fifo_full && !mshr_full && !rg_flush[1].valid);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
@@ -220,7 +221,7 @@ package mshr;
 		endmethod
 		
 		method Action flush (Flush_type#(rob_index) bundle);
-			rg_
+			rg_flush[0]<= bundle;
 		endmethod
 	endmodule
 
