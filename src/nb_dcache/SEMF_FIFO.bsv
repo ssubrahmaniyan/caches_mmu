@@ -28,63 +28,81 @@ Details: Unguarded Single Enqueue and Dequeue, multiple first FIFO.
 --------------------------------------------------------------------------------------------------
 */
 package SEMF_FIFO;
-	import SpecialFIFOS::mkSCtr;
+	import Vector::*;
+	import SCtr::*;
 
-	interface Ifc_SEMF_FIFO#(numeric type n, type a);
+	interface Ifc_SEMF_FIFO#(numeric type depth, type a);
 		method Action enq(a item);
 		method Action deq;
-		method Vector#(n, a) contents;
-		method clear;
+		method Vector#(depth, a) contents;
+		method Action clear;
 	endinterface
 
-	module mkSEMF_FIFO#(a dflt)(Ifc_SEMF_FIFO#(n,a));
-   provisos (Bits#(a,sa));
 
-   // If the queue contains n elements, they are in q[0]..q[n-1].  The head of
-   // the queue (the "first" element) is in q[0], the tail in q[n-1].
+	(*preempts="clear, decCtr"*)
+	(*preempts="clear, incCtr"*)
+	module mkSEMF_FIFO#(a dflt)(Ifc_SEMF_FIFO#(depth,a))
+	provisos (Bits#(a,sa));
+		let n= valueOf(depth);
+		// If the queue contains n elements, they are in q[0]..q[n-1].  The head of
+		// the queue (the "first" element) is in q[0], the tail in q[n-1].
+	
+		Reg#(a) q[n];
+		for (Integer i=0; i<n; i=i+1)
+			q[i] <- mkReg(dflt);
 
-   Reg#(a) q[n];
-   for (Integer i=0; i<n; i=i+1)
-      q[i] <- mkReg(dflt);
-   SCounter cntr <- mkSCounter(n);
+		Vector#(depth, Reg#(a)) vec_of_regs= newVector();
+		for(Integer i=0; i<n; i=i+1) begin
+			vec_of_regs[i]= asReg(q[i]);
+		end
 
-   PulseWire enqueueing <- mkPulseWire;
-   Wire#(a)      x_wire <- mkWire;
-   PulseWire dequeueing <- mkPulseWire;
-
-   let empty = cntr.isEq(0);
-   let full  = cntr.isEq(n);
-
-   rule incCtr (enqueueing && !dequeueing);
-      cntr.incr;
-      cntr.setNext(x_wire, q);
-   endrule
-   rule decCtr (dequeueing && !enqueueing);
-      for (Integer i=0; i<n; i=i+1)
-	 q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
-      cntr.decr;
-   endrule
-   rule both (dequeueing && enqueueing);
-      for (Integer i=0; i<n; i=i+1)
-	 if (!cntr.isEq(i + 1)) q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
-      cntr.set(x_wire, q);
-   endrule
-
-   method Action deq;
-      if (!empty) dequeueing.send;
-   endmethod
-
-   method Action enq(x) if (!full);
-      enqueueing.send;
-      x_wire <= x;
-   endmethod
-
-	 method Vector#(n, a) contents;
-      return unpack(pack(q));
-   endmethod
-
-   method Action clear;
-      cntr.clear;
-   endmethod
+		SCounter cntr <- mkSCounter(n);
+	
+		PulseWire enqueueing <- mkPulseWire;
+		Wire#(a)		x_wire <- mkWire;
+		PulseWire dequeueing <- mkPulseWire;
+	
+		let empty = cntr.isEq(0);
+		let full  = cntr.isEq(n);
+	
+		rule incCtr (enqueueing && !dequeueing);
+			cntr.incr;
+			cntr.setNext(x_wire, q);
+		endrule
+		rule decCtr (dequeueing && !enqueueing);
+			for (Integer i=0; i<n; i=i+1)
+				q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
+			cntr.decr;
+		endrule
+		rule both (dequeueing && enqueueing);
+			for (Integer i=0; i<n; i=i+1)
+				if (!cntr.isEq(i + 1)) q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
+			cntr.set(x_wire, q);
+		endrule
+	
+		method Action deq;
+			if (!empty) dequeueing.send;
+		endmethod
+	
+		method Action enq(x) if (!full);
+			enqueueing.send;
+			x_wire <= x;
+		endmethod
+	
+		method Vector#(depth, a) contents;
+			return readVReg(vec_of_regs);
+		endmethod
+	
+		method Action clear;
+			cntr.clear;
+		endmethod
 	endmodule
+
+  (*synthesize*)
+	module mkSEMF_inst(Ifc_SEMF_FIFO#(3, Bit#(23)));
+    let ifc();
+    mkSEMF_FIFO#(0) _temp(ifc);
+    return (ifc);
+  endmodule
+
 endpackage
