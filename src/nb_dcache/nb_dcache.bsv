@@ -253,8 +253,6 @@ package nb_dcache;
 		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_enq <- mkWire;
 		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_fb_enq <- mkWire;
 
-		Wire#(Bool) wr_second_stage_flush_over <- mkDWire(False);
-
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
     	Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
@@ -493,7 +491,7 @@ package nb_dcache;
 			ff_second_stage.deq;
 			
 			//If rg_flush is Invalid, or when flush is happening, "req" is after flush in program order
-			let flush= rg_flush[1];
+			let flush= rg_flush[0];
 			if(!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob)) begin
 				let mshr_resp<- mshr.allocate(req);
 				if(mshr_resp matches tagged Valid .read_id) begin
@@ -515,15 +513,14 @@ package nb_dcache;
 		endrule
 
 		rule rl_reset_rg_flush(rg_flush[0].valid);
-			//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush and also
-			//make cache_busy signal to be low in this cycle.
+			//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
 			if(!ff_second_stage.notEmpty) begin
 				rg_flush[0].valid<= False;
-				wr_second_stage_flush_over<= True;
 			end
 		endrule
 
-		rule rl_send_flush_to_MSHR;
+		//Initiate flush of MSHRs
+		rule rl_send_flush_to_MSHR(rg_flush[0].valid==False && rg_flush[1].valid==True);
 			mshr.flush(rg_flush[1]);
 		endrule
 
@@ -698,7 +695,7 @@ package nb_dcache;
 		//Cache is busy if a PTW is ongoing, or, (if a flush is ongoing and entries in ff_second_stage
 		//have not been resolved yet.
 		method Bool cache_busy;
-			return rg_cache_busy[1] || (rg_flush[0].valid && !wr_second_stage_flush_over);
+			return rg_cache_busy[1];
 		endmethod
 
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
