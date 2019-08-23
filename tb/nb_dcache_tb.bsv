@@ -103,6 +103,7 @@ package nb_dcache_tb;
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 	Reg#(Bit#(32)) rg_read_delay <- mkConfigReg(0);
+	Reg#(Bit#(`Rob_index)) rg_rob <- mkReg(0);
 
 	CompletionBuffer#(TExp#(`Prf_index), Bit#(TMul#(`Wordsize,8))) cbuf<- mkCompletionBuffer;
 	FIFO#(Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr))) ff_req <-mkSizedFIFO(64);
@@ -157,11 +158,13 @@ package nb_dcache_tb;
 					end
 					Bit#(`Paddr) p_addr= request[`Paddr-1:0];
 					Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
-					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8)) temp_req= Req_from_core{ 	addr: lv_addr,
+					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index) temp_req= Req_from_core{ addr: lv_addr,
 																																								access_size: truncate(size),
 																																								payload: writedata,
-																																								origin: req_origin };
+																																								origin: req_origin,
+																																								rob: rg_rob};
 					$display($time,"\tTB: Sending Req to Core: ", fshow(temp_req));
+					rg_rob<= rg_rob+1;
         	dcache.subifc_req_from_core.put(temp_req);
 				end
 				else begin
