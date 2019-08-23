@@ -30,19 +30,18 @@ Details: Unguarded Single Enqueue and Dequeue, multiple first FIFO.
 package SESFMI_FIFO;
 	import Vector::*;
 	import SCtr::*;
+	import ConfigReg::*;
 
 	interface Ifc_SESFMI_FIFO#(numeric type depth, type a);
 		method Action enq(a item);
 		method Action deq;
 		method a first;
+		method Vector#(depth, a) contents;
 		method Action initialize(Vector#(depth,a) init);
 		method Action clear;
 	endinterface
 
 
-	(*preempts="clear, decCtr"*)
-	(*preempts="clear, incCtr"*)
-	(*preempts="initialize,(incCtr, decCtr, both)"*)
 	module mkSESFMI_FIFO#(a dflt)(Ifc_SESFMI_FIFO#(depth,a))
 	provisos (Bits#(a,sa));
 		let n= valueOf(depth);
@@ -51,7 +50,7 @@ package SESFMI_FIFO;
 	
 		Reg#(a) q[n];
 		for (Integer i=0; i<n; i=i+1)
-			q[i] <- mkReg(dflt);
+			q[i] <- mkConfigReg(dflt);
 
 		Vector#(depth, Reg#(a)) vec_of_regs= newVector();
 		for(Integer i=0; i<n; i=i+1) begin
@@ -64,25 +63,31 @@ package SESFMI_FIFO;
 		Wire#(a)		x_wire <- mkWire;
 		PulseWire dequeueing <- mkPulseWire;
 	
+		//TODO replace with mkPulseWire
+		Wire#(Bool) wr_clear <- mkDWire(False);
+		Wire#(Bool) wr_initialize <- mkDWire(False);
+
 		let empty = cntr.isEq(0);
 		let full  = cntr.isEq(n);
+
+		let can_fire= !wr_clear && !wr_initialize;
 	
-		rule incCtr (enqueueing && !dequeueing);
+		rule incCtr (enqueueing && !dequeueing && can_fire);
 			cntr.incr;
 			cntr.setNext(x_wire, q);
 		endrule
-		rule decCtr (dequeueing && !enqueueing);
+		rule decCtr (dequeueing && !enqueueing && can_fire);
 			for (Integer i=0; i<n; i=i+1)
 				q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
 			cntr.decr;
 		endrule
-		rule both (dequeueing && enqueueing);
+		rule both (dequeueing && enqueueing && can_fire);
 			for (Integer i=0; i<n; i=i+1)
 				if (!cntr.isEq(i + 1)) q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
 			cntr.set(x_wire, q);
 		endrule
 	
-		method Action deq;
+		method Action deq if(!wr_initialize);
 			if (!empty) dequeueing.send;
 		endmethod
 	
@@ -90,18 +95,25 @@ package SESFMI_FIFO;
 			return q[0];
 		endmethod
 	
-		method Action enq(x) if (!full);
+		method Action enq(x) if (!full && !wr_initialize);
 			enqueueing.send;
 			x_wire <= x;
 		endmethod
 	
 		method Action initialize(Vector#(depth,a) init);
-			for(Integer i=0; i<n; i=i+1)
+			for(Integer i=0; i<n; i=i+1) begin
 				q[i]<= init[i];
+			end
+			wr_initialize<= True;
+		endmethod
+	
+		method Vector#(depth, a) contents;
+			return readVReg(vec_of_regs);
 		endmethod
 	
 		method Action clear;
 			cntr.clear;
+			wr_clear<= True;
 		endmethod
 	endmodule
 

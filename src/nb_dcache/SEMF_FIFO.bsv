@@ -39,8 +39,6 @@ package SEMF_FIFO;
 	endinterface
 
 
-	(*preempts="clear, decCtr"*)
-	(*preempts="clear, incCtr"*)
 	module mkSEMF_FIFO#(a dflt)(Ifc_SEMF_FIFO#(depth,a))
 	provisos (Bits#(a,sa));
 		let n= valueOf(depth);
@@ -61,15 +59,18 @@ package SEMF_FIFO;
 		PulseWire enqueueing <- mkPulseWire;
 		Wire#(a)		x_wire <- mkWire;
 		PulseWire dequeueing <- mkPulseWire;
+
+		//TODO replace with mkPulseWire
+		Wire#(Bool) wr_clear <- mkDWire(False);
 	
 		let empty = cntr.isEq(0);
 		let full  = cntr.isEq(n);
 	
-		rule incCtr (enqueueing && !dequeueing);
+		rule incCtr (enqueueing && !dequeueing && !wr_clear);
 			cntr.incr;
 			cntr.setNext(x_wire, q);
 		endrule
-		rule decCtr (dequeueing && !enqueueing);
+		rule decCtr (dequeueing && !enqueueing && !wr_clear);
 			for (Integer i=0; i<n; i=i+1)
 				q[i] <= (i==(n - 1) ? dflt : q[i + 1]);
 			cntr.decr;
@@ -95,6 +96,7 @@ package SEMF_FIFO;
 	
 		method Action clear;
 			cntr.clear;
+			wr_clear<= True;
 		endmethod
 	endmodule
 
