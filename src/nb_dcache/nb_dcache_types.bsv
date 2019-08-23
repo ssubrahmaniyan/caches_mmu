@@ -47,12 +47,14 @@ package nb_dcache_types;
 		Bit#(2) access_size;
 		Bit#(data) payload;
 		Origin origin;
-	} Req_from_core#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(Req_from_core#(addr, data));
+		Bit#(rob_index) rob;
+	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Req_from_core#(addr, data, rob_index));
 		defaultValue= Req_from_core {	addr: 'd0,
 																	access_size: 'd3,
 																	payload: 'd0,
-																	origin: defaultValue }; 
+																	origin: defaultValue,
+																	rob: 'd0}; 
 	endinstance
 	
 	typedef enum {No_exception, Bus_error, Access_fault} DCache_exception deriving (Bits, Eq, FShow);
@@ -98,5 +100,23 @@ package nb_dcache_types;
 		Bit#(rob_index) head;
 		Bit#(rob_index) flush_rob;
 	} Flush_type#(numeric type rob_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Flush_type#(rob_index));
+		defaultValue= Flush_type {	valid: False,
+																head: ?,
+																flush_rob: ?};
+	endinstance
 
+	typedef struct {
+		Bit#(addr) addr;
+		Bit#(2) access_size;
+		Bit#(data) payload;
+		Origin origin;
+	} MSHR_Req#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(MSHR_Req#(addr, data));
+		defaultValue= MSHR_Req {	addr: 'd0,
+															access_size: 'd3,
+															payload: 'd0,
+															origin: defaultValue }; 
+	endinstance
+	
 endpackage

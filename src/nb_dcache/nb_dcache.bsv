@@ -76,13 +76,13 @@ package nb_dcache;
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
-		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8))) 		subifc_req_from_core;
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))	subifc_resp_to_core;
-		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8))))	subifc_req_to_ptw;
-		interface Get#(Read_req_to_mem#(paddr, id_bits))            subifc_read_req_to_mem;
-		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      subifc_read_resp_from_mem;
+		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index)) 				 subifc_req_from_core;
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 subifc_resp_to_core;
+		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8), rob_index)))				 subifc_req_to_ptw;
+		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 subifc_read_req_to_mem;
+		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 subifc_read_resp_from_mem;
 		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) subifc_write_req_to_mem;
-		interface Put#(Bool)                                        subifc_write_resp_from_mem;
+		interface Put#(Bool)                                        								 subifc_write_resp_from_mem;
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 		method Bool cache_busy;
 	endinterface
@@ -131,9 +131,10 @@ package nb_dcache;
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
 	(*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
 	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_get_response_from_TLB, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
+	(*conflict_free="rl_MSHR_req_to_fill_buffer, mshr.rl_deq_ff"*)
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
-		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, robindex))
+		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
 	// 4,				 3,							 128
 		provisos(
 			Log#(wordsize, wordbits),
@@ -186,7 +187,7 @@ package nb_dcache;
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
 		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize) fill_buffer <-mkfill_buffer;
-		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth) mshr <- mkmshr;
+		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
@@ -208,14 +209,14 @@ package nb_dcache;
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
-		FIFO#(Req_from_core#(vaddr, datawidth)) ff_req_from_core <- mkBypassFIFO;
+		FIFO#(Req_from_core#(vaddr, datawidth, rob_index)) ff_req_from_core <- mkBypassFIFO;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
 		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
 		//to the cache. Now, this request will be a hit in the TLB. This FIFO is used to send the req to
 		//the PTW module
-		Wire#(Req_from_core#(vaddr, datawidth)) wr_req_to_ptw <- mkWire;
+		Wire#(Req_from_core#(vaddr, datawidth, rob_index)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
@@ -223,12 +224,12 @@ package nb_dcache;
 
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
-		FIFOF#(Req_from_core#(paddr, datawidth)) ff_first_stage <- mkPipelineFIFOF;
+		FIFOF#(Req_from_core#(paddr, datawidth, rob_index)) ff_first_stage <- mkPipelineFIFOF;
 		FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
 		for(Integer i=0; i<ways_val; i=i+1)
 			ff_first_stage_tag[i]<- mkBypassFIFO;
-		FIFOF#(Req_from_core#(paddr, datawidth)) ff_second_stage <- mkFIFOF;
-		FIFO#(Req_from_core#(paddr, datawidth)) ff_io_request <- mkFIFO;
+		FIFOF#(Req_from_core#(paddr, datawidth, rob_index)) ff_second_stage <- mkFIFOF;
+		FIFO#(Req_from_core#(paddr, datawidth, rob_index)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, True);	//TODO has to be reset depending upon when the leaf page is received
 																											//or when PTW walk indicates so
@@ -236,10 +237,10 @@ package nb_dcache;
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
-		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, False);
+		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
-		Wire#(Req_from_core#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
+		Wire#(MSHR_Req#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
 		Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
 		Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
@@ -250,8 +251,8 @@ package nb_dcache;
 		Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
-		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_enq <- mkWire;
-		Wire#(Req_from_core#(paddr, datawidth)) wr_stage2_fb_enq <- mkWire;
+		Wire#(Req_from_core#(paddr, datawidth, rob_index)) wr_stage2_enq <- mkWire;
+		Wire#(Req_from_core#(paddr, datawidth, rob_index)) wr_stage2_fb_enq <- mkWire;
 
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
@@ -274,6 +275,30 @@ package nb_dcache;
     	line = line>>{line_offset,3'd0};
 			Bit#(datawidth) readdata= truncate(line) & mask;
 			return readdata;
+		endfunction
+
+		function MSHR_Req#(addrwidth, datawidth) convertToMSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index) req);
+			return MSHR_Req { addr: req.addr,
+												access_size: req.access_size,
+												payload: req.payload,
+												origin: req.origin };
+		endfunction
+
+		function Bool should_flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob, Bit#(rob_index) rob);
+			Bool lv_should_flush= False;
+			Bool cond1= (rob>(flush_rob+1));
+			Bool cond2= (rob<(head-1) && head!=0);
+
+			if(head<flush_rob) begin
+				if( cond1 || cond2 ) begin
+					lv_should_flush= True;
+				end
+			end
+			else if(cond1 && cond2) begin
+				lv_should_flush= True;
+			end
+
+			return lv_should_flush;
 		endfunction
 
 		rule rl_initialize(!rg_initialize_done);
@@ -305,10 +330,11 @@ package nb_dcache;
 		rule rl_get_response_from_TLB;
 			let orig_req= ff_req_from_core.first;
 
-			Req_from_core#(paddr, datawidth) req= Req_from_core {	addr: orig_req.addr[paddr_val-1:0],
-																														access_size: orig_req.access_size,
-																														payload: orig_req.payload,
-																														origin: orig_req.origin };
+			Req_from_core#(paddr, datawidth, rob_index) req= Req_from_core {	addr: orig_req.addr[paddr_val-1:0],
+																																				access_size: orig_req.access_size,
+																																				payload: orig_req.payload,
+																																				origin: orig_req.origin,
+																																				rob: orig_req.rob };
 			ff_req_from_core.deq;
 			if(req.origin!=PTW) begin
 				let resp_from_tlb= tlb.response;
@@ -346,10 +372,6 @@ package nb_dcache;
 			else begin	//PTW request
       	`logLevel( dcache, 2, $format("DCACHE : Req from PTW: ", fshow(req)))
 				ff_first_stage.enq(req);
-				//ff_first_stage.enq(Req_from_core {addr: truncate(req.addr),
-				//																	access_size: req.access_size,
-				//																	payload: req.payload,
-				//																	origin: req.origin });
 			end
 		endrule
 
@@ -429,7 +451,7 @@ package nb_dcache;
 		//acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
 		rule rl_stage2_req_to_fb(wr_stage2_req_to_fb);
 			let req= ff_first_stage.first;
-			let fill_buffer_resp<- fill_buffer.request(req); 			//Req and resp to/from fill buffer
+			let fill_buffer_resp<- fill_buffer.request(convertToMSHR_Req(req)); 			//Req and resp to/from fill buffer
 			//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
 			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
 			//Here, fb_data is the complete fill buffer line
@@ -443,8 +465,8 @@ package nb_dcache;
 				Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_resp_to_core<= Resp_to_core {	data: data_to_core,
-																									prf_index: truncate(req.payload),
-																									exception: No_exception };
+																											prf_index: truncate(req.payload),
+																											exception: No_exception };
 				end
 				//else do nothing
 			end
@@ -491,7 +513,7 @@ package nb_dcache;
 			ff_second_stage.deq;
 			
 			//If rg_flush is Invalid, or when flush is happening, "req" is after flush in program order
-			let flush= rg_flush[0];
+			let flush= rg_flush[1];
 			if(!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob)) begin
 				let mshr_resp<- mshr.allocate(req);
 				if(mshr_resp matches tagged Valid .read_id) begin
@@ -508,7 +530,7 @@ package nb_dcache;
 				end
 			end
 			else begin
-				`logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req))
+				//`logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req))
 			end
 		endrule
 
@@ -519,10 +541,6 @@ package nb_dcache;
 			end
 		endrule
 
-		//Initiate flush of MSHRs
-		rule rl_send_flush_to_MSHR(rg_flush[0].valid==False && rg_flush[1].valid==True);
-			mshr.flush(rg_flush[1]);
-		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
@@ -699,15 +717,17 @@ package nb_dcache;
 		endmethod
 
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
-			rg_flush[0]<= Flush_type { valid: True,
-																head: head,
-																flush_rob: flush_rob }; 
+			let flush_signal= Flush_type {valid: True,
+																		head: head,
+																		flush_rob: flush_rob }; 
+			rg_flush[0]<= flush_signal;
+			mshr.flush(flush_signal);
 		endmethod
 
 	endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Robindex));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);

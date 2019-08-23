@@ -35,6 +35,9 @@ package mshr;
 	import FIFO::*;
 	import FIFOF::*;
 	import ConfigReg::*;
+	import Vector::*;
+	import SEMF_FIFO::*;
+	import SESFMI_FIFO::*;
 
 	interface Ifc_mshr#(numeric type paddr,
 											numeric type linewidthbits,
@@ -42,12 +45,14 @@ package mshr;
 											numeric type mshrsize,
 											numeric type mshrfifo_depth,
 											numeric type rob_index);
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req);
-		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data, rob_index) req);
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
 	endinterface
 
+	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
+	//(*preempts= "cff_valid.initialize, (cff_valid.incCtr, cff_valid.decCtr, cff_valid.both) "*)
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index))
 				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr)
 										//Add#(a__, addr_in_mshr, linewidthbits)		
@@ -57,16 +62,35 @@ package mshr;
 		let mshrsize_val= valueOf(mshrsize);
 		let mshrfifo_depth_val= valueOf(mshrfifo_depth);
 
+		function Bool should_flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob, Bit#(rob_index) rob);
+			Bool lv_should_flush= False;
+			Bool cond1= (rob>(flush_rob+1));
+			Bool cond2= (rob<(head-1) && head!=0);
+
+			if(head<flush_rob) begin
+				if( cond1 || cond2 ) begin
+					lv_should_flush= True;
+				end
+			end
+			else if(cond1 && cond2) begin
+				lv_should_flush= True;
+			end
+
+			return lv_should_flush;
+		endfunction
+
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
 		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
 
-		FIFOF#(Req_from_core#(linewidthbits, data)) ff_mshr [mshrsize_val];
+		FIFOF#(MSHR_Req#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
-		Wire#(Bool) wr_deq_ff_id <- mkWire();
+		Wire#(Bit#(TLog#(mshrsize))) wr_deq_ff_id <- mkWire();
+
+		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
 
 		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
 
@@ -79,8 +103,9 @@ package mshr;
 		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, cff_valid is also dequeued.
 		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) cff_valid [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
-			cff_rob[i] <- mkSEMF_FIFO();
-			cff_valid[i] <- mkSESFMI_FIFO();
+			//(*preempts= "flush, (cff_valid[i].incCtr, cff_valid[i].decCtr, cff_valid[i].both) "*)
+			cff_rob[i] <- mkSEMF_FIFO(0);
+			cff_valid[i] <- mkSESFMI_FIFO(0);
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -118,7 +143,7 @@ package mshr;
 			cff_valid[id].deq;
 		endrule
 
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data) req)
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data, rob_index) req)
 												if(!one_mshr_fifo_full && !mshr_full && !rg_flush[1].valid);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
@@ -141,20 +166,20 @@ package mshr;
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
 				wr_allocate_id<= tagged Valid mshr_unallocated_id;
-				ff_mshr[mshr_unallocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
-																												access_size: req.access_size,
-																												payload: req.payload,
-																												origin: req.origin });
+				ff_mshr[mshr_unallocated_id].enq(MSHR_Req {	addr: req.addr[linewidthbits_val-1:0],
+																										access_size: req.access_size,
+																										payload: req.payload,
+																										origin: req.origin });
 				cff_rob[mshr_unallocated_id].enq(req.rob);
 				cff_valid[mshr_unallocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
 			else if(mshr_allocated) begin
-				ff_mshr[mshr_allocated_id].enq(Req_from_core {addr: req.addr[linewidthbits_val-1:0],
-																											access_size: req.access_size,
-																											payload: req.payload,
-																											origin: req.origin });
+				ff_mshr[mshr_allocated_id].enq(MSHR_Req {	addr: req.addr[linewidthbits_val-1:0],
+																									access_size: req.access_size,
+																									payload: req.payload,
+																									origin: req.origin });
 				cff_rob[mshr_unallocated_id].enq(req.rob);
 				cff_valid[mshr_unallocated_id].enq(1'b1);
 				return tagged Invalid;
@@ -167,8 +192,8 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Maybe#(Req_from_core#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
-			Maybe#(Req_from_core#(paddr, data)) req= tagged Invalid;
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+			Maybe#(MSHR_Req#(paddr, data)) req= tagged Invalid;
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
@@ -178,10 +203,10 @@ package mshr;
 					let cfifo_valid= cff_valid[req_rid].first;
 
 					if(cfifo_valid==1'b1) begin
-						req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
-																								access_size: fifo_top.access_size,
-																								payload: fifo_top.payload,
-																								origin: fifo_top.origin });
+						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+																					access_size: fifo_top.access_size,
+																					payload: fifo_top.payload,
+																					origin: fifo_top.origin });
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
@@ -200,10 +225,10 @@ package mshr;
 					let cfifo_valid= cff_valid[curr_rid].first;
 
 					if(cfifo_valid==1'b1) begin
-						req= tagged Valid (Req_from_core {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
-																								access_size: fifo_top.access_size,
-																								payload: fifo_top.payload,
-																								origin: fifo_top.origin });
+						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+																					access_size: fifo_top.access_size,
+																					payload: fifo_top.payload,
+																					origin: fifo_top.origin });
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
@@ -239,6 +264,17 @@ package mshr;
 		
 		method Action flush (Flush_type#(rob_index) bundle);
 			rg_flush[0]<= bundle;
+			for(Integer i=0; i<mshrsize_val; i=i+1) begin
+				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
+				Vector#(mshrfifo_depth,Bit#(rob_index)) cff_rob_id= cff_rob[i].contents;
+
+				for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
+					if(should_flush(bundle.head, bundle.flush_rob, cff_rob_id[j])) begin
+						valid[j]=0;
+					end
+				end
+				cff_valid[i].initialize(valid);
+			end
 		endmethod
 	endmodule
 
