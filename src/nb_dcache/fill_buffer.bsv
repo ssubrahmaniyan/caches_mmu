@@ -46,7 +46,7 @@ package fill_buffer;
 
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
 															numeric type linewidth, numeric type lineoffset, numeric type wordsize);
-		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
 		method Action release_fb;
 		method Bool can_release;
@@ -108,7 +108,7 @@ package fill_buffer;
 		Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fb_addr <- mkConfigReg(0);
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
 
-		Wire#(Req_from_core#(paddr, data)) wr_req <- mkDWire(defaultValue);
+		Wire#(MSHR_Req#(paddr, data)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;
 
 		let all_valid= (rg_valid=='1);
@@ -211,7 +211,7 @@ package fill_buffer;
 		//entry is invalid. This does not matter however as this method returns "tagged Invalid" as the 
 		//result, and in the subsequent clock cycles, the same request will again be sent by the MSHR.
 		//For a request from ff_first_stage, they will get enqueued to ff_second_stage.
-		method ActionValue#(Maybe#(Bit#(linewidth))) request(Req_from_core#(paddr, data) req);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
 			wr_req<= req;
 			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
