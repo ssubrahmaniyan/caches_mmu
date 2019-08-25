@@ -31,8 +31,12 @@ for lineno,line in enumerate(paramsfile):
         line=line.split()
         mshrsize=int(line[2])
       if 'Repl' in line:
-          line=line.split()
-          repl=line[2]
+        line=line.split()
+        repl=line[2]
+      if 'Rob_index' in line:
+        line=line.split()
+        rob_id_size=int(line[2])
+
 repl='RANDOM'
 
 print('Generating test for Following Parameters: ')
@@ -43,6 +47,7 @@ print('line_size: '+str(line_size))
 print('Addr_width: '+str(addr_width))
 print('Bus_width: '+str(bus_width))
 print('Repl_Policy: '+str(repl))
+print('Rob_index size: '+str(rob_id_size))
 
 
 
@@ -73,7 +78,7 @@ hit='1\n'
 global entrycount
 entrycount=0
 
-def write_to_file(addr,readwrite, size, sign, delaycycle, fencecycle):
+def write_to_file(addr,readwrite, size, sign, delaycycle, fencecycle, rob_id):
 
 
     data = random.randrange(4294967296)
@@ -112,16 +117,16 @@ def write_to_file(addr,readwrite, size, sign, delaycycle, fencecycle):
     # test format:
     # read/write : size: sign: delay/nodelay : Fence/noFence : Null : Addr
     upperbits=((rw<<6) | (sg<<5) | (s<<3) | (d<<2) | (f<<1) | f)
-    s = str(hex( (upperbits<<addr_width) | addr | (data<<(addr_width+8))))
+    s = str(hex( addr | (upperbits<<addr_width) | (rob_id<<(addr_width+8)) | (data<<(addr_width+8+rob_id_size))))
     test_file.write(s[2:].zfill(nibbles)+'\n')
     return 0
 
-
+rob_index=0
 # This is a dummy test to verify if the nb_dcache verification framework works
 def test0():
     global entrycount
     address=4096
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -130,11 +135,11 @@ def test0():
 def test01():
     global entrycount
     address=4096
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     address=address+(bus_width//8)
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -143,11 +148,11 @@ def test01():
 def test02():
     global entrycount
     address=4096
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     address=address+(word_size*line_size)
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -156,21 +161,21 @@ def test02():
 def test03():
     global entrycount
     address=4096
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
     address1=address
     address=address+(word_size*line_size)
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     address=address1
     address=address+(bus_width//8)
-    write_to_file(address,read,dword,unsigned,nodelay,nofence)
+    write_to_file(address,read,dword,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -179,11 +184,11 @@ def test03():
 def test04():
     global entrycount
     address=4096+4
-    write_to_file(address,write,word,unsigned,nodelay,nofence)
+    write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -193,12 +198,12 @@ def test04():
 # buffer if present.
 def test1():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
+    write_to_file(0,read,word,unsigned,nodelay,fence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     address=4096
     for i in range(line_size):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       entrycount=entrycount+1
       if i == 0:
         gold_file.write(miss)
@@ -206,7 +211,7 @@ def test1():
         gold_file.write(hit)
       address=address+word_size
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
+    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     return 0
@@ -217,7 +222,7 @@ def test2():
     global entrycount
     address=4096
     for i in range(2*sets):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       gold_file.write(hit)
       address=address+(word_size*line_size)
       entrycount=entrycount+1
@@ -227,22 +232,22 @@ def test2():
 def test3():
     global entrycount
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
     
@@ -253,22 +258,22 @@ def test4():
     global entrycount
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
     
@@ -279,17 +284,17 @@ def test5():
     global entrycount
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
     for i in range(line_size):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       gold_file.write(hit)
       entrycount=entrycount+1
       address=address+word_size
@@ -297,26 +302,26 @@ def test5():
 # this test will generate a cache request and then a IO request
 def test6():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence)
+    write_to_file(0,read,word,unsigned,nodelay,fence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=32
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
+    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
@@ -324,22 +329,22 @@ def test7():
     global entrycount
   
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4100
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
@@ -351,22 +356,22 @@ def test8():
     global entrycount
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     for i in range(5):
-        write_to_file(address,read,word,unsigned,delay,nofence)
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
   
     address=4096+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
@@ -377,7 +382,7 @@ def test9():
     
     address=4096
     for i in range(ways+ways+ways+1):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
       address=address+(word_size*line_size*sets)
@@ -394,42 +399,42 @@ def test10():
 
     address=4096
     for i in range(ways):
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
 
     address=4096+(word_size*line_size) # a miss to fully fill the set
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096 # accessing lines from 0 to 3
     address=address+(word_size*line_size*sets*(ways-1)) # this would set next_repl to be line 0
     for i in range(ways): 
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(hit)
         entrycount=entrycount+1
         address=address-(word_size*line_size*sets)
         
     address=4096
     address=address+(word_size*line_size*sets*(ways)) # miss to the set, would replace line 0 and set next_repl to line 2
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=address+(word_size*line_size*sets) # another miss to the set, would replace line 2
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*2) # miss to a different set to write back lb contents, line 0 and 2 get replaced
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=4096+(word_size*line_size*sets) # request to old line 2, should be a miss
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -438,7 +443,7 @@ def test10():
         entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets*(ways-1)) # request to old line 0, should be a miss 
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     if repl=="PLRU" :
         gold_file.write(miss)
         entrycount=entrycount+1
@@ -456,34 +461,34 @@ def test11():
    
     address=4096
     for i in range(ways+1): #  1st miss after filling the set would replace line 3, next_repl would be set to line 0 
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
 
     address=4096
     address=address+(word_size*line_size) # miss (to a diff set) to actually replace line 3 (needed due to lazy write back)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets*2) # Req for line 1(2000) is hit, would set next_repl as line2
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets*5) # miss to that set would replace line 2
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*2) # miss(to diff set) for lb to update cache and actually replace line 2
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets) # request to line 2 (addr-1800) would be a miss
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
@@ -499,32 +504,32 @@ def test12():
 
     address=4096
     for i in range(ways+1): # filling set completely + generating a miss
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
 
     address=4096 # 2 hits to line 3
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
     if repl=="PLRU":
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       gold_file.write(hit)
       entrycount=entrycount+1
     elif repl=="RROBIN":
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       gold_file.write(hit)
       entrycount=entrycount+1
 
    
     address=4096+(word_size*line_size) # miss to make lb write back to cache
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096 # request to old line 3
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -541,34 +546,34 @@ def test13():
 
     address=4096
     for i in range(ways):
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
    
     
     address=4096+(word_size*line_size) # miss lb to write back to cache 
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence) #request to line 3
+    write_to_file(address,read,word,unsigned,nodelay,nofence) #request to line ,rob_index3
     gold_file.write(hit)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets*4) # 1st miss
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096+(word_size*line_size*sets*5) # 2nd miss
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line 3
+    write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line ,rob_index3
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -585,27 +590,27 @@ def test14a():
     global entrycount
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
    
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
     address=4096 # 1st req
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
 
     address=address+(word_size*line_size) # 2nd req
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
     
@@ -618,26 +623,26 @@ def test14b():
     global entrycount
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
    
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
-    write_to_file(address,read,word,unsigned,nodelay,nofence) #1st req
+    write_to_file(address,read,word,unsigned,nodelay,nofence) #1st re,rob_indexq
     gold_file.write(hit)
     entrycount=entrycount+1
 
     address=4096 # 2nd req
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(hit)
     entrycount=entrycount+1
  
@@ -653,21 +658,21 @@ def test15():
 
     address=4128
     for i in range(ways): # filling set completely
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
 
     address=32 # 2 IO requests indexing to same set
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
     address=4128+(word_size*line_size*sets*4) # req to a new line mapping to that set
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     gold_file.write(miss)
     entrycount=entrycount+1
     
@@ -681,7 +686,7 @@ def test16():
 
     address=4096
     for i in range(line_size):
-      write_to_file(address,write,word,unsigned,nodelay,nofence)
+      write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
       entrycount=entrycount+1
       if i == 0:
         gold_file.write(miss)
@@ -691,7 +696,7 @@ def test16():
     
     address=4096
     for i in range(line_size):
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
+      write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
       entrycount=entrycount+1
       if i == 0:
         gold_file.write(miss)
@@ -710,22 +715,22 @@ def test17():
     global entrycount
 
     address=4096
-    write_to_file(address,write,byte,unsigned,nodelay,nofence)
+    write_to_file(address,write,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)-1
-    write_to_file(address,write,byte,unsigned,nodelay,nofence)
+    write_to_file(address,write,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=4096
-    write_to_file(address,read,hword,unsigned,nodelay,nofence)
+    write_to_file(address,read,hword,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
     address=address+(word_size*line_size)-4
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
@@ -739,33 +744,33 @@ def test18():
     global entrycount
 
     address=4128
-    write_to_file(address,read,byte,signed,nodelay,nofence)
+    write_to_file(address,read,byte,signed,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
-    write_to_file(address,read,byte,unsigned,nodelay,nofence)
+    write_to_file(address,read,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
     address=address+2
-    write_to_file(address,read,byte,signed,nodelay,nofence)
+    write_to_file(address,read,byte,signed,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    write_to_file(address,read,byte,unsigned,nodelay,nofence)
+    write_to_file(address,read,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    write_to_file(address,read,hword,signed,nodelay,nofence)
+    write_to_file(address,read,hword,signed,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
-    write_to_file(address,read,hword,unsigned,nodelay,nofence)
+    write_to_file(address,read,hword,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
     address=address+2
-    write_to_file(address,read,word,signed,nodelay,nofence)
+    write_to_file(address,read,word,signed,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
    
@@ -778,7 +783,7 @@ def test19():
 
     address=4096
     for i in range(line_size):
-      write_to_file(address,write,word,unsigned,nodelay,nofence)
+      write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
       entrycount=entrycount+1
       if i == 0:
         gold_file.write(miss)
@@ -788,7 +793,7 @@ def test19():
     
     address=address+(line_size*word_size)
     for i in range(line_size):
-      write_to_file(address,write,word,unsigned,nodelay,nofence)
+      write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
       entrycount=entrycount+1
       if i == 0:
         gold_file.write(miss)
@@ -797,49 +802,49 @@ def test19():
       address=address+word_size
     
     address=address+(line_size*word_size)
-    write_to_file(address,write,word,unsigned,nodelay,nofence)
+    write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
     for i in range(20):
-      write_to_file(address,read,word,unsigned,delay,nofence)
+      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
       gold_file.write(miss)
       entrycount=entrycount+1
   
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
     address=4096
-    write_to_file(address,write,word,unsigned,nodelay,nofence)
+    write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     address=address+(line_size*word_size)+(line_size*word_size)
-    write_to_file(address,write,word,unsigned,nodelay,nofence)
+    write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     address=address+(line_size*word_size)+(line_size*word_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
 
     address=4128
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
@@ -854,19 +859,19 @@ def test20():
     global entrycount
     address=4096
     for i in range(8):
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         gold_file.write(miss)
         entrycount=entrycount+1
         address=address+(word_size*line_size*sets)
 
 #    for i in range(40):
-#      write_to_file(address,read,word,unsigned,delay,nofence)
+#      write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
 #      gold_file.write(miss)
 #      entrycount=entrycount+1
 
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
@@ -878,28 +883,28 @@ def test21():
     global entrycount
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
     
     address=4096
-    write_to_file(address,write,byte,unsigned,nodelay,nofence)
+    write_to_file(address,write,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     address=4097
-    write_to_file(address,read,byte,unsigned,nodelay,nofence)
+    write_to_file(address,read,byte,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     address=4096
-    write_to_file(address,write,hword,unsigned,nodelay,nofence)
+    write_to_file(address,write,hword,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
     
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(hit)
     
@@ -912,7 +917,7 @@ def test22():
     address=5000
     for i in range(20):
         address= address+1;
-        write_to_file(address,read,byte,unsigned,nodelay,nofence)
+        write_to_file(address,read,byte,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
     
@@ -925,13 +930,13 @@ def test22():
     cache_size=word_size*line_size*sets
 
     for i in range(ways+2):
-        write_to_file(address,write,word,unsigned,nodelay,nofence)
+        write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
         address=address+cache_size
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
     gold_file.write(miss)
 
@@ -941,23 +946,76 @@ def test22():
 def test23():
     global entrycount
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    gold_file.write(miss)
     
     for i in range(17):
-        write_to_file(address,read,word,unsigned,delay,nofence)
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
 
-    for i in range(mshrsize):
+    for i in range(mshrsize+3):
         address=address+(word_size*line_size)
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
 
     address=4096
     for i in range(16):
         address=address+4
-        write_to_file(address,read,word,unsigned,nodelay,nofence)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+##mshr and ff_second_stage full and still cache hits go on
+def test24():
+    global entrycount
+    address=4096
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    
+    for i in range(17):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    for i in range(mshrsize+2):
+        address=address+(word_size*line_size)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    address=4096
+    for i in range(16):
+        address=address+4
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+
+##mshr,  ff_first_stage and ff_second_stage full
+def test25():
+    global entrycount
+    address=4096
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    
+    for i in range(17):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    for i in range(mshrsize+3):
+        address=address+(word_size*line_size)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    address=4096
+    for i in range(16):
+        address=address+4
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
 
@@ -990,13 +1048,14 @@ def test23():
 #test22()
 test23()
 
-write_to_file(0,endsim,byte,signed,nodelay,nofence)
+write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
 entrycount=entrycount+1
+
 print("Total Entries in Test: "+str(entrycount))
 while entrycount<2048:
     gold_file.write(miss)
-    write_to_file(0,endsim,byte,signed,nodelay,nofence)
+    write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
     entrycount=entrycount+1
 
 test_file.close()
