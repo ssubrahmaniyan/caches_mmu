@@ -38,6 +38,7 @@ package mshr;
 	import Vector::*;
 	import SEMF_FIFO::*;
 	import SESFMI_FIFO::*;
+	`include "parameters.txt"
 
 	interface Ifc_mshr#(numeric type paddr,
 											numeric type linewidthbits,
@@ -54,7 +55,8 @@ package mshr;
 	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
 	//(*preempts= "cff_valid.initialize, (cff_valid.incCtr, cff_valid.decCtr, cff_valid.both) "*)
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index))
-				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr)
+				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr),
+				 						Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
 										//Add#(a__, addr_in_mshr, linewidthbits)		
 			 						 );
 		let paddr_val= valueOf(paddr);
@@ -105,7 +107,7 @@ package mshr;
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
 			//(*preempts= "flush, (cff_valid[i].incCtr, cff_valid[i].decCtr, cff_valid[i].both) "*)
 			cff_rob[i] <- mkSEMF_FIFO(0);
-			cff_valid[i] <- mkSESFMI_FIFO(0);
+			cff_valid[i] <- mkSESFMI_inst;
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -279,7 +281,7 @@ package mshr;
 	endmodule
 
   (*synthesize*)
-	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 3, 4, 7));
+	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 4, 3, 7));
     let ifc();
     mkmshr _temp(ifc);
     return (ifc);

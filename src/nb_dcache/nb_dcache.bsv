@@ -167,7 +167,8 @@ package nb_dcache;
 			//Mul#(TDiv#(linewidth, dsram), dsram, linewidth)
 			Mul#(m__, 8, linewidth),						//for generate_masked_data fn in FB
 			Mul#(n__, 16, linewidth),						//for generate_masked_data fn in FB
-			Mul#(o__, 32, linewidth)						//for generate_masked_data fn in FB
+			Mul#(o__, 32, linewidth),						//for generate_masked_data fn in FB
+			Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
 
 		);
 

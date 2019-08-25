@@ -31,6 +31,7 @@ package SESFMI_FIFO;
 	import Vector::*;
 	import SCtr::*;
 	import ConfigReg::*;
+	`include "parameters.txt"
 
 	interface Ifc_SESFMI_FIFO#(numeric type depth, type a);
 		method Action enq(a item);
@@ -118,7 +119,8 @@ package SESFMI_FIFO;
 	endmodule
 
   (*synthesize*)
-	module mkSESFMI_inst(Ifc_SESFMI_FIFO#(3, Bit#(23)));
+	(*preempts="initialize, (decCtr, incCtr, both)"*)
+	module mkSESFMI_inst(Ifc_SESFMI_FIFO#(`Mshrfifo_depth, Bit#(1)));
     let ifc();
     mkSESFMI_FIFO#(0) _temp(ifc);
     return (ifc);
