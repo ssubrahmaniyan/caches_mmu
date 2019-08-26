@@ -52,11 +52,7 @@ package dmem;
   import null_dcache :: *;
 `endif
 `ifdef supervisor
-  `ifdef RV64
-    import dtlb_rv64_array::*;
-  `elsif RV32
-    import dtlb_rv32_array::*;
-  `endif
+  import fa_dtlb :: * ;
 `endif
 
   (*synthesize*)
@@ -73,20 +69,11 @@ package dmem;
 
   `ifdef supervisor
     (*synthesize*)
-    (*conflict_free="resp_from_ptw_put, core_req_put"*)
-    `ifdef RV64
-      module mkdtlb(Ifc_dtlb_rv64_array#(`paddr, 8,8, 8,1, 1,1,`asidwidth));
-        let ifc();
-        mkdtlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
-        return (ifc);
-      endmodule
-    `else
-      module mkdtlb(Ifc_dtlb_rv32_array#(`paddr, 8,8, 1,1,`asidwidth));
-        let ifc();
-        mkdtlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
-        return (ifc);
-      endmodule
-    `endif
+    module mkdtlb(Ifc_fa_dtlb);
+      let ifc();
+      mkfa_dtlb#(0) _temp(ifc);
+      return (ifc);
+    endmodule
   `endif
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
@@ -117,9 +104,14 @@ package dmem;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize)) ptw_resp;
     interface Get#(PTWalk_tlb_request#(`vaddr)) req_to_ptw;
     interface Put#(PTWalk_tlb_response#(`ifdef RV64 54, 3 `else 32, 2 `endif )) resp_from_ptw;
-    interface Put#(Bit#(`vaddr )) satp_from_csr;
-    interface Put#(Bit#(2)) curr_priv;
-    interface Put#(Bit#(`vaddr )) mstatus_from_csr;
+    /*doc:method: method to receive the current satp csr from the core*/
+    method Action ma_satp_from_csr (Bit#(`vaddr) s);
+
+    /*doc:method: method to recieve the current privilege mode of operation*/
+    method Action ma_curr_priv (Bit#(2) c);
+
+    /*doc:method: method to receive the current values of the mstatus register*/
+    method Action ma_mstatus_from_csr (Bit#(`vaddr) m);
     `ifdef pmp
       method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
       method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
@@ -162,7 +154,7 @@ package dmem;
     let dcache <- mkdcache;
   `ifdef supervisor
     let dtlb <- mkdtlb;
-    mkConnection(dtlb.core_resp, dcache.pa_from_tlb);
+    mkConnection(dtlb.core_response, dcache.pa_from_tlb);
   `endif
     interface core_req = interface Put
       method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
@@ -170,7 +162,7 @@ package dmem;
         if(r.ptwalk_req || !r.sfence)
             dcache.core_req.put(get_cache_packet(r));
         if(!r.fence)
-            dtlb.core_req.put(get_tlb_packet(r));
+            dtlb.core_request.put(get_tlb_packet(r));
       `else
         dcache.core_req.put(get_cache_packet(r));
       `endif
@@ -194,23 +186,19 @@ package dmem;
       dcache.perform_store(currepoch);
     endmethod
     method cacheable_store    =dcache.cacheable_store;
-      method cache_available    =dcache.cache_available `ifdef supervisor && dtlb.tlb_available `endif ;
+      method cache_available    =dcache.cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
     method storebuffer_empty  =dcache.storebuffer_empty;
 `ifdef supervisor
     interface ptw_resp = dcache.ptw_resp;
-    interface req_to_ptw = dtlb.req_to_ptw;
-    interface resp_from_ptw = dtlb.resp_from_ptw;
-    interface satp_from_csr = dtlb.satp_from_csr;
-    interface curr_priv = dtlb.curr_priv;
-    interface mstatus_from_csr = dtlb.mstatus_from_csr;
-  `ifdef pmp
-    method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      dtlb.pmp_cfg(pmpcfg);
-    endmethod
-    method Action pmp_addr(Vector#(`PMPSIZE, Bit#( `paddr )) pmpadr);
-      dtlb.pmp_addr(pmpadr);
-    endmethod
-  `endif
+    interface req_to_ptw = dtlb.request_to_ptw;
+    interface resp_from_ptw = dtlb.response_frm_ptw;
+    method ma_satp_from_csr = dtlb.ma_satp_from_csr;
+    method ma_curr_priv = dtlb.ma_curr_priv;
+    method ma_mstatus_from_csr = dtlb.ma_mstatus_from_csr;
+    `ifdef pmp
+      method ma_pmp_cfg = dtlb.ma_pmp_cfg;
+      method ma_pmp_addr = dtlb.ma_pmp_addr;
+    `endif
     interface hold_req = dcache.hold_req;
 `endif
   endmodule
