@@ -1,3 +1,27 @@
+// set virtual page size based on the sv mode selected.
+`ifdef sv32
+  `define vpnsize 20
+  `define ppnsize 22
+  `define varpages 2
+  `define subvpn 10
+  `define lastppnsize 12
+  `define maxvaddr 32
+`elsif sv39
+  `define vpnsize 27
+  `define ppnsize 44
+  `define varpages 3
+  `define subvpn 9
+  `define lastppnsize 26
+  `define maxvaddr 39
+`else
+  `define vpnsize 36
+  `define ppnsize 44
+  `define varpages 4
+  `define subvpn 9
+  `define lastppnsize 17
+  `define maxvaddr 48
+`endif
+
 `define Inst_addr_misaligned  0 
 `define Inst_access_fault     1 
 `define Illegal_inst          2 

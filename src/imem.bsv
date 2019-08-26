@@ -43,11 +43,7 @@ package imem;
   import io_func::*;
   `include "cache.defines"
   `ifdef supervisor
-    `ifdef RV64
-      import itlb_rv64_array::*;
-    `elsif RV32
-      import itlb_rv32_array::*;
-    `endif
+    import fa_itlb :: * ;
   `endif
   `ifdef icache
     `ifdef supervisor
@@ -73,19 +69,11 @@ package imem;
 
 `ifdef supervisor
   (*synthesize*)
-  `ifdef RV64
-    module mkitlb(Ifc_itlb_rv64_array#(`paddr, 8,8, 8,1, 1,1,`asidwidth));
+    module mkitlb(Ifc_fa_itlb);
       let ifc();
-      mkitlb_rv64_array#("RANDOM", "RANDOM") _temp(ifc);
+      mkfa_itlb#(0) _temp(ifc);
       return (ifc);
     endmodule
-  `else
-    module mkitlb(Ifc_itlb_rv32_array#(`paddr, 8,8, 1,1,`asidwidth));
-      let ifc();
-      mkitlb_rv32_array#("RANDOM", "RANDOM") _temp(ifc);
-      return (ifc);
-    endmodule
-  `endif
 `endif
   interface Ifc_imem;
       // -------------------- Cache related interfaces - -----------//
@@ -101,14 +89,20 @@ package imem;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces - --------------------- //
   `ifdef supervisor
-    interface Get#(PTWalk_tlb_request#(`vaddr)) req_to_ptw;
-    interface Put#(PTWalk_tlb_response#(`ifdef RV64 54, 3 `else 32, 2 `endif )) resp_from_ptw;
-    interface Put#(Bit#(`vaddr )) satp_from_csr;
-    interface Put#(Bit#(2)) curr_priv;
-    `ifdef pmp
-      method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
-    `endif
+    interface Get#(PTWalk_tlb_request#(`vaddr)) request_to_ptw;
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
+    
+    /*doc:method: method to receive the current satp csr from the core*/
+    method Action ma_satp_from_csr (Bit#(`vaddr) s);
+
+    /*doc:method: method to recieve the current privilege mode of operation*/
+    method Action ma_curr_priv (Bit#(2) c);
+  `ifdef pmp
+    /*doc:method: */
+    method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
+    /*doc:method: */
+    method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
+  `endif
   `endif
       // ---------------------------------------------------------//
   endinterface
@@ -118,7 +112,7 @@ package imem;
     let icache <- mkicache;
   `ifdef supervisor
     let itlb <- mkitlb;
-    mkConnection(itlb.core_resp, icache.pa_from_tlb);
+    mkConnection(itlb.core_response, icache.pa_from_tlb);
   `endif
     interface core_req = interface Put
       method Action put (ICache_request#(`vaddr ,`iesize) req);
@@ -131,7 +125,7 @@ package imem;
         `ifdef ifence
           if(!req.fence)
         `endif
-          itlb.core_req.put(ITLB_core_request{address : req.address, sfence : req.sfence});
+          itlb.core_request.put(ITLB_core_request{address : req.address, sfence : req.sfence});
       `endif
       endmethod
     endinterface;
@@ -146,17 +140,13 @@ package imem;
     interface nc_read_resp = icache.nc_read_resp;
   `endif
   `ifdef supervisor
-    interface req_to_ptw = itlb.req_to_ptw;
-    interface resp_from_ptw = itlb.resp_from_ptw;
-    interface satp_from_csr = itlb.satp_from_csr;
-    interface curr_priv = itlb.curr_priv;
+    interface request_to_ptw = itlb.request_to_ptw;
+    interface response_frm_ptw = itlb.response_frm_ptw;
+    method ma_satp_from_csr = itlb.ma_satp_from_csr;
+    method ma_curr_priv = itlb.ma_curr_priv;
     `ifdef pmp
-      method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-        itlb.pmp_cfg(pmpcfg);
-      endmethod
-      method Action pmp_addr(Vector#(`PMPSIZE, Bit#( `paddr )) pmpadr);
-        itlb.pmp_addr(pmpadr);
-      endmethod
+      method ma_pmp_cfg = itlb.ma_pmp_cfg;
+      method ma_pmp_addr = itlb.ma_pmp_addr;
     `endif
   `endif
   endmodule
