@@ -79,10 +79,10 @@ package fa_dtlb;
   (*conflict_free="response_frm_ptw_put, core_request_put"*)
   module mkfa_dtlb#(parameter Bit#(`vaddr) hartid) (Ifc_fa_dtlb);
 
-    Vector#( `tlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
+    Vector#( `dtlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
-    Reg#(Bit#(TLog#(`tlbsize))) rg_replace <- mkReg(0);
+    Reg#(Bit#(TLog#(`dtlbsize))) rg_replace <- mkReg(0);
     /*doc:wire: wire holding the latest value of the satp csr*/
     Wire#(Bit#(`vaddr)) wr_satp <- mkWire();
     /*doc:wire: wire holds the current privilege mode of the core*/
@@ -122,7 +122,7 @@ package fa_dtlb;
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
      all the tlb entries*/
     rule rl_fence(rg_sfence && !rg_tlb_miss && !ff_core_respone.notEmpty);
-      for (Integer i = 0; i < `tlbsize; i = i + 1) begin
+      for (Integer i = 0; i < `dtlbsize; i = i + 1) begin
         v_vpn_tag[i] <= unpack(0);
       end
       rg_sfence <= False;
@@ -144,7 +144,7 @@ package fa_dtlb;
         endfunction
 
         Bit#(`causesize) cause = req.access == 0 ? `Load_pagefault : `Store_pagefault;
-        Bit#(TLog#(`tlbsize)) tagmatch = 0;
+        Bit#(TLog#(`dtlbsize)) tagmatch = 0;
         if(req.sfence && !req.ptwalk_req)begin
           `logLevel( dtlb, 0, $format("DTLB: SFence received"))
           rg_sfence <= True;

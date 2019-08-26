@@ -73,10 +73,10 @@ package fa_itlb;
   (*synthesize*)
   module mkfa_itlb#(parameter Bit#(`vaddr) hartid) (Ifc_fa_itlb);
 
-    Vector#( `tlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
+    Vector#( `itlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
-    Reg#(Bit#(TLog#(`tlbsize))) rg_replace <- mkReg(0);
+    Reg#(Bit#(TLog#(`itlbsize))) rg_replace <- mkReg(0);
     /*doc:wire: wire holding the latest value of the satp csr*/
     Wire#(Bit#(`vaddr)) wr_satp <- mkWire();
     /*doc:wire: wire holds the current privilege mode of the core*/
@@ -109,7 +109,7 @@ package fa_itlb;
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
      all the tlb entries*/
     rule rl_fence(rg_sfence);
-      for (Integer i = 0; i < `tlbsize; i = i + 1) begin
+      for (Integer i = 0; i < `itlbsize; i = i + 1) begin
         v_vpn_tag[i] <= unpack(0);
       end
       rg_sfence <= False;
@@ -131,7 +131,7 @@ package fa_itlb;
                                  && (t.asid == satp_asid || t.permissions.g);
         endfunction
 
-        Bit#(TLog#(`tlbsize)) tagmatch = 0;
+        Bit#(TLog#(`itlbsize)) tagmatch = 0;
         if(req.sfence)begin
           `logLevel( itlb, 0, $format("ITLB: SFence received"))
           rg_sfence <= True;
