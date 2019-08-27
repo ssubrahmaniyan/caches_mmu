@@ -77,7 +77,7 @@ package nb_dcache_tb;
 
 
 	//(*descending_urgency="drain_req, core_req"*)
-	(*descending_urgency="core_resp, core_req"*)
+	(*preempts="core_resp, core_req"*)
 	//(*descending_urgency="core_req, core_resp"*)
 	(*preempts="core_resp, rl_complete_store_req_to_cbuf"*)
 	(*descending_urgency="core_req, rl_complete_store_req_to_cbuf"*)
@@ -134,9 +134,11 @@ package nb_dcache_tb;
      	index<=index+1;
       // read/write : delay/nodelay : Fence/noFence : Null
 
-			$display($time,"\tTB: Req from file: ", req);
+	    let ____t <- $time; 
+			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: ", req);
     	// read/write : size: sign: delay/nodelay : Fence/noFence : Null : Addr
-      Bit#(8) control = req[`Paddr + 7: `Paddr ];
+      Bit#(8) control = req[`Paddr + 7: `Paddr];
+			Bit#(`Rob_index) rob= req[`Paddr+`Rob_index+6:`Paddr+7];
       Bit#(2) readwrite=control[7:6];
       Bit#(3) size=control[5:3];
       Bit#(1) delay=control[2];
@@ -163,29 +165,36 @@ package nb_dcache_tb;
 																																								payload: writedata,
 																																								origin: req_origin,
 																																								rob: rg_rob};
-					$display($time,"\tTB: Sending Req to Core: ", fshow(temp_req));
+					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
 					rg_rob<= rg_rob+1;
         	dcache.subifc_req_from_core.put(temp_req);
 				end
 				else begin
-					$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
+					$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
 				end
       end
 			else if(request==0) begin
-				$display($time,"\tTB: Only enqueueing req: %h into ff_req",req);
-        ff_req.enq(req);
+				if(rob=='d10) begin
+					$display($format("[%10d", ____t) + $format("] "),"\tTB: Flushing from flush_rob: %d head: 'd30",rob);
+					dcache.flush('d30,rob);
+				end
+				else begin
+					$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
+        	ff_req.enq(req);
+				end
 			end
     end
   endrule
 
 	rule rl_endsim;
+	  let ____t <- $time; 
 		Bit#(TAdd#(`Paddr ,  8)) req = truncate(ff_req.first());
 		if(req==0) begin
     `ifdef perf
       for(Integer i=0;i<5;i=i+1)
-        $display($time,"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
+        $display($format("[%10d", ____t) + $format("] "),"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
     `endif
-      $display($time, "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
+      $display($format("[%10d", ____t) + $format("] "), "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
       $finish(0);
 		end
 	endrule
@@ -194,6 +203,7 @@ package nb_dcache_tb;
 		let read_data<- cbuf.drain.get;
 		let req= ff_req.first;
 		ff_req.deq;
+	  let ____t <- $time; 
     Bit#(8) control = req[`Paddr + 7: `Paddr ];
     Bit#(2) readwrite=control[7:6];
     Bit#(3) size=control[5:3];
@@ -205,39 +215,40 @@ package nb_dcache_tb;
     Bool datafail=False;
   
 		if(readwrite!='d1) begin
-			$display($time,"\tTB: Store request. No comparison being done.");
+			$display($format("[%10d", ____t) + $format("] "),"\tTB: Store request. No comparison being done.");
 		end
     else if(truncate(expected_data)!=read_data)begin
-        $display($time,"\tTB: Output from cache is wrong for Req: %h",req);
-        $display($time,"\tTB: Expected: %h, Received: %h",expected_data,read_data);
+        $display($format("[%10d", ____t) + $format("] "),"\tTB: Output from cache is wrong for Req: %h",req);
+        $display($format("[%10d", ____t) + $format("] "),"\tTB: Expected: %h, Received: %h",expected_data,read_data);
         datafail=True;
     end
 
     if(datafail)begin
-      $display($time,"\tTB: Test: %d Failed",rg_test_count);
+      $display($format("[%10d", ____t) + $format("] "),"\tTB: Test: %d Failed",rg_test_count);
       $finish(0);
     end
     else
-      $display($time,"\tTB: Core received correct response: %h for req: %h", read_data, req);
+      $display($format("[%10d", ____t) + $format("] "),"\tTB: Core received correct response: %h for req: %h", read_data, req);
 
 		if(req=='1) begin
 	    rg_test_count<=rg_test_count+1;
-    	$display($time,"\tTB: ********** Test:%d PASSED****",rg_test_count);
+    	$display($format("[%10d", ____t) + $format("] "),"\tTB: ********** Test:%d PASSED****",rg_test_count);
 		end
 		else if(req==0) begin
     `ifdef perf
       for(Integer i=0;i<5;i=i+1)
-        $display($time,"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
+        $display($format("[%10d", ____t) + $format("] "),"\tTB: Counter-",countName(i),": %d",rg_counters[i]);
     `endif
-      $display($time, "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
+      $display($format("[%10d", ____t) + $format("] "), "\tTB: All Tests PASSED. Total TestCount: %d", rg_test_count-1);
       $finish(0);
 		end
 
 	endrule
 
   rule core_resp;
+	  let ____t <- $time; 
     let resp <- dcache.subifc_resp_to_core.get();
-		$display($time,"\tTB: Resp from core: ", fshow(resp));
+		$display($format("[%10d", ____t) + $format("] "),"\tTB: Resp from core: ", fshow(resp));
 		cbuf.complete.put(tuple2(unpack(resp.prf_index), resp.data));
   endrule
 
@@ -248,9 +259,10 @@ package nb_dcache_tb;
 	endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid &&& rg_read_delay==0);
+	  let ____t <- $time; 
     let req<- dcache.subifc_read_req_to_mem.get;
     read_mem_req<=tagged Valid req;
-    $display($time,"\tTB: Memory Read request",fshow(req));
+    $display($format("[%10d", ____t) + $format("] "),"\tTB: Memory Read request",fshow(req));
   endrule
 
 	rule rl_read_delay(isValid(read_mem_req));
@@ -264,6 +276,7 @@ package nb_dcache_tb;
 	endrule
 
   rule read_mem_resp(read_mem_req matches tagged Valid .req &&& rg_read_delay>=`ReadDelay);
+	  let ____t <- $time; 
 		let addr= req.addr;
 		Bit#(3) size= fromInteger(valueOf(TLog#(`Buswidth)))-3;
 		let burst= (req.is_burst?8'd3:8'd0);
@@ -286,7 +299,7 @@ package nb_dcache_tb;
 																					id: req.id,
 																					last: (rg_read_burst_count==burst) };
 		dcache.subifc_read_resp_from_mem.put(lv_read_resp);
-    $display($time,"\tTB: Memory Read from index: %d for req: ", index, fshow(lv_read_resp));
+    $display($format("[%10d", ____t) + $format("] "),"\tTB: Memory Read from index: %d for req: ", index, fshow(lv_read_resp));
   endrule
  
 	//rule rl_write_mem_req;
@@ -304,12 +317,14 @@ package nb_dcache_tb;
   //  write_mem_req <= tagged Valid tuple4(axi4burst_addrgen(burst,zeroExtend(size),2,addr),burst,size,nextdata); // parameterize
 	//endrule
   rule write_mem_request(write_mem_req matches tagged Invalid);
+	  let ____t <- $time; 
     let req<- dcache.subifc_write_req_to_mem.get;
     write_mem_req<=tagged Valid req;
-    $display($time,"\tTB: Memory Write request",fshow(req));
+    $display($format("[%10d", ____t) + $format("] "),"\tTB: Memory Write request",fshow(req));
   endrule
 
   rule write_mem_resp(write_mem_req matches tagged Valid .req);
+	  let ____t <- $time; 
     let addr= req.addr;
 		let writedata= req.data;
 		Bit#(3) size= fromInteger(valueOf(TLog#(`Buswidth)))-3;
@@ -318,7 +333,7 @@ package nb_dcache_tb;
       rg_write_burst_count<=0;
       write_mem_req<=tagged Invalid;
       dcache.subifc_write_resp_from_mem.put(False);
-      $display($time,"\tTB: Sending write response back");
+      $display($format("[%10d", ____t) + $format("] "),"\tTB: Sending write response back");
     end
     else begin
       rg_write_burst_count<=rg_write_burst_count+1;
@@ -338,7 +353,7 @@ package nb_dcache_tb;
 
     Bit#(`Buswidth) write_word=~mask&loaded_data|mask&truncate(writedata);
     data.upd(index,write_word);
-    $display($time,"\tTB: Updating Memory index: %d with: %h burst_count: %d burst: %d", 
+    $display($format("[%10d", ____t) + $format("] "),"\tTB: Updating Memory index: %d with: %h burst_count: %d burst: %d", 
       index,write_word,rg_write_burst_count,burst);
   endrule
 
