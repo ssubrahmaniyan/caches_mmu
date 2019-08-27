@@ -209,7 +209,7 @@ package fa_itlb;
         let core_req = rg_miss_queue;
         Bit#(12) page_offset = core_req[11 : 0];
 
-        Bit#(`vpnsize) fullvpn = truncateLSB(core_req);
+        Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
         Bit#(`ppnsize) fullppn = truncate(resp.pte >> 10);
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
         Bit#(TLog#(TMul#(TSub#(`varpages,1),`subvpn))) shiftamt = `subvpn * zeroExtend(resp.levels);
