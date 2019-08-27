@@ -256,6 +256,8 @@ package mshr;
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
       	`logLevel( nb_dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
+				cff_rob[fb_id].deq;
+				cff_valid[fb_id].deq;
 			end
 			else begin
       `ifdef ASSERT
