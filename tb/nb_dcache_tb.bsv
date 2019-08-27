@@ -57,7 +57,7 @@ package nb_dcache_tb;
   `define addr_width 32
   `define ways 4
   `define repl RROBIN
-	`define ReadDelay 0
+	`define ReadDelay 10
 
   (*synthesize*)
   module mktest(Ifc_test_caches#(`Wordsize , `Linesize , `Setsize , `Ways , `Buswidth, `Paddr));
