@@ -172,6 +172,7 @@ package fa_dtlb;
             Bit#(`paddr) coreresp = truncate(req.address);
             Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
             Bool trap = |upper_bits == 1;
+            cause = req.access == 0 ? `Load_access_fault : `Store_access_fault;
             ff_core_respone.enq(DTLB_core_response{address  : signExtend(coreresp),
                                                    trap     : trap,
                                                    cause    : cause,
