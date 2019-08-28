@@ -239,6 +239,7 @@ package nb_dcache;
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
 		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
+		Reg#(Bool) rg_mshr_flush_done <- mkReg(True);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(MSHR_Req#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
@@ -531,7 +532,7 @@ package nb_dcache;
 				end
 			end
 			else begin
-				//`logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req))
+				`logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req)))
 			end
 		endrule
 
@@ -542,6 +543,10 @@ package nb_dcache;
 			end
 		endrule
 
+		rule rl_flush_mshr(rg_flush[0].valid && !rg_mshr_flush_done);
+			mshr.flush(rg_flush[0]);
+			rg_mshr_flush_done<=True;
+		endrule
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
@@ -720,9 +725,9 @@ package nb_dcache;
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
 			let flush_signal= Flush_type {valid: True,
 																		head: head,
-																		flush_rob: flush_rob }; 
+																		flush_rob: flush_rob };
+			rg_mshr_flush_done<= False;
 			rg_flush[0]<= flush_signal;
-			mshr.flush(flush_signal);
 		endmethod
 
 	endmodule

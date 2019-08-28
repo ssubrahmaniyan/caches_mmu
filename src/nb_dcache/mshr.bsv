@@ -140,13 +140,14 @@ package mshr;
 
 		rule rl_deq_ff;
 			let id= wr_deq_ff_id;
+			`logLevel( dcache, 2, $format("MSHR[%d]: Flushed request being dequeued from FIFOs", id))
 			ff_mshr[id].deq;
 			cff_rob[id].deq;
 			cff_valid[id].deq;
 		endrule
 
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data, rob_index) req)
-												if(!one_mshr_fifo_full && !mshr_full && !rg_flush[1].valid);
+												if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
@@ -182,8 +183,8 @@ package mshr;
 																									access_size: req.access_size,
 																									payload: req.payload,
 																									origin: req.origin });
-				cff_rob[mshr_unallocated_id].enq(req.rob);
-				cff_valid[mshr_unallocated_id].enq(1'b1);
+				cff_rob[mshr_allocated_id].enq(req.rob);
+				cff_valid[mshr_allocated_id].enq(1'b1);
 				return tagged Invalid;
 			end
 			else begin
@@ -273,10 +274,14 @@ package mshr;
 				Vector#(mshrfifo_depth,Bit#(rob_index)) cff_rob_id= cff_rob[i].contents;
 
 				for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
+      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
+      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial ROB[%d][%d]= %d", i,j, cff_rob_id[j]))
 					if(should_flush(bundle.head, bundle.flush_rob, cff_rob_id[j])) begin
 						valid[j]=0;
+      			`logLevel( nb_dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
 					end
 				end
+      	`logLevel( nb_dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
 				cff_valid[i].initialize(valid);
 			end
 		endmethod
