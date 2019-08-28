@@ -1000,6 +1000,7 @@ def test25():
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
     entrycount=entrycount+1
+    gold_file.write(miss)
     
     for i in range(17):
         write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
@@ -1019,7 +1020,34 @@ def test25():
         entrycount=entrycount+1
         gold_file.write(miss)
 
+def test26():
+    global entrycount
+    address=4096
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+    
+    address=address+(word_size*1)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+    
+    address=address+(word_size*2)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,4)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+    
+    address=address+(word_size*3)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    entrycount=entrycount+1
+    gold_file.write(miss)
 
+    for i in range(4):
+        write_to_file(address,read,word,unsigned,delay,nofence,11)
+        entrycount=entrycount+1
+
+    write_to_file(address,read,word,signed,delay,nofence,10)
+    entrycount=entrycount+1
 #test02()
 #test03()
 #test04()
@@ -1046,7 +1074,8 @@ def test25():
 #test20()
 #test21()
 #test22()
-test23()
+#test23()
+test26()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
