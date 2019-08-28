@@ -145,6 +145,20 @@ package fa_dtlb;
 
         Bit#(`causesize) cause = req.access == 0 ? `Load_pagefault : `Store_pagefault;
         Bit#(TLog#(`dtlbsize)) tagmatch = 0;
+        let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
+        let pte = fromMaybe(unpack(0), hit_entry);
+        let permissions = pte.permissions;
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+        Bit#(`lastppnsize) highest_ppn = truncateLSB(pte.ppn);
+      `ifdef sv32
+        Bit#(`vaddr) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
+      `else
+        Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
+      `endif
+
         if(req.sfence && !req.ptwalk_req)begin
           `logLevel( dtlb, 0, $format("DTLB: SFence received"))
           rg_sfence <= True;
@@ -163,12 +177,11 @@ package fa_dtlb;
             rg_tlb_miss <= False;
         end
         else begin
-          let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
           Bool page_fault = False;
           Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = req.address[`vaddr - 1 : `maxvaddr];
           Bit#(2) priv = mprv == 0?wr_priv : mpp;
           // transparent translation
-          if(satp_mode == 0 || wr_priv == 3 || req.ptwalk_req )begin
+          if(satp_mode == 0 || priv == 3 || req.ptwalk_req )begin
             Bit#(`paddr) coreresp = truncate(req.address);
             Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
             Bool trap = |upper_bits == 1;
@@ -179,20 +192,8 @@ package fa_dtlb;
                                                    tlbmiss  : False});
             `logLevel( dtlb, 0, $format("DTLB : Transparent Translation. PhyAddr: %h",coreresp))
           end
-          else if (hit_entry matches tagged Valid .pte) begin
+          else if (isValid(hit_entry)) begin
             `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
-            let permissions = pte.permissions;
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
-            Bit#(`lastppnsize) highest_ppn = truncateLSB(pte.ppn);
-          `ifdef sv32
-            Bit#(`vaddr) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
-          `else
-            Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
-
             `logLevel( dtlb, 0, $format("mask:%h",mask))
             `logLevel( dtlb, 0, $format("lower_ppn:%h",lower_ppn))
             `logLevel( dtlb, 0, $format("lower_vpn:%h",lower_vpn))
