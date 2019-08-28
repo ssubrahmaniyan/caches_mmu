@@ -1048,7 +1048,64 @@ def test26():
 
     write_to_file(address,read,word,signed,delay,nofence,10)
     entrycount=entrycount+1
-#test02()
+
+#This testcase tests if ff_second_stage has one entry, and MSHRs are full, then no new core requests can be taken as this needs to be evaluated for flushing (which can be done only when dequeueing this FIFO). One possible optimization is to add a array of registers on top of the FIFO and then set the valid bits accordingly (the same way valid bits are being maintained for MSHRs).
+def test27():
+    global entrycount
+    address=4096
+    rob_index=0
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+    
+    for i in range(17):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    write_to_file(address,read,word,signed,delay,nofence,10)
+    entrycount=entrycount+1
+
+    address=4096
+    rob_index=4
+    for i in range(5):
+        address=address+4
+        rob_index=rob_index+1;
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+#test0()
 #test03()
 #test04()
 #test1()
@@ -1075,7 +1132,7 @@ def test26():
 #test21()
 #test22()
 #test23()
-test26()
+test27()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)

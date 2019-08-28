@@ -77,7 +77,7 @@ package nb_dcache_tb;
 
 
 	//(*descending_urgency="drain_req, core_req"*)
-	(*preempts="core_resp, core_req"*)
+	(*descending_urgency="core_resp, core_req"*)
 	//(*descending_urgency="core_req, core_resp"*)
 	(*preempts="core_resp, rl_complete_store_req_to_cbuf"*)
 	(*descending_urgency="core_req, rl_complete_store_req_to_cbuf"*)
@@ -103,7 +103,6 @@ package nb_dcache_tb;
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 	Reg#(Bit#(32)) rg_read_delay <- mkConfigReg(0);
-	Reg#(Bit#(`Rob_index)) rg_rob <- mkReg(0);
 
 	CompletionBuffer#(TExp#(`Prf_index), Bit#(TMul#(`Wordsize,8))) cbuf<- mkCompletionBuffer;
 	FIFO#(Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr))) ff_req <-mkSizedFIFO(64);
@@ -135,16 +134,16 @@ package nb_dcache_tb;
       // read/write : delay/nodelay : Fence/noFence : Null
 
 	    let ____t <- $time; 
-			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: ", req);
     	// read/write : size: sign: delay/nodelay : Fence/noFence : Null : Addr
       Bit#(8) control = req[`Paddr + 7: `Paddr];
-			Bit#(`Rob_index) rob= req[`Paddr+`Rob_index+6:`Paddr+7];
+			Bit#(`Rob_index) rob= req[`Paddr+`Rob_index+7:`Paddr+8];
       Bit#(2) readwrite=control[7:6];
       Bit#(3) size=control[5:3];
       Bit#(1) delay=control[2];
       Bit#(1) fence=control[1];
       Bit#(TAdd#(`Paddr ,  8)) request = truncate(req);
       Bit#(TMul#(`Wordsize, 8)) writedata=truncateLSB(req);
+			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: %h Rob:%d Delay:%h Request:%h", req, rob, delay, request);
 
 			if(delay==0 && request!=0) begin // // not end of simulation
 				ff_req.enq(req);
@@ -164,9 +163,8 @@ package nb_dcache_tb;
 																																								access_size: truncate(size),
 																																								payload: writedata,
 																																								origin: req_origin,
-																																								rob: rg_rob};
+																																								rob: rob};
 					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
-					rg_rob<= rg_rob+1;
         	dcache.subifc_req_from_core.put(temp_req);
 				end
 				else begin
@@ -174,13 +172,13 @@ package nb_dcache_tb;
 				end
       end
 			else if(request==0) begin
+				$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
+      	ff_req.enq(req);
+			end
+			else if(delay!=0) begin
 				if(rob=='d10) begin
 					$display($format("[%10d", ____t) + $format("] "),"\tTB: Flushing from flush_rob: %d head: 'd30",rob);
 					dcache.flush('d30,rob);
-				end
-				else begin
-					$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
-        	ff_req.enq(req);
 				end
 			end
     end
