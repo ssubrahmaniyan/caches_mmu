@@ -211,6 +211,7 @@ package nb_dcache_tb;
 
     let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,zeroExtend(writedata));
     Bool datafail=False;
+		$display("\n");
   
 		if(readwrite!='d1) begin
 			$display($format("[%10d", ____t) + $format("] "),"\tTB: Store request. No comparison being done.");
@@ -270,7 +271,8 @@ package nb_dcache_tb;
 			rg_read_delay<= rg_read_delay +1;
 	endrule
 	rule rl_disp1;
-			$display("######### valid: %b read_Delay: %d", isValid(read_mem_req), rg_read_delay);
+	  let ____t <- $time; 
+		$display("\n\n",$format("[%10d", ____t) + $format("] "),"\tTB: valid: %b read_Delay: %d", isValid(read_mem_req), rg_read_delay);
 	endrule
 
   rule read_mem_resp(read_mem_req matches tagged Valid .req &&& rg_read_delay>=`ReadDelay);
@@ -353,12 +355,6 @@ package nb_dcache_tb;
     data.upd(index,write_word);
     $display($format("[%10d", ____t) + $format("] "),"\tTB: Updating Memory index: %d with: %h burst_count: %d burst: %d", 
       index,write_word,rg_write_burst_count,burst);
-  endrule
-
-
-  rule extra_line;
-    $display("\n");
-		let x<- $stime;
   endrule
 
 endmodule
