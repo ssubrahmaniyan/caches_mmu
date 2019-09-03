@@ -1105,6 +1105,114 @@ def test27():
         entrycount=entrycount+1
         gold_file.write(miss)
 
+#When a flush is asserted and an entry in mshr_fifo is invalidated, and when that request is popped,
+#it should be discarded. In the same cycle, if a request from Stage 2 is a hit in the fill buffer, the
+#response is sent for that request.
+def test28():
+    global entrycount
+    address=4096
+    rob_index=0
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+    
+    for i in range(17):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    write_to_file(address,read,word,signed,delay,nofence,10)
+    entrycount=entrycount+1
+
+    address=4096
+    rob_index=4
+    for i in range(5):
+        address=address+4
+        rob_index=rob_index+1;
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+#When MSHR FIFO is full, all the requests are to the same line, and then a flush happens in between
+def test29():
+    global entrycount
+    address=4096
+    rob_index=0
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    write_to_file(address,read,word,signed,delay,nofence,10)
+    entrycount=entrycount+1
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+
+    address=4096
+    rob_index=4
+    for i in range(5):
+        address=address+4
+        rob_index=rob_index+1;
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
 #test0()
 #test03()
 #test04()
@@ -1132,7 +1240,7 @@ def test27():
 #test21()
 #test22()
 #test23()
-test27()
+test29()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
