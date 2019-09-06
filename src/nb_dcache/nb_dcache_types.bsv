@@ -45,17 +45,34 @@ package nb_dcache_types;
 	typedef struct {
 		Bit#(addr) addr;
 		Bit#(2) access_size;
+		Bit#(data) data;
+		Origin origin;
+		Bit#(rob_index) rob;
+		Bit#(prf_index) prf_index;
+	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Req_from_core#(addr, data, rob_index, prf_index));
+		defaultValue= Req_from_core {	addr: 'd0,
+															access_size: 'd3,
+															data: 'd0,
+															origin: defaultValue,
+															rob: 'd0,
+															prf_index: 'd0}; 
+	endinstance
+	
+	typedef struct {
+		Bit#(addr) addr;
+		Bit#(2) access_size;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(rob_index) rob;
-	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(Req_from_core#(addr, data, rob_index));
-		defaultValue= Req_from_core {	addr: 'd0,
-																	access_size: 'd3,
-																	payload: 'd0,
-																	origin: defaultValue,
-																	rob: 'd0}; 
-	endinstance
+	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index) deriving (Bits, Eq, FShow);
+	//instance DefaultValue#(Cache_req#(addr, data, rob_index));
+	//	defaultValue= Cache_req {	addr: 'd0,
+	//														access_size: 'd3,
+	//														payload: 'd0,
+	//														origin: defaultValue,
+	//														rob: 'd0}; 
+	//endinstance
 	
 	typedef enum {No_exception, Bus_error, Access_fault} DCache_exception deriving (Bits, Eq, FShow);
 	

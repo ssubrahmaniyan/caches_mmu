@@ -76,13 +76,13 @@ package nb_dcache;
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
-		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index)) 				 subifc_req_from_core;
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 subifc_resp_to_core;
-		interface Get#((Req_from_core#(vaddr, TMul#(wordsize,8), rob_index)))				 subifc_req_to_ptw;
-		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 subifc_read_req_to_mem;
-		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 subifc_read_resp_from_mem;
-		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) subifc_write_req_to_mem;
-		interface Put#(Bool)                                        								 subifc_write_resp_from_mem;
+		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_from_core;
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	 subifc_resp_to_core;
+		interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_to_ptw;
+		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 	 subifc_read_req_to_mem;
+		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	 subifc_read_resp_from_mem;
+		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	 subifc_write_req_to_mem;
+		interface Put#(Bool)                                        								 	 subifc_write_resp_from_mem;
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 		method Bool cache_busy;
 	endinterface
@@ -147,7 +147,7 @@ package nb_dcache;
 			Add#(tagbits, tagpos, paddr),					//19 tagbits = paddr - (lineoffset + setbits)
 			Log#(TDiv#(buswidth, 8), busoffset),	//4 busoffset is no. of bits to indicate a byte offset within a buswidth data 
 			Div#(linewidth, buswidth, evict_iter),//4 evict_iter is the burst length while evicting a cache line
-			Add#(b__, prf_index, datawidth),
+			Add#(b__, prf_index, datawidth),			//Load responses after stage2 will have prf encoded in the payload field
 			//Add#(c__, lineoffset, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
 			Add#(e__, TLog#(mshrsize), id_bits),
@@ -169,7 +169,6 @@ package nb_dcache;
 			Mul#(n__, 16, linewidth),						//for generate_masked_data fn in FB
 			Mul#(o__, 32, linewidth),						//for generate_masked_data fn in FB
 			Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
-
 		);
 
 		let ways_val= valueOf(ways);
@@ -210,14 +209,14 @@ package nb_dcache;
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
-		FIFO#(Req_from_core#(vaddr, datawidth, rob_index)) ff_req_from_core <- mkBypassFIFO;
+		FIFO#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
 		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
 		//to the cache. Now, this request will be a hit in the TLB. This FIFO is used to send the req to
 		//the PTW module
-		Wire#(Req_from_core#(vaddr, datawidth, rob_index)) wr_req_to_ptw <- mkWire;
+		Wire#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
@@ -225,12 +224,12 @@ package nb_dcache;
 
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
-		FIFOF#(Req_from_core#(paddr, datawidth, rob_index)) ff_first_stage <- mkPipelineFIFOF;
+		FIFOF#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_first_stage <- mkPipelineFIFOF;
 		FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
 		for(Integer i=0; i<ways_val; i=i+1)
 			ff_first_stage_tag[i]<- mkBypassFIFO;
-		FIFOF#(Req_from_core#(paddr, datawidth, rob_index)) ff_second_stage <- mkFIFOF;
-		FIFO#(Req_from_core#(paddr, datawidth, rob_index)) ff_io_request <- mkFIFO;
+		FIFOF#(Cache_req#(paddr, datawidth, rob_index)) ff_second_stage <- mkFIFOF;
+		FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy[2] <- mkCReg(2, True);	//TODO has to be reset depending upon when the leaf page is received
 																											//or when PTW walk indicates so
@@ -253,8 +252,8 @@ package nb_dcache;
 		Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
-		Wire#(Req_from_core#(paddr, datawidth, rob_index)) wr_stage2_enq <- mkWire;
-		Wire#(Req_from_core#(paddr, datawidth, rob_index)) wr_stage2_fb_enq <- mkWire;
+		Wire#(Cache_req#(paddr, datawidth, rob_index)) wr_stage2_enq <- mkWire;
+		Wire#(Cache_req#(paddr, datawidth, rob_index)) wr_stage2_fb_enq <- mkWire;
 
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
@@ -279,10 +278,19 @@ package nb_dcache;
 			return readdata;
 		endfunction
 
-		function MSHR_Req#(addrwidth, datawidth) convertToMSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index) req);
+		function Cache_req#(paddr, datawidth, rob_index) convert_to_Cache_req(Req_from_core#(paddr, datawidth, rob_index, prf_index) req);
+			Bit#(datawidth) lv_payload= req.origin==Store_commit? req.data : zeroExtend(req.prf_index);
+			return Cache_req { addr: req.addr,
+												 access_size: req.access_size,
+												 payload: lv_payload,
+												 origin: req.origin,
+											 	 rob: req.rob };
+		endfunction
+
+		function MSHR_Req#(addrwidth, datawidth) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
 			return MSHR_Req { addr: req.addr,
 												access_size: req.access_size,
-												payload: req.payload,
+												payload: req.data,
 												origin: req.origin };
 		endfunction
 
@@ -319,7 +327,7 @@ package nb_dcache;
 			let req= ff_req_from_core.first;
 			Bool is_actual_store= (req.origin == Store_commit);
 			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-      `logLevel( dcache, 2, $format("DCACHE : Core_req: ", fshow(req), "set_index: %d", set_index))
+      `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(req), "set_index: %d", set_index))
 			
 			for(Integer i = 0;i<ways_val;i = i+1) begin
 				data_arr[i].read(set_index);
@@ -332,11 +340,12 @@ package nb_dcache;
 		rule rl_get_response_from_TLB;
 			let orig_req= ff_req_from_core.first;
 
-			Req_from_core#(paddr, datawidth, rob_index) req= Req_from_core {	addr: orig_req.addr[paddr_val-1:0],
-																																				access_size: orig_req.access_size,
-																																				payload: orig_req.payload,
-																																				origin: orig_req.origin,
-																																				rob: orig_req.rob };
+			Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{	addr: orig_req.addr[paddr_val-1:0],
+																																			access_size: orig_req.access_size,
+																																			data: orig_req.data,
+																																			origin: orig_req.origin,
+																																			rob: orig_req.rob,
+																																			prf_index: orig_req.prf_index };
 			ff_req_from_core.deq;
 			if(req.origin!=PTW) begin
 				let resp_from_tlb= tlb.response;
@@ -344,10 +353,11 @@ package nb_dcache;
 
       		`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
 					if(resp_from_tlb.is_fault) begin	//Access fault
-						Bit#(prf_index) lv_prf_index= truncate(orig_req.payload);
-						wr_resp_to_core<= Resp_to_core { data: ?,
-																						 prf_index: lv_prf_index,
-																						 exception: Access_fault };
+						if(!wr_is_mshr_resp_to_core) begin
+							wr_resp_to_core<= Resp_to_core { data: ?,
+																							 prf_index: orig_req.prf_index,
+																							 exception: Access_fault };
+						end
 					end
 					else begin	//Access is valid
 						//The virtual address is not required here after. Hence, the addr in the req is replaced
@@ -358,7 +368,7 @@ package nb_dcache;
 							//Enqueue into a separate FIFO that handles IO Requests
 							ff_io_request.enq(req);
 						end
-						else begin	//Else it's a cacheable request and therefore enqueue in the first stage FIFO.
+						else begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
       				`logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
 							ff_first_stage.enq(req);
 						end
@@ -377,6 +387,13 @@ package nb_dcache;
 			end
 		endrule
 
+		//In case we cannot enqueue into ff_second_stage, the second stage would stall. After some clock
+		//cycles when the we can enqueue into ff_second_stage, the correct values of tag will not be 
+		//available as the first stage is not repeated in this cycle. Hence, an intermediate BypassFIFO
+		//is required to store the tag bits. For the case, when there is no stall, since it's a BypassFIFO
+		//the value enqueued can be read in the same cycle, and does not result in any stalls. On the other
+		//hand when there is a stall, this FIFO will hold the value of the tag untill data can be enqueued
+		//into ff_second_stage.
 		rule rl_read_tag_response(ff_first_stage.notEmpty);
 			for(Integer i = 0; i<ways_val; i = i+1) begin
 				let temp = tag_arr[i].read_response;
@@ -385,6 +402,9 @@ package nb_dcache;
 			end
 		endrule
 
+		//This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
+		//to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
+		//cache, then the request is sent to the fill buffer.
 		rule rl_tag_and_data_array_read_response;
 			let req= ff_first_stage.first;
       `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
@@ -393,7 +413,7 @@ package nb_dcache;
 			Bit#(TAdd#(tagbits,2)) tag;
 			Bit#(TLog#(TAdd#(ways,1))) way_num='d-1;
 			Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
-			Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
+			Bool send_resp= req.origin!=Store_buffer;
 
 			for(Integer i = 0; i<ways_val; i = i+1) begin
 				let tempdata= data_arr[i].read_response;
@@ -419,70 +439,111 @@ package nb_dcache;
       	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, line, disp_tag))
 
 				Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);	//TODO Make UniqueWrapper for this fn
+
+				//If MSHR req is not sending response, the current hit response can be sent to the processor.
+				//Hence, deq ff_first_stage. Also, for Store_buffer requests, no response needs to be sent,
+				//and therfore, ff_first_stage can be dequeued.
 				if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
 					wr_stage1_deq<= True;
 				end
+
+				//If MSHR req is not sending response, then this stage can send a response for hit.
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
-					//Get the right offset data and return to core (Even PTW will take it from here)
 					wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: truncate(req.payload),
+																					 prf_index: req.prf_index,
 																					 exception: No_exception };
       		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
-      		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc for load: %h", data_to_core))
-				end
-				else if(req.origin==Store_commit) begin								//Store instruction
-    			Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
-					let write_data= generate_masked_data(line, req.payload, line_offset, req.access_size);
-      		data_arr[hit_way].write(set_index, write_data);
-      		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
-      		`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
+      		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
+				
+					//For a store instruction, update the appropriate data and tag bits in the SRAM.
+					//TODO If MSHR is sending response in a cycle, should the store happen in that or
+					//     should it wait for a free cycle where this stage can send a response?
+					if(req.origin==Store_commit) begin
+    				Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
+						let write_data= generate_masked_data(line, req.data, line_offset, req.access_size);
+      			data_arr[hit_way].write(set_index, write_data);
+      			`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
+					end
 				end
 			end
-			else if(wr_is_mshr_req_to_fb_valid) begin		//Some pending MSHR request to FB, therefore, send it to the next FIFO
-				`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
-				wr_stage2_enq<= req;
+			else if(wr_is_mshr_req_to_fb_valid) begin		//Some pending MSHR request to FB
+				if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
+					`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
+					wr_stage2_enq<= convert_to_Cache_req(req);
+					if(req.origin==Store_commit) begin
+						wr_sram_resp_to_core<= Resp_to_core { data: ?,
+																								  prf_index: req.prf_index,
+																								  exception: No_exception };
+					end
+				end
+				else begin
+					`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store req: ", fshow(req)))
+				end
 			end
-			else begin	//Line miss; send req to FB if MSHR is not sending
+			else begin	//Line miss; send req to FyyB since MSHR is not sending
 				wr_stage2_req_to_fb<= True;
+				`logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
 			end
 		endrule
 
-		//This rule fires in the same cycle as rl_tag_and_data_array_read_response if tag match returned
-		//a miss.
+		//This rule fires in the same cycle as rl_tag_and_data_array_read_response if tag match returned a miss.
 		//This rule sends a req to FB and checks if the response is a hit or not. If it's a hit, an
 		//acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
 		rule rl_stage2_req_to_fb(wr_stage2_req_to_fb);
 			let req= ff_first_stage.first;
-			let fill_buffer_resp<- fill_buffer.request(convertToMSHR_Req(req)); 			//Req and resp to/from fill buffer
+			let fill_buffer_resp<- fill_buffer.request(convert_to_MSHR_Req(req)); 			//Req and resp to/from fill buffer
+			Bool lv_stage1_fb_deq= False;
+
 			//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
 			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
 			//Here, fb_data is the complete fill buffer line
-      `logLevel( dcache, 2, $format("DCACHE : Miss in the dcache for req:", fshow(req)))
+      `logLevel( dcache, 2, $format("DCACHE : Not a hit in SRAM. Checking fill buffer for req:", fshow(req)))
+			if(req.origin==Store_commit && !wr_is_mshr_resp_to_core)
+				lv_stage1_fb_deq= True;
+
 			if(fill_buffer_resp matches tagged Valid .fb_data) begin
 				if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
-					wr_stage1_fb_deq<= True;
+					lv_stage1_fb_deq= True;
 				end
-				`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h",  fb_data))
+				`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h for prf_index: %h",  fb_data, req.prf_index))
 				Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
-				Bool send_resp= (req.origin==Load_buffer || req.origin==PTW);
+				Bool send_resp= req.origin!=Store_buffer;
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_resp_to_core<= Resp_to_core {	data: data_to_core,
-																											prf_index: truncate(req.payload),
+																											prf_index: req.prf_index,
 																											exception: No_exception };
 				end
 				//else do nothing
 			end
 			else if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin	//Req to same line that is being filled in the FB
-				`logLevel( dcache, 2, $format("DCACHE : Req to same line that is being filled in the FB ", fshow(req)))
+				`logLevel( dcache, 2, $format("DCACHE : Req to same line that is being filled in the FB. Stalling... ", fshow(req)))
 			end
 			else begin
-				`logLevel( dcache, 2, $format("DCACHE : Fill buffer miss for req: ", fshow(req)))
-				wr_stage2_fb_enq<= req;
+				`logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
+
+				//if store commit instruction, and mshr is sending response to core, then do not enqueue request into next cycle
+				if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
+					wr_stage2_fb_enq<= convert_to_Cache_req(req);
+				end
+				
+				if(req.origin==Store_commit) begin
+					if(wr_is_mshr_resp_to_core) begin
+						`logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
+					end
+					else begin
+						`logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
+						wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
+																											 prf_index: req.prf_index,
+																											 exception: No_exception };
+					end
+				end
 			end
+
+			wr_stage1_fb_deq<= lv_stage1_fb_deq;
 		endrule
 
 		rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq || wr_stage1_fb_deq_enq || wr_stage1_deq_enq);
-				`logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b stage1_deq_enq:%b ", wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_deq_enq))
+			`logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b stage1_deq_enq:%b ", wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_deq_enq))
 
 			ff_first_stage.deq;
 			for(Integer i = 0; i<ways_val; i = i+1) begin
@@ -536,28 +597,22 @@ package nb_dcache;
 			end
 		endrule
 
+		//This rule resets the valid bit of rg_flush after a flush request is initiated.
+		//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
 		rule rl_reset_rg_flush(rg_flush[0].valid);
-			//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
 			if(!ff_second_stage.notEmpty) begin
 				rg_flush[0].valid<= False;
+				`logLevel( dcache, 2, $format("DCACHE : ff_second_stage empty. Finishing flush"))
 			end
 		endrule
 
+		//This rule executes in the next cycle after a flush is received. This sends the flush signal to
+		//the MSHRs.
 		rule rl_flush_mshr(rg_flush[0].valid && !rg_mshr_flush_done);
 			mshr.flush(rg_flush[0]);
 			rg_mshr_flush_done<=True;
 		endrule
 
-		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
-		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
-		//rid exists in the MSHR FIFOs. Also, when there is no read response from memory, the MSHR sends
-		//any requests that are pending corresponding to the current entry in the fill buffer.
-		//These requests are then sent to the fill buffer to check if they were a hit (Note that there
-		//can be a miss in the fill buffer if only the first chunk has arrived from the memory, but the
-		//request is to data in the third chunk). If it's a hit, an ack is sent to the MSHR to dequeue
-		//that FIFO entry, and send the next request. If it's a miss, no ack is sent, and in the subsequent
-		//clock cycles, the same request is sent by the MSHR to the fill buffer.
-		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
 		rule rl_MSHR_req;
 			let resp_from_mem= wr_read_resp_from_mem;
 			Maybe#(Bit#(TLog#(mshrsize))) lv_id_to_mshr;
@@ -572,9 +627,19 @@ package nb_dcache;
 			end
 		endrule
 
+		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
+		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
+		//rid exists in the MSHR FIFOs. Also, when there is no read response from memory, the MSHR sends
+		//any requests that are pending corresponding to the current entry in the fill buffer.
+		//These requests are then sent to the fill buffer to check if they were a hit (Note that there
+		//can be a miss in the fill buffer if only the first chunk has arrived from the memory, but the
+		//request is to data in the third chunk). If it's a hit, an ack is sent to the MSHR to dequeue
+		//that FIFO entry, and send the next request. If it's a miss, no ack is sent, and in the subsequent
+		//clock cycles, the same request is sent by the MSHR to the fill buffer.
+		//Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
 		rule rl_MSHR_req_to_fill_buffer;
 			let req_from_mshr= wr_mshr_req_to_fb;
-			`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(req_from_mshr)))
+			`logLevel( dcache, 2, $format("DCACHE :Sending  Request from MSHR to FB. "))
 			wr_is_mshr_req_to_fb_valid<= True;
 			let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
 			//Send the req to fill buffer and check if it's a hit
@@ -687,7 +752,7 @@ package nb_dcache;
 		//endinterface
 
 		interface subifc_req_to_ptw= toGet(wr_req_to_ptw);
-	//		method ActionValue#((Req_from_core#(vaddr, datawidth, prf_index))) get;
+	//		method ActionValue#((Cache_req#(vaddr, datawidth, prf_index))) get;
 	//			return wr
 		interface subifc_read_req_to_mem= toGet(ff_read_req_to_mem);
 

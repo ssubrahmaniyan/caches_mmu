@@ -46,7 +46,7 @@ package mshr;
 											numeric type mshrsize,
 											numeric type mshrfifo_depth,
 											numeric type rob_index);
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data, rob_index) req);
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req);
 		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
@@ -146,7 +146,7 @@ package mshr;
 			cff_valid[id].deq;
 		endrule
 
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Req_from_core#(paddr, data, rob_index) req)
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req)
 												if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
