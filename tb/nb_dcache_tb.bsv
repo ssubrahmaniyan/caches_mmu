@@ -76,11 +76,7 @@ package nb_dcache_tb;
   endfunction
 
 
-	//(*descending_urgency="drain_req, core_req"*)
 	(*descending_urgency="core_resp, core_req"*)
-	//(*descending_urgency="core_req, core_resp"*)
-	(*preempts="core_resp, rl_complete_store_req_to_cbuf"*)
-	(*descending_urgency="core_req, rl_complete_store_req_to_cbuf"*)
   (*synthesize*)
   module mknb_dcache_tb(Empty);
 
@@ -106,7 +102,6 @@ package nb_dcache_tb;
 
 	CompletionBuffer#(TExp#(`Prf_index), Bit#(TMul#(`Wordsize,8))) cbuf<- mkCompletionBuffer;
 	FIFO#(Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr))) ff_req <-mkSizedFIFO(64);
-	FIFO#(CBToken#(TExp#(`Prf_index))) ff_token <- mkSizedFIFO(64);
   `ifdef pysimulate
     FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(32);
   `endif
@@ -151,19 +146,14 @@ package nb_dcache_tb;
 				if(request!='1) begin		//not finish test 
 					//CBToken#(TExp#(`Prf_index)) new_token= unpack(0);
 					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_commit;
-					if(req_origin==Load_buffer) begin
-						writedata= zeroExtend(pack(new_token));
-					end
-					else begin
-						ff_token.enq(new_token);
-					end
 					Bit#(`Paddr) p_addr= request[`Paddr-1:0];
 					Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
-					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index) temp_req= Req_from_core{ addr: lv_addr,
-																																								access_size: truncate(size),
-																																								payload: writedata,
-																																								origin: req_origin,
-																																								rob: rob};
+					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= Req_from_core{ addr: lv_addr,
+																																									 access_size: truncate(size),
+																																									 data: writedata,
+																																									 origin: req_origin,
+																																									 rob: rob,
+																																								 	 prf_index: pack(new_token)};
 					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
         	dcache.subifc_req_from_core.put(temp_req);
 				end
@@ -250,12 +240,6 @@ package nb_dcache_tb;
 		$display($format("[%10d", ____t) + $format("] "),"\tTB: Resp from core: ", fshow(resp));
 		cbuf.complete.put(tuple2(unpack(resp.prf_index), resp.data));
   endrule
-
-	rule rl_complete_store_req_to_cbuf;
-		let token= ff_token.first;
-		ff_token.deq;
-		cbuf.complete.put(tuple2(token, 'habcdef));
-	endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid &&& rg_read_delay==0);
 	  let ____t <- $time; 
