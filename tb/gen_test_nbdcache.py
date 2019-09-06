@@ -198,9 +198,6 @@ def test04():
 # buffer if present.
 def test1():
     global entrycount
-    write_to_file(0,read,word,unsigned,nodelay,fence,rob_index)
-    gold_file.write(miss)
-    entrycount=entrycount+1
     address=4096
     for i in range(line_size):
       write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
@@ -558,7 +555,7 @@ def test13():
     entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence) #request to line ,rob_index3
+    write_to_file(address,read,word,unsigned,nodelay,nofence, rob_index) #request to line 3
     gold_file.write(hit)
     entrycount=entrycount+1
 
@@ -573,7 +570,7 @@ def test13():
     entrycount=entrycount+1
 
     address=4096
-    write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line ,rob_index3
+    write_to_file(address,read,word,unsigned,nodelay,nofence, rob_index) # request to old line 3
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -637,7 +634,7 @@ def test14b():
       gold_file.write(miss)
       entrycount=entrycount+1
   
-    write_to_file(address,read,word,unsigned,nodelay,nofence) #1st re,rob_indexq
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #1st req
     gold_file.write(hit)
     entrycount=entrycount+1
 
@@ -1213,34 +1210,39 @@ def test29():
         write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
-#test0()
+#test02()
 #test03()
 #test04()
 #test1()
-#test2()
-#test3()
-#test4()
-#test5()
+#test2() #39798
+#test3() #1668
+#test4() #1788
+#test5() #1858
 ##test6() 
-#test7()
-#test8()
-#test9()
-#test10()
-#test11()
-#test12()
-#test13()
-#test14a()
-#test14b()
-#test15()
-#test16()
-#test17()
-#test18()
-#test19()
-#test20()
-#test21()
-#test22()
-#test23()
-test29()
+#test7() #1788
+#test8() #1698
+#test9() #3348
+#test10() #2748
+#test11() #2758
+#test12() #2458
+#test13() #2608
+#test14a() #1718
+#test14b() #1718
+#test15() #2298
+#test16() #1868
+#test17() #1598
+#test18() #1618
+#test19() #2308
+#test20() #2608
+#test21() #1588
+#test22() #1588
+#test23() #2808
+#test24() #2658
+#test25() #2808
+test26()
+#test27()
+#test28()
+#test29()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
