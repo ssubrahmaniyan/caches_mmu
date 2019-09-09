@@ -1,15 +1,15 @@
-/* 
+/*
 Copyright (c) 2018, IIT Madras All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted
 provided that the following conditions are met:
 
 * Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.  
-* Redistributions in binary form must reproduce the above copyright notice, this list of 
-  conditions and the following disclaimer in the documentation and / or other materials provided 
- with the distribution.  
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
+  and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright notice, this list of
+  conditions and the following disclaimer in the documentation and / or other materials provided
+ with the distribution.
+* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or
   promote products derived from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
@@ -18,7 +18,7 @@ AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYR
 CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------------------------
 
@@ -49,9 +49,9 @@ package l1dcache_vipt;
   import replacement_dcache::*;   // for replacement algorithms
   `include "cache.defines"        // for macro definitions
   `include "Logger.bsv"           // for logging
-  
-  interface Ifc_l1dcache#( numeric type wordsize, 
-                           numeric type blocksize,  
+
+  interface Ifc_l1dcache#( numeric type wordsize,
+                           numeric type blocksize,
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
@@ -102,10 +102,10 @@ package l1dcache_vipt;
   (*conflict_free="request_to_memory, perform_store"*)
   (*conflict_free="allocate_storebuffer, respond_to_core"*)
   (*conflict_free="allocate_storebuffer, request_to_memory"*)
-  module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
-                     parameter String alg) 
-                     (Ifc_l1dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, fbsize, 
-                                    sbsize, esize, dbanks, tbanks)) 
+  module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable),
+                     parameter String alg)
+                     (Ifc_l1dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, fbsize,
+                                    sbsize, esize, dbanks, tbanks))
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth, linewidth),// linewidth is the total bits in a cache line
@@ -113,7 +113,7 @@ package l1dcache_vipt;
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
           Log#(sets, setbits),           // setbits is the no. of bits used as index in BRAMs.
           Add#(wordbits, blockbits, _a),  // _a total bits to index a byte in a cache line.
-          Add#(_a, setbits, _b),        // _b total bits for index + offset, 
+          Add#(_a, setbits, _b),        // _b total bits for index + offset,
           Add#(tagbits, _b, paddr),     // tagbits = 32 - (wordbits + blockbits + setbits)
           Add#(s__, respwidth, vaddr),
 
@@ -122,7 +122,7 @@ package l1dcache_vipt;
           Add#(1, f__, TLog#(TAdd#(1, ways))),
           Add#(1, o__, TLog#(TAdd#(1, sbsize))),
           `endif
-            
+
           // for dbanks
           Add#(q__, TDiv#(linewidth, dbanks), linewidth),
           Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
@@ -145,7 +145,7 @@ package l1dcache_vipt;
           Mul#(16, m__, respwidth),
           Add#(n__, TLog#(fbsize), TLog#(TAdd#(1, fbsize))),
           Add#(n__, TLog#(sbsize), TLog#(TAdd#(1, sbsize)))
-          
+
     );
     let v_sets = valueOf(sets);
     let v_setbits = valueOf(setbits);
@@ -163,7 +163,7 @@ package l1dcache_vipt;
 
     String dcache=""; // defined for Logger
 
-    function Bit#(respwidth) fn_atomic_op (Bit#(5) op,  Bit#(respwidth) rs2,  
+    function Bit#(respwidth) fn_atomic_op (Bit#(5) op,  Bit#(respwidth) rs2,
                                            Bit#(respwidth) loaded);
       Bit#(respwidth) op1 = loaded;
       Bit#(respwidth) op2 = rs2;
@@ -173,7 +173,7 @@ package l1dcache_vipt;
       end
       Int#(respwidth) s_op1 = unpack(op1);
 	  	Int#(respwidth) s_op2 = unpack(op2);
-      
+
       case (op[3 : 0])
 	  			'b0011 : return op2;
 	  			'b0000 : return (op1 + op2);
@@ -188,7 +188,7 @@ package l1dcache_vipt;
 	  		endcase
     endfunction
 
-  
+
     //Following function returns the info regarding word_position in line getting filled
     function Bit#(blocksize) fn_enable(Bit#(blockbits)word_index);
        Bit#(blocksize) write_enable = 'h0; //
@@ -204,7 +204,7 @@ package l1dcache_vipt;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     // This fifo stores the request from the core.
-    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_core_request <- mkSizedFIFOF(2); 
+    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_core_request <- mkSizedFIFOF(2);
     // This fifo stores the response that needs to be sent back to the core.
     FIFOF#(DMem_core_response#(respwidth, esize))ff_core_response <- mkBypassFIFOF();
     // This fifo stores the response that needs to be sent back to the PTW.
@@ -213,18 +213,18 @@ package l1dcache_vipt;
     FIFOF#(DCache_mem_readreq#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
     FIFOF#(DCache_mem_readresp#(respwidth)) ff_read_mem_response  <- mkBypassFIFOF();
-    
+
     FIFOF#(DCache_mem_readreq#(paddr)) ff_nc_read_request    <- mkSizedFIFOF(2);
     // This fifo stores the response from the next level memory.
     FIFOF#(DCache_mem_readresp#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
-    
+
     FIFOF#(DCache_mem_writereq#(paddr, TMul#(wordsize, 8))) ff_nc_write_request  <- mkSizedFIFOF(2);
-    
-    FIFOF#(DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8)))) ff_write_mem_request    
+
+    FIFOF#(DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8)))) ff_write_mem_request
                                                                               <- mkSizedFIFOF(1);
     FIFOF#(DCache_mem_writeresp) ff_write_mem_response  <- mkBypassFIFOF();
 
-    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_hold_request <- mkBypassFIFOF(); 
+    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_hold_request <- mkBypassFIFOF();
 
     // The following wire holds the physical address from TLB
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
@@ -244,12 +244,12 @@ package l1dcache_vipt;
     `endif
     // ------------------------------------------------------------------------------------------//
 
-   
+
     // ------------------------ Structures required for cache RAMS ------------------------------//
     Ifc_mem_config1rw#(sets, linewidth, dbanks) data_arr [v_ways]; // data array
     Ifc_mem_config1rw#(sets, tagbits, tbanks) tag_arr [v_ways];// one extra valid bit
     for(Integer i = 0;i<v_ways;i = i+1)begin
-      data_arr[i] <- mkmem_config1rw(False, "single"); 
+      data_arr[i] <- mkmem_config1rw(False, "single");
       tag_arr[i] <- mkmem_config1rw(False, "single");
     end
     Ifc_replace#(sets, ways) repl <- mkreplace(alg);
@@ -312,7 +312,7 @@ package l1dcache_vipt;
     Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <- mkReg(0);
     Reg#(Bit#(blocksize))     rg_fbfillenable <- mkReg(0);
     Reg#(Bool) rg_readdone <- mkDReg(False);
-    
+
     Bit#(tagbits) writetag = fb_addr[rg_fbwriteback][v_paddr - 1:v_paddr - v_tagbits];
     Bit#(linewidth) writedata = fb_dataline[rg_fbwriteback];
 
@@ -378,7 +378,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
     endrule
 
     // This rull fires when the fence operation is signalled by the core and the FB is empty.
-    // if the rg_global_dirty is not set then the dcache 
+    // if the rg_global_dirty is not set then the dcache
     // will take only a single cycle since all the valid signals in the cache and FB are registers
     // which can be reset in one - shot. The replacement policies for each set should also be reset.
     // Since they too are implemented as array of registers it can be done in a single cycle.
@@ -393,7 +393,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       Bit#(linewidth) final_line = 0;
       Bit#(TLog#(ways)) waynum = truncate(pack(countZerosLSB(rg_way_select)));
       Bit#(TSub#(paddr, TAdd#(tagbits, setbits))) zeros = 'd0;
-      
+
       Bit#(TAdd#(1, TLog#(sets))) next_set={1'b0, rg_set_select}+1;
       Bit#(TAdd#(1, TLog#(sets))) index={1'b0, rg_set_select};
 
@@ -455,7 +455,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
         rg_fenceinit <= False;
 
       `logLevel( dcache, 0, $format("DCACHE : Fence in progress."))
-      `logLevel( dcache, 1, $format("DCACHE : Fence : way:%b set:%d index:%d nset:%d", 
+      `logLevel( dcache, 1, $format("DCACHE : Fence : way:%b set:%d index:%d nset:%d",
                                     rg_way_select, rg_set_select, index, next_set))
     endrule
 
@@ -480,7 +480,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       Bit#(TAdd#(3, TAdd#(wordbits, blockbits)))block_offset=
                                          {request.address[v_blockbits + v_wordbits - 1:0], 3'b0};
       Bit#(blockbits) word_index = request.address[v_blockbits + v_wordbits - 1:v_wordbits];
-      Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 : 
+      Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                         v_blockbits + v_wordbits];
 
       Bit#(linewidth) dataline[v_ways];
@@ -533,17 +533,17 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
 
     // This rule will fire whenever a core request is present. This rule will check the entire FB if
     // the requested line and hence the word is present. A "TRUE" miss in the cache is only
-    // generated when the line containing the requested word is not present in FB and the cache. 
+    // generated when the line containing the requested word is not present in FB and the cache.
     // There can be a case where the line requested is present but the word is not preset since it
     // is being filled by the lower level memory.
     rule check_fb_for_corerequest(ff_core_response.notFull && !ff_core_request.first.fence);
       Bool wordhit = False;
       let request = ff_core_request.first();
       let pa = ff_from_tlb.first;
-      Bit#(setbits) read_set = request.address[v_setbits + v_blockbits + v_wordbits - 1 : 
+      Bit#(setbits) read_set = request.address[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                           v_blockbits + v_wordbits];
 
-      Bit#(TAdd#(3, TAdd#(wordbits, blockbits)))block_offset = 
+      Bit#(TAdd#(3, TAdd#(wordbits, blockbits)))block_offset =
                                             {request.address[v_blockbits + v_wordbits - 1:0], 3'b0};
 
       Bit#(blockbits) word_index = request.address[v_blockbits + v_wordbits - 1 : v_wordbits];
@@ -551,7 +551,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       Bit#(fbsize) fbhit = 0;
       Bit#(linewidth) hitline = 0;
       Bit#(1) fberr = 0;
- 
+
  /*
       Bit#(linewidth) data_t [v_fbsize];
       for (Integer i = 0; i<v_fbsize ; i = i+1) begin
@@ -562,8 +562,8 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       end
       for(Integer i = 0; i<v_fbsize ;i = i+1)
         hitline = hitline|data_t[i];
- */     
-      
+ */
+
       for (Integer i = 0;i<v_fbsize;i = i+1)begin
         // we use truncateLSB because we need to match only the tag and set bits
         if( truncateLSB(fb_addr[i]) == t && fb_valid[i])begin
@@ -573,9 +573,9 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
           if(fb_enables[i][word_index] == 1'b1) begin
             wordhit = True;
           end
-        end          
+        end
       end
-      
+
       Bool linehit = unpack(|fbhit);
       if(wordhit)
         wr_fb_response <= Hit;
@@ -586,12 +586,12 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       `ifdef pysimulate
         wrpolling <= rg_polling;
       `endif
-      wr_fb_word <= truncate(hitline>>block_offset); 
+      wr_fb_word <= truncate(hitline>>block_offset);
       wr_fbindexhit <= truncate(pack(countZerosLSB(fbhit)));
       wr_fb_err <= fberr;
 
       `logLevel( dcache, 0, $format("DCACHE : FB Polling for Req: ",fshow(request)))
-      `logLevel( dcache, 1, $format("DCACHE : FP Polling Result. linehit:%b wordhit:%b", 
+      `logLevel( dcache, 1, $format("DCACHE : FP Polling Result. linehit:%b wordhit:%b",
                                     linehit, wordhit))
 
       `ifdef ASSERT
@@ -615,8 +615,8 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
         Bit#(respwidth) temp = store_size[rg_storetail - 1] == 0?'hff:
                           store_size[rg_storetail - 1] == 1?'hffff:
                           store_size[rg_storetail - 1] == 2?'hffffffff : '1;
-        temp = temp << shiftamt1; 
-        storemask1 = temp;  
+        temp = temp << shiftamt1;
+        storemask1 = temp;
       end
       if(compareaddr2 == wordaddr /*&& valid*/)begin
         Bit#(TLog#(respwidth)) shiftamt2 = {store_addr[rg_storetail][v_wordbits - 1:0], 3'b0}; //TODO parameterize for XLEN
@@ -626,17 +626,17 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
         temp = temp << shiftamt2;
         storemask2 = temp & (~storemask1); // 'h00_00_00_FF
       end
-    
+
       let data1 = storemask1 & store_data[rg_storetail - 1];
       let data2 = storemask2 & store_data[rg_storetail];
       wr_sb_hitword <= data1|data2;
       wr_sb_mask <= storemask1|storemask2;
     endrule
 
-    rule allocate_storebuffer( (wr_cache_response == Hit || 
+    rule allocate_storebuffer( (wr_cache_response == Hit ||
                                (wr_fb_response == Hit && wr_fb_err == 0) ||
-                                wr_allocate_storebuffer|| wr_nc_response == Hit) &&  
-                                ff_core_request.first.access != 0 && 
+                                wr_allocate_storebuffer|| wr_nc_response == Hit) &&
+                                ff_core_request.first.access != 0 &&
                                 !ff_core_request.first.fence && !wr_trap_from_tlb);
 
       let request = ff_core_request.first();
@@ -669,13 +669,13 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
 
     // This rule is fired when there is a hit in the cache. The word received is further modified
     // depending on the request made by the core.
-    rule respond_to_core(wr_cache_response == Hit || wr_fb_response == Hit || wr_nc_response == Hit || 
+    rule respond_to_core(wr_cache_response == Hit || wr_fb_response == Hit || wr_nc_response == Hit ||
       wr_trap_from_tlb);
       let request = ff_core_request.first();
       let pa = ff_from_tlb.first;
       Bit#(respwidth) word = 0;
       Bool err = False;
-      Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 : 
+      Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                           v_blockbits + v_wordbits];
       let offset = (v_respwidth == 64) ? 2:1;
       Bit#(TLog#(respwidth)) loadoffset = {request.address[v_wordbits - 1:0], 3'b0};// TODO parameterize for XLEN
@@ -683,7 +683,7 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
         word = wr_cache_hitword;
         if(alg=="PLRU") begin
           wr_cache_hitindex <= tagged Valid set_index;
-          repl.update_set(set_index, wr_hitway);//wr_replace_line); 
+          repl.update_set(set_index, wr_hitway);//wr_replace_line);
         end
         `ifdef perf
           wr_total_cache_hits <= 1;
@@ -695,7 +695,7 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
           updated_word = (updated_word&~wr_sb_mask)|(wr_sb_hitword);
           word = updated_word>>loadoffset;
         end
-        else 
+        else
           word = wr_fb_word;
 
         err = unpack(wr_fb_err);
@@ -750,7 +750,7 @@ Cache Hit");
           default : word;
         endcase;
         `logLevel( dcache, 0, $format("DCACHE: Sending to Core. Word:%h Addr:%h Access:%d TagHit:%b \
-FBHit:%b NCHit:%b", word, request.address, request.access, pack(wr_cache_response), 
+FBHit:%b NCHit:%b", word, request.address, request.access, pack(wr_cache_response),
 pack(wr_fb_response), pack(wr_nc_response)))
 
       if(!pa.trap && err)begin
@@ -763,7 +763,7 @@ pack(wr_fb_response), pack(wr_nc_response)))
       if(pa.trap || (!request.ptwalk_req && !pa.tlbmiss)) begin
         if(pa.trap)
           word = truncate(request.address);
-        ff_core_response.enq(DMem_core_response{word : word, trap : pa.trap, cause : pa.cause, 
+        ff_core_response.enq(DMem_core_response{word : word, trap : pa.trap, cause : pa.cause,
                                                   epochs : request.epochs});
       end
       else if(request.ptwalk_req && !pa.tlbmiss)
@@ -803,16 +803,16 @@ pack(wr_fb_response), pack(wr_nc_response)))
     `endif
 
     // This rule will generate a miss request to the next level memory. The address from the core
-    // cannot be directly sent to the bus. The address will have to made word - aligned before 
+    // cannot be directly sent to the bus. The address will have to made word - aligned before
     // sending it to the next level.
     // Here as soon as a miss is detected we allocate a line in the fill buffer for the requested
     // access. The line - allocation is done using rg_fbmissallocate register which follows a
-    // round - robin mechanism for now. 
+    // round - robin mechanism for now.
     // the line to be filled is further enqued into the ff_fb_fillindex which is used to identify
     // which line is the memory response to fill in the FB
     rule request_to_memory(wr_cache_response == Miss && !rg_miss_ongoing && wr_fb_response == Miss
                                          && wr_nc_response != Hit && !wr_trap_from_tlb &&!fb_full);
-                                                                                        
+
       let request = ff_core_request.first();
       let pa = ff_from_tlb.first;
       if(!isNonCacheable(pa.address, wr_cache_enable)) begin
@@ -828,8 +828,8 @@ pack(wr_fb_response), pack(wr_nc_response)))
         fb_enables[rg_fbmissallocate] <= 0;
         fb_dirty[rg_fbmissallocate] <= 0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
-        `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", pa.address)) 
-        `logLevel( dcache, 1, $format("DCACHE : Allocating FBindex:", rg_fbmissallocate)) 
+        `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", pa.address))
+        `logLevel( dcache, 1, $format("DCACHE : Allocating FBindex:", rg_fbmissallocate))
         `ifdef ASSERT
           dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill - buffer");
         `endif
@@ -874,9 +874,9 @@ pack(wr_fb_response), pack(wr_nc_response)))
         Bit#(respwidth) we = duplicate(temp[i]);
         mask[i * v_respwidth + v_respwidth - 1:i * v_respwidth] = we;
       end
-      
+
       Bit#(linewidth) final_mask = mask|wr_upd_fillingmask;
-      Bit#(linewidth) final_data = (wr_upd_fillingmask & wr_upd_fillingdata) | 
+      Bit#(linewidth) final_data = (wr_upd_fillingmask & wr_upd_fillingdata) |
                                    (mask & duplicate(response.data));
       Bit#(linewidth) x = (~final_mask & fb_dataline[fbindex]) | (final_mask & final_data);
       fb_dataline[fbindex] <= x;
@@ -902,8 +902,8 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         dynamicAssert(response.last,"Why is IO response a burst");
       `endif
     endrule
-    
-    // This rule will evict an entry from the fill - buffer and update it in the cache RAMS. 
+
+    // This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
     // Multiple conditions under which this rule can fire:
     // 1. when the FB is full
     // 2. when the core is not requesting anything in a particular cycle and there exists a valid
@@ -911,21 +911,21 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     // 3. The rule will not fire when the entry being evicted is a line that has been recently
     // requested by the core (present in the ff_core_request). Writing this line would cause a
     // replay of the latest request. This would cause another cycle delay which would eventually be
-    // a hit in the cache RAMS. 
+    // a hit in the cache RAMS.
     // 4. If while filling the RAM, it is found that the line being filled is dirty then a read
     // request for that line is sent. In the next cycle the read line is sent to memory and the line
     // from the FB is written into the RAM. Also in the next cycle a read - request for the latest
     // read from the core is replayed again.
     // 5. If the line being filled in the RAM is not dirty, then the FB line simply ovrwrites the
-    // line in one = cycle. The latest request from the core is replayed if the replacement was to 
+    // line in one = cycle. The latest request from the core is replayed if the replacement was to
     // the same index.
-    rule release_from_FB((fb_full || fill_oppurtunity || rg_fence_stall) && 
-                          !rg_replaylatest && !fb_empty && fb_valid[rg_fbwriteback] && 
-                          (&fb_enables[rg_fbwriteback]) == 1 
+    rule release_from_FB((fb_full || fill_oppurtunity || rg_fence_stall) &&
+                          !rg_replaylatest && !fb_empty && fb_valid[rg_fbwriteback] &&
+                          (&fb_enables[rg_fbwriteback]) == 1
                           && sb_empty);
       // if line is valid and is completely filled.
       let addr = fb_addr[rg_fbwriteback];
-      Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 : 
+      Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                           v_blockbits + v_wordbits];
       Bit#(tagbits) tag = addr[v_paddr - 1:v_paddr - v_tagbits];
       let waynum <- repl.line_replace(set_index, rg_valid[set_index], rg_dirty[set_index]);
@@ -943,7 +943,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
           let dirtydata <- data_arr[waynum].read_response;
           Bit#(paddr) final_address={dirtytag, set_index, zeros};
           if(rg_readdone)begin
-            `logLevel( dcache, 1, $format("DCACHE : FBRelease. Evict Addr:%h Data:%h", 
+            `logLevel( dcache, 1, $format("DCACHE : FBRelease. Evict Addr:%h Data:%h",
                                           final_address, dirtydata))
             ff_write_mem_request.enq(DCache_mem_writereq{address   : final_address,
                                                burst_len : fromInteger(valueOf(blocksize) - 1),
@@ -969,11 +969,11 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                 repl.update_set(set_index, waynum);
             end
           end
-          `logLevel( dcache, 1, $format("DCACHE : ReleaseFiring. rg_fbwb:%d index:%d tag:%h way:%d", 
+          `logLevel( dcache, 1, $format("DCACHE : ReleaseFiring. rg_fbwb:%d index:%d tag:%h way:%d",
                 rg_fbwriteback, set_index, writetag, waynum, " dirty:%b",fb_dirty[rg_fbwriteback]))
         end
       end
-      else begin 
+      else begin
         fb_valid[rg_fbwriteback] <= False;
         rg_fbwriteback <= rg_fbwriteback + 1;
       end
@@ -992,7 +992,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     endrule
 
     interface core_req = interface Put
-      method Action put(DCache_core_request#(vaddr, respwidth, esize) req) 
+      method Action put(DCache_core_request#(vaddr, respwidth, esize) req)
                 if( ff_core_response.notFull && !rg_replaylatest &&  !rg_fence_stall && !fb_full );
         `ifdef perf
           wr_total_access <= 1;
@@ -1014,20 +1014,20 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     interface core_resp     = toGet(ff_core_response);
 
     interface ptw_resp      = toGet(ff_ptw_response);
-    
+
     interface read_mem_req  = toGet(ff_read_mem_request);
 
     interface read_mem_resp = toPut(ff_read_mem_response);
-    
+
     interface nc_read_req   = toGet(ff_nc_read_request);
 
     interface nc_read_resp  = toPut(ff_nc_read_response);
 
     interface pa_from_tlb   = toPut(ff_from_tlb);
 
-  `ifdef pysimulate 
+  `ifdef pysimulate
     interface meta = toGet(ff_meta)
-  `endif 
+  `endif
 
     method Action cache_enable(Bool c);
       wr_cache_enable <= c;
@@ -1041,11 +1041,11 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       let size = store_size[rg_storehead];
       let epoch = store_epoch[rg_storehead];
       let io = store_io[rg_storehead];
-      Bit#(respwidth) temp = size[1 : 0] == 0?'hFF : 
-                             size[1 : 0] == 1?'hFFFF : 
+      Bit#(respwidth) temp = size[1 : 0] == 0?'hFF :
+                             size[1 : 0] == 1?'hFFFF :
                              size[1 : 0] == 2?'hFFFFFFFF : '1;
 
-      Bit#(linewidth) mask = zeroExtend(temp); 
+      Bit#(linewidth) mask = zeroExtend(temp);
       Bit#(wordbits) zeros = 0;
       Bit#(TAdd#(3, TAdd#(wordbits, blockbits))) block_offset=
                                     {addr[v_blockbits + v_wordbits - 1:0], 3'b0};
@@ -1054,7 +1054,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                                      rg_storehead, addr, data))
       if(epoch == currepoch)begin
         if(io == 1)begin
-          `logLevel( dcache, 1, $format("DCACHE : IO Store Addr:%h Size:%d Data:%h", addr, 
+          `logLevel( dcache, 1, $format("DCACHE : IO Store Addr:%h Size:%d Data:%h", addr,
                                          size, data))
           ff_nc_write_request.enq(DCache_mem_writereq{address     : addr,
                                                       burst_len   : 0,
@@ -1102,22 +1102,22 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       endmethod
 
     interface write_mem_resp = toPut(ff_write_mem_response);
-    
+
     interface nc_write_req = toGet(ff_nc_write_request);
 
-    method cache_available = ff_core_request.notFull && ff_core_response.notFull && 
+    method cache_available = ff_core_request.notFull && ff_core_response.notFull &&
                   !rg_replaylatest &&  !rg_fence_stall && !fb_full && !sb_full;
     method storebuffer_empty = sb_empty;
     interface hold_req = toGet(ff_hold_request);
   endmodule
- 
+
 //  function Bool isIO(Bit#(32) addr, Bool cacheable);
 //    if(!cacheable)
 //      return True;
 //    else if( addr < 4096)
 //      return True;
 //    else
-//      return False;    
+//      return False;
 //  endfunction
 //
 //

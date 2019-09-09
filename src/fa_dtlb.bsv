@@ -47,6 +47,16 @@ package fa_dtlb;
     Bit#(`ppnsize) ppn;
   } VPNTag deriving(Bits, FShow, Eq);
 
+  typedef struct{
+    Bool trap;
+    Bit#(`causesize) cause;
+    Bool tlbmiss;
+    Bool translation_done;
+    Bit#(`vaddr) va;
+    VPNTag pte;
+    Bit#(2) access;
+  } LookUpResult deriving(Bits, FShow, Eq);
+
   interface Ifc_fa_dtlb;
 
     interface Put#(DTLB_core_request#(`vaddr)) core_request;
@@ -93,7 +103,8 @@ package fa_dtlb;
     /*doc:reg: */
     Reg#(Bit#(`vaddr)) rg_miss_queue <- mkReg(0);
     FIFOF#(PTWalk_tlb_request#(`vaddr)) ff_request_to_ptw <- mkSizedFIFOF(2);
-    FIFOF#(DTLB_core_response#(`paddr)) ff_core_respone <- mkSizedFIFOF(2);
+    FIFOF#(LookUpResult) ff_lookup_result <- mkSizedFIFOF(2);
+    FIFOF#(DTLB_core_response#(`paddr)) ff_core_response <- mkBypassFIFOF();
 
     // global variables based on the above wires
     Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
@@ -121,32 +132,34 @@ package fa_dtlb;
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
      all the tlb entries*/
-    rule rl_fence(rg_sfence && !rg_tlb_miss && !ff_core_respone.notEmpty);
+    rule rl_fence(rg_sfence && !rg_tlb_miss && !ff_lookup_result.notEmpty);
       for (Integer i = 0; i < `dtlbsize; i = i + 1) begin
         v_vpn_tag[i] <= unpack(0);
       end
       rg_sfence <= False;
       rg_replace <= 0;
+      `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
     endrule
 
-    interface core_request = interface Put
-      method Action put (DTLB_core_request#(`vaddr) req) if(!rg_sfence);
-
-        `logLevel( tlb, 0, $format("core id:%2d ", hartid,"DTLB: received req: ",fshow(req)))
-
-        Bit#(12) page_offset = req.address[11 : 0];
-        Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
-
-        /*doc:func: */
-        function Bool fn_vtag_match (VPNTag t);
-          return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
-                                 && (t.asid == satp_asid || t.permissions.g);
-        endfunction
-
-        Bit#(`causesize) cause = req.access == 0 ? `Load_pagefault : `Store_pagefault;
-        Bit#(TLog#(`dtlbsize)) tagmatch = 0;
-        let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
-        let pte = fromMaybe(unpack(0), hit_entry);
+    /*doc:rule: */
+    rule rl_send_response(!rg_sfence);
+      let lookup = ff_lookup_result.first;
+      ff_lookup_result.deq;
+      Bit#(12) page_offset = lookup.va[11 : 0];
+      Bit#(`vpnsize) fullvpn = truncate(lookup.va >> 12);
+      Bit#(2) priv = mprv == 0?wr_priv : mpp;
+      `logLevel( dtlb, 1, $format("DTLB: LookupResult: ",fshow(lookup)))
+      if(lookup.translation_done)begin
+        ff_core_response.enq(DTLB_core_response{address: truncate(lookup.va),
+                                             trap: lookup.trap,
+                                             cause: lookup.cause,
+                                             tlbmiss: False});
+      end
+      else begin
+        Bool page_fault = False;
+        Bit#(`causesize) cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
+        let pte = lookup.pte  ;
+        Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = lookup.va[`vaddr - 1 : `maxvaddr];
         let permissions = pte.permissions;
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
@@ -159,91 +172,100 @@ package fa_dtlb;
         Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
       `endif
 
-        if(req.sfence && !req.ptwalk_req)begin
-          `logLevel( dtlb, 0, $format("DTLB: SFence received"))
-          rg_sfence <= True;
-          if(rg_tlb_miss && !req.ptwalk_req)
-            rg_tlb_miss <= False;
+        `logLevel( dtlb, 2, $format("mask:%h",mask))
+        `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
+        `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
+        `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
+        `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+
+        // check for permission faults
+      `ifndef sv32
+        if(unused_va != signExtend(lookup.va[`maxvaddr-1]))begin
+          page_fault = True;
         end
-        else if(req.ptwalk_trap)begin
-          cause = req.cause;
-          Bool page_fault = True;
-          ff_core_respone.enq(DTLB_core_response{address    : ?,
-                                                   trap     : page_fault,
-                                                   cause    : cause,
-                                                   tlbmiss  : False});
-          `logLevel( dtlb, 2, $format("DTLB: Forwarding Trap from PTW"))
-          if(rg_tlb_miss)
-            rg_tlb_miss <= False;
+      `endif
+        // pte.a == 0 || pte.d == 0 and access != Load
+        if(!permissions.a || (!permissions.d && lookup.access != 0))begin
+          page_fault = True;
+        end
+        if(lookup.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
+          page_fault = True;
+        end
+        if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+          page_fault = True;
+        end
+        if(!permissions.u && priv == 0)begin
+          page_fault = True;
+        end
+
+        // for Store access
+        if(lookup.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+          page_fault = True;
+        end
+        if(lookup.tlbmiss)begin
+          rg_miss_queue <= lookup.va;
+          ff_request_to_ptw.enq(PTWalk_tlb_request{address : lookup.va, access : lookup.access });
+          ff_core_response.enq(DTLB_core_response{address  : ?,
+                                                 trap     : False,
+                                                 cause    : ?,
+                                                 tlbmiss  : True});
         end
         else begin
-          Bool page_fault = False;
-          Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = req.address[`vaddr - 1 : `maxvaddr];
-          Bit#(2) priv = mprv == 0?wr_priv : mpp;
-          // transparent translation
-          if(satp_mode == 0 || priv == 3 || req.ptwalk_req )begin
-            Bit#(`paddr) coreresp = truncate(req.address);
-            Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
-            Bool trap = |upper_bits == 1;
-            cause = req.access == 0 ? `Load_access_fault : `Store_access_fault;
-            ff_core_respone.enq(DTLB_core_response{address  : signExtend(coreresp),
-                                                   trap     : trap,
-                                                   cause    : cause,
-                                                   tlbmiss  : False});
-            `logLevel( dtlb, 0, $format("DTLB : Transparent Translation. PhyAddr: %h",coreresp))
-          end
-          else if (isValid(hit_entry)) begin
-            `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
-            `logLevel( dtlb, 0, $format("mask:%h",mask))
-            `logLevel( dtlb, 0, $format("lower_ppn:%h",lower_ppn))
-            `logLevel( dtlb, 0, $format("lower_vpn:%h",lower_vpn))
-            `logLevel( dtlb, 0, $format("lower_pa:%h",lower_pa))
-            `logLevel( dtlb, 0, $format("highest_ppn:%h",highest_ppn))
-
-            // check for permission faults
-          `ifndef sv32
-            if(unused_va != signExtend(req.address[`maxvaddr-1]))begin
-              page_fault = True;
-            end
-          `endif
-            // pte.a == 0 || pte.d == 0 and access != Load
-            if(!permissions.a || (!permissions.d && req.access != 0))begin
-              page_fault = True;
-            end
-            if(req.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
-              page_fault = True;
-            end
-            if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
-              page_fault = True;
-            end
-            if(!permissions.u && priv == 0)begin
-              page_fault = True;
-            end
-
-            // for Store access
-            if(req.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
-              page_fault = True;
-            end
-            `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-            ff_core_respone.enq(DTLB_core_response{address  : truncate(physicaladdress),
-                                                   trap     : page_fault,
-                                                   cause    : cause,
-                                                   tlbmiss  : False});
-            if(rg_tlb_miss)
-              rg_tlb_miss <= False;
-          end
-          else begin
-            // Send virtual - address and indicate it is an instruction access to the PTW
-            `logLevel( dtlb, 0, $format("DTLB : TLBMiss. Sending Address to PTW:%h",req.address))
-            rg_tlb_miss <= True;
-            rg_miss_queue <= req.address;
-            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : req.access });
-            ff_core_respone.enq(DTLB_core_response{address  : ?,
-                                                   trap     : False,
-                                                   cause    : cause,
-                                                   tlbmiss  : True});
-          end
+          `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+          `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
+          ff_core_response.enq(DTLB_core_response{address  : truncate(physicaladdress),
+                                               trap     : page_fault,
+                                               cause    : cause,
+                                               tlbmiss  : False});
         end
+      end
+    endrule
+
+    interface core_request = interface Put
+      method Action put (DTLB_core_request#(`vaddr) req) if(!rg_sfence);
+
+        `logLevel( dtlb, 0, $format("core id:%2d ", hartid,"DTLB: received req: ",fshow(req)))
+
+        Bit#(12) page_offset = req.address[11 : 0];
+        Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
+
+        /*doc:func: */
+        function Bool fn_vtag_match (VPNTag t);
+          return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
+                                 && (t.asid == satp_asid || t.permissions.g);
+        endfunction
+
+        Bit#(`vaddr) va = req.address;
+        Bit#(`causesize) cause = req.cause;
+        Bool trap = req.ptwalk_trap;
+        Bool translation_done = False;
+        let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
+        Bool tlbmiss = !isValid(hit_entry);
+        VPNTag pte = fromMaybe(?,hit_entry);
+        Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
+        Bit#(2) priv = mprv == 0?wr_priv : mpp;
+        translation_done = (satp_mode == 0 || priv == 3 || req.ptwalk_req || req.ptwalk_trap);
+        if(!trap && translation_done)begin
+           trap = |upper_bits == 1;
+           cause = req.access == 0? `Load_access_fault: `Store_access_fault;
+        end
+
+        if(req.sfence && !req.ptwalk_req)begin
+          rg_sfence <= True;
+        end
+        else begin
+          ff_lookup_result.enq(LookUpResult{va: va, trap: trap, cause: cause,
+                                            translation_done: translation_done,
+                                            tlbmiss: tlbmiss, pte: pte, access: req.access});
+        end
+
+        if(req.sfence)
+          rg_tlb_miss <= False;
+        else if(rg_tlb_miss && req.ptwalk_trap)
+          rg_tlb_miss <= False;
+        else if(!translation_done && !req.ptwalk_req)
+          rg_tlb_miss <= tlbmiss;
+
       endmethod
     endinterface;
 
@@ -281,7 +303,7 @@ package fa_dtlb;
       endmethod
     endinterface;
 
-    interface core_response = toGet(ff_core_respone);
+    interface core_response = toGet(ff_core_response);
 
     interface request_to_ptw = toGet(ff_request_to_ptw);
 
@@ -299,7 +321,7 @@ package fa_dtlb;
     endmethod
 
     /*doc:method: */
-    method mv_tlb_available = !rg_tlb_miss && ff_core_respone.notFull;
+    method mv_tlb_available = !rg_tlb_miss && ff_lookup_result.notFull;
 
   `ifdef pmp
     method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
