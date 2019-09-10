@@ -1017,6 +1017,7 @@ def test25():
         entrycount=entrycount+1
         gold_file.write(miss)
 
+#flush test. Response comes only for rob_index 3 and 4 (prf_index 0 and 2).
 def test26():
     global entrycount
     address=4096
@@ -1047,11 +1048,13 @@ def test26():
     entrycount=entrycount+1
 
 #This testcase tests if ff_second_stage has one entry, and MSHRs are full, then no new core requests can be taken as this needs to be evaluated for flushing (which can be done only when dequeueing this FIFO). One possible optimization is to add a array of registers on top of the FIFO and then set the valid bits accordingly (the same way valid bits are being maintained for MSHRs).
+# Expected output with read delay  8 is 0,1,7,8,9,a,2,b,6
+# Expected output with read delay 10 is 0,1,7,8,9,a,b,2,6
 def test27():
     global entrycount
     address=4096
     rob_index=0
-    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #0
     entrycount=entrycount+1
     gold_file.write(miss)
     
@@ -1061,32 +1064,32 @@ def test27():
         gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1) #1
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2) #2
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21) #3
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20) #4
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22) #5
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3) #6
     entrycount=entrycount+1
     gold_file.write(miss)
 
@@ -1098,18 +1101,19 @@ def test27():
     for i in range(5):
         address=address+4
         rob_index=rob_index+1;
-        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #7,8,9,a,b
         entrycount=entrycount+1
         gold_file.write(miss)
 
 #When a flush is asserted and an entry in mshr_fifo is invalidated, and when that request is popped,
 #it should be discarded. In the same cycle, if a request from Stage 2 is a hit in the fill buffer, the
 #response is sent for that request.
+#Expected output is 0,1,6,4,7,8,9,a,b
 def test28():
     global entrycount
     address=4096
     rob_index=0
-    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #0
     entrycount=entrycount+1
     gold_file.write(miss)
     
@@ -1119,36 +1123,36 @@ def test28():
         gold_file.write(miss)
 
     address=address+(word_size*line_size)
-    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1) #1
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20) #2
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21) #3
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2) #4
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22) #5
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3) #6
     entrycount=entrycount+1
     gold_file.write(miss)
 
-    write_to_file(address,read,word,signed,delay,nofence,10)
+    write_to_file(address,read,word,signed,delay,nofence,10) 
     entrycount=entrycount+1
 
     address=4096
@@ -1156,50 +1160,54 @@ def test28():
     for i in range(5):
         address=address+4
         rob_index=rob_index+1;
-        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #7,8,9,a,b
         entrycount=entrycount+1
         gold_file.write(miss)
 
-#When MSHR FIFO is full, all the requests are to the same line, and then a flush happens in between
+#When MSHR FIFO is full, all the requests are to the same line, and then a flush happens in between.
+#Also, a request from stage 2 accesses FB when the top entry of ff_mshr, which has been flushed is
+#being dequeued.
+#Expected output: 0,6,3,4,7,8,9,a,b
 def test29():
     global entrycount
     address=4096
     rob_index=0
-    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #0
     entrycount=entrycount+1
     gold_file.write(miss)
 
-    write_to_file(address,read,word,unsigned,nodelay,nofence,21)
+    address=address+(word_size*line_size)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,20) #1
     entrycount=entrycount+1
     gold_file.write(miss)
 
     address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,20)
+    write_to_file(address,read,word,unsigned,nodelay,nofence,21) #2
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,1) #3
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,2) #4
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address+4
+    write_to_file(address,read,word,unsigned,nodelay,nofence,22) #5
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    address=address-12
+    write_to_file(address,read,word,unsigned,nodelay,nofence,3) #6
     entrycount=entrycount+1
     gold_file.write(miss)
 
     write_to_file(address,read,word,signed,delay,nofence,10)
     entrycount=entrycount+1
-
-    address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,1)
-    entrycount=entrycount+1
-    gold_file.write(miss)
-
-    address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,2)
-    entrycount=entrycount+1
-    gold_file.write(miss)
-
-    address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,22)
-    entrycount=entrycount+1
-    gold_file.write(miss)
-
-    address=address+4
-    write_to_file(address,read,word,unsigned,nodelay,nofence,3)
-    entrycount=entrycount+1
-    gold_file.write(miss)
 
 
     address=4096
@@ -1207,13 +1215,14 @@ def test29():
     for i in range(5):
         address=address+4
         rob_index=rob_index+1;
-        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+        write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #7,8,9,a,b
         entrycount=entrycount+1
         gold_file.write(miss)
-#test02()
-#test03()
-#test04()
-#test1()
+
+#test02() #1698
+#test03() #1788
+#test04() #1558
+#test1() #1658
 #test2() #39798
 #test3() #1668
 #test4() #1788
@@ -1238,11 +1247,11 @@ def test29():
 #test22() #1588
 #test23() #2808
 #test24() #2658
-#test25() #2808
-test26()
-#test27()
-#test28()
-#test29()
+test25() #2808
+#test26() #no_end 1548
+#test27() #no_end 2328
+#test28() #no_end 1868
+#test29() #no_end 1808
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
