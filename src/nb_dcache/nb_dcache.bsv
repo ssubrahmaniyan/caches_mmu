@@ -168,7 +168,8 @@ package nb_dcache;
 			Mul#(m__, 8, linewidth),						//for generate_masked_data fn in FB
 			Mul#(n__, 16, linewidth),						//for generate_masked_data fn in FB
 			Mul#(o__, 32, linewidth),						//for generate_masked_data fn in FB
-			Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
+			Add#(mshrfifo_depth, 0, `Mshrfifo_depth),
+			Add#(TLog#(evict_iter), p__, lineoffset)	//In fill buffer while generating fb_index corresponding to first mem_response
 		);
 
 		let ways_val= valueOf(ways);
@@ -761,7 +762,8 @@ package nb_dcache;
 			method Action put(Read_resp_from_mem#(buswidth, id_bits) resp);
 				wr_read_resp_from_mem<= resp;
 				`logLevel( dcache, 2, $format("DCACHE : Read response from mem: ", fshow(resp)))
-				fill_buffer.data_from_mem(resp.data, resp.last);
+				let mem_req_offset= mshr.mem_req_offset(truncate(resp.id));
+				fill_buffer.data_from_mem(resp.data, resp.last, mem_req_offset);
 			endmethod
 		endinterface;
 

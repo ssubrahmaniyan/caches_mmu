@@ -47,7 +47,7 @@ package fill_buffer;
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
 															numeric type linewidth, numeric type lineoffset, numeric type wordsize);
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
-		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last);
+		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last, Bit#(lineoffset) offset_val);
 		method Action release_fb;
 		method Bool can_release;
 		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
@@ -66,7 +66,8 @@ package fill_buffer;
 									Mul#(d__, buswidth, linewidth),			//for generate_masked_data_bus fn
 									Mul#(e__, 8, linewidth),						//for generate_masked_data fn
 									Mul#(f__, 16, linewidth),						//for generate_masked_data fn
-									Mul#(g__, 32, linewidth)						//for generate_masked_data fn
+									Mul#(g__, 32, linewidth),						//for generate_masked_data fn
+									Add#(num_chunksbits, h__, lineoffset) //to find fb_index for first mem_response
 								);
 
 		let paddr_val= valueOf(paddr);
@@ -109,7 +110,7 @@ package fill_buffer;
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
 
 		Wire#(MSHR_Req#(paddr, data)) wr_req <- mkDWire(defaultValue);
-		Wire#(Tuple2#(Bit#(buswidth), Bool)) wr_data_from_mem <- mkWire;
+		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
 
 		let all_valid= (rg_valid=='1);
 		let all_invalid= (rg_valid=='0);
@@ -144,7 +145,7 @@ package fill_buffer;
 			//just incremented and is independent of the MSHR req. Therefore, even if MSHR doesn't send a req,
 			//it does not matter.
 			if(rg_first_resp) begin
-				Bit#(TLog#(num_chunks)) valid_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
+				Bit#(TLog#(num_chunks)) valid_index= tpl_3(wr_data_from_mem); //req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
 				`logLevel( dcache, 2, $format("FB : First response from Mem. Valid index in FB: %d for req: ", valid_index, fshow(req)))
@@ -224,8 +225,8 @@ package fill_buffer;
 			end
 		endmethod
 
-		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last) if(!all_valid);
-			wr_data_from_mem<= tuple2(mem_resp, last);
+		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last, Bit#(lineoffset) offset_val) if(!all_valid);
+			wr_data_from_mem<= tuple3(mem_resp, last, truncateLSB(offset_val));
 		endmethod
 
 		method Action release_fb if(all_valid);

@@ -48,6 +48,7 @@ package mshr;
 											numeric type rob_index);
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req);
 		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
 	endinterface
@@ -140,7 +141,8 @@ package mshr;
 
 		rule rl_deq_ff;
 			let id= wr_deq_ff_id;
-			`logLevel( dcache, 2, $format("MSHR[%d]: Flushed request being dequeued from FIFOs", id))
+			let lv_req_prf= ff_mshr[id].first.payload;
+			`logLevel( dcache, 2, $format("MSHR[%d]: Flushed request for prf_index: %d being dequeued from FIFOs", id, lv_req_prf))
 			ff_mshr[id].deq;
 			cff_rob[id].deq;
 			cff_valid[id].deq;
@@ -251,6 +253,10 @@ package mshr;
 
 			end
 			return req;
+		endmethod
+
+		method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
+			return ff_mshr[id].first.addr;
 		endmethod
 
 		method Action ack_from_fb if(mshr_not_empty);
