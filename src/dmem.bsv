@@ -109,6 +109,14 @@ package dmem;
     `endif
     interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
   `endif
+`ifdef perfmonitors
+  `ifdef dcache
+    method Bit#(13) mv_dcache_perf_counters;
+  `endif
+  `ifdef supervisor
+    method Bit#(1) mv_dtlb_perf_counters ;
+  `endif
+`endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -191,6 +199,14 @@ package dmem;
       method ma_pmp_addr = dtlb.ma_pmp_addr;
     `endif
     interface hold_req = dcache.hold_req;
+`endif
+`ifdef perfmonitors
+  `ifdef dcache
+    method mv_dcache_perf_counters = dcache.perf_counters;
+  `endif
+  `ifdef supervisor
+    method mv_dtlb_perf_counters = dtlb.mv_perf_counters;
+  `endif
 `endif
   endmodule
 endpackage

@@ -67,6 +67,9 @@ package fa_itlb;
     /*doc:method: */
     method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
   `endif
+  `ifdef perfmonitors
+    method Bit#(1) mv_perf_counters;
+  `endif
   endinterface
 
   /*doc:module: */
@@ -104,6 +107,10 @@ package fa_itlb;
   `ifdef pmp
     Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
     Vector#(`PMPSIZE, Wire#(Bit#(`paddr))) wr_pmp_addr <- replicateM(mkWire());
+  `endif
+  `ifdef perfmonitors
+    /*doc:wire: */
+    Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
   `endif
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
@@ -197,6 +204,9 @@ package fa_itlb;
             // Send virtual - address and indicate it is an instruction access to the PTW
             `logLevel( itlb, 0, $format("ITLB : TLBMiss. Sending Address to PTW:%h",req.address))
             rg_tlb_miss <= True;
+          `ifdef perfmonitors
+            wr_count_misses <= 1;
+          `endif
             rg_miss_queue <= req.address;
             ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3 });
           end
@@ -264,6 +274,9 @@ package fa_itlb;
       for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
         wr_pmp_addr[i] <= pmpadr[i];
     endmethod
+  `endif
+  `ifdef perfmonitors
+    method mv_perf_counters = wr_count_misses;
   `endif
   endmodule
 

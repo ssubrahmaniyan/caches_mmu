@@ -82,6 +82,9 @@ package fa_dtlb;
 
     /*doc:method: */
     method Bool mv_tlb_available;
+  `ifdef perfmonitors
+    method Bit#(1) mv_perf_counters;
+  `endif
   endinterface
 
   /*doc:module: */
@@ -128,6 +131,11 @@ package fa_dtlb;
   `ifdef pmp
     Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
     Vector#(`PMPSIZE, Wire#(Bit#(`paddr))) wr_pmp_addr <- replicateM(mkWire());
+  `endif
+
+  `ifdef perfmonitors
+    /*doc:wire: */
+    Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
   `endif
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
@@ -263,8 +271,12 @@ package fa_dtlb;
           rg_tlb_miss <= False;
         else if(rg_tlb_miss && req.ptwalk_trap)
           rg_tlb_miss <= False;
-        else if(!translation_done && !req.ptwalk_req)
+        else if(!translation_done && !req.ptwalk_req) begin
           rg_tlb_miss <= tlbmiss;
+        `ifdef perfmonitors
+          wr_count_misses <= pack(tlbmiss);
+        `endif
+        end
 
       endmethod
     endinterface;
@@ -322,6 +334,10 @@ package fa_dtlb;
 
     /*doc:method: */
     method mv_tlb_available = !rg_tlb_miss && ff_lookup_result.notFull;
+  
+  `ifdef perfmonitors
+    method mv_perf_counters = wr_count_misses;
+  `endif
 
   `ifdef pmp
     method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
