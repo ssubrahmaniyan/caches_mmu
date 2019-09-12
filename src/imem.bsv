@@ -104,6 +104,14 @@ package imem;
     method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
   `endif
   `endif
+`ifdef perfmonitors
+  `ifdef icache
+    method Bit#(5) mv_icache_perf_counters;
+  `endif
+  `ifdef supervisor
+    method Bit#(1) mv_itlb_perf_counters;
+  `endif
+`endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -149,6 +157,14 @@ package imem;
       method ma_pmp_addr = itlb.ma_pmp_addr;
     `endif
   `endif
+`ifdef perfmonitors
+  `ifdef icache
+    method mv_icache_perf_counters = icache.perf_counters;
+  `endif
+  `ifdef supervisor
+    method mv_itlb_perf_counters = itlb.mv_perf_counters;
+  `endif
+`endif
   endmodule
 endpackage
 

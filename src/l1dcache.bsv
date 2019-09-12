@@ -76,8 +76,8 @@ package l1dcache;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
-    `ifdef perf
-      method Bit#(5) perf_counters;
+    `ifdef perfmonitors
+      method Bit#(13) perf_counters;
     `endif
     method Action cache_enable(Bool c);
     method Action perform_store(Bit#(esize) currepoch);
@@ -226,12 +226,20 @@ package l1dcache;
     `ifdef pysimulate
       FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
     `endif
-    `ifdef perf
-      Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_cache_hits <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_fb_hits <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_io <- mkDWire(0);
+    `ifdef perfmonitors
+      Wire#(Bit#(1)) wr_total_read_access <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_write_access <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_atomic_access <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_io_reads <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_io_writes <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_read_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_write_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_atomic_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_readfb_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_writefb_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_atomicfb_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fbfills <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_evictions <- mkDWire(0);
     `endif
     // ------------------------------------------------------------------------------------------//
 
@@ -659,15 +667,24 @@ fbindex:%d", sbindex, request.data, phy_addr, fbindex))
       Bit#(setbits) set_index=phy_addr[v_setbits + v_blockbits + v_wordbits - 1 : v_blockbits + v_wordbits];
       let offset = (v_respwidth==64)?2:1;
       Bit#(TLog#(respwidth)) loadoffset = {phy_addr[v_wordbits - 1:0],3'b0};
+    `ifdef perfmonitors
+      if(wr_cache_response == Hit || wr_fb_response == Hit) begin
+        if(request.access == 0)
+          wr_total_read_hits <= 1;
+        if(request.access == 1)
+          wr_total_write_hits <= 1;
+      `ifdef atomic
+        if(request.access == 2)
+          wr_total_atomic_hits <= 1;
+      `endif
+      end
+    `endif
       if(wr_cache_response==Hit)begin
         word=wr_cache_hitword;
         if(alg=="PLRU") begin
           wr_cache_hitindex<=tagged Valid set_index;
           repl.update_set(set_index, wr_hitway);//wr_replace_line); 
         end
-        `ifdef perf
-          wr_total_cache_hits<=1;
-        `endif
       end
       else if(wr_fb_response==Hit)begin
         if(request.access == 0 `ifdef atomic || request.access == 2 `endif )begin
@@ -679,10 +696,18 @@ fbindex:%d", sbindex, request.data, phy_addr, fbindex))
           word=wr_fb_word;
 
         err=unpack(wr_fb_err);
-        `ifdef perf
+        `ifdef perfmonitors
           // Only when the hit in the LB is not because of a miss should the counter be enabled.
-          if(!rg_miss_ongoing)
-            wr_total_fb_hits<=1;
+          if(!rg_miss_ongoing) begin
+              if(request.access == 0)
+                wr_total_readfb_hits <= 1;
+              if(request.access == 1)
+                wr_total_writefb_hits <= 1;
+            `ifdef atomic
+              if(request.access == 2)
+                wr_total_atomicfb_hits <= 1;
+            `endif
+          end
         `endif
       end
       else if(wr_nc_response==Hit)begin
@@ -690,8 +715,11 @@ fbindex:%d", sbindex, request.data, phy_addr, fbindex))
         updated_word = (updated_word&~wr_sb_mask)|(wr_sb_hitword);
         word = updated_word>>loadoffset;
         err=wr_nc_err;
-        `ifdef perf
-          wr_total_io<=1;
+      `ifdef perfmonitors
+        if(request.access == 0)
+          wr_total_io_reads <= 1;
+        if(request.access == 1)
+          wr_total_io_writes <= 1;
         `endif
       end
       if(request.access != 0 && (wr_fb_response == Hit || wr_cache_response == Hit))begin
@@ -911,6 +939,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                                                burst_len : fromInteger(valueOf(blocksize) - 1),
                                                burst_size : fromInteger(valueOf(TLog#(wordsize))),
                                                data      : dirtydata});
+          `ifdef perfmonitors
+            wr_total_evictions <= 1;
+          `endif
           end
           rg_valid[set_index][waynum]<=1'b1;
           rg_dirty[set_index][waynum]<=fb_dirty[rg_fbwriteback];
@@ -957,9 +988,16 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     interface core_req=interface Put
       method Action put(DCache_core_request#(vaddr, respwidth, esize) req) 
                 if( ff_core_response.notFull && !rg_replaylatest &&  !rg_fence_stall && !fb_full );
-        `ifdef perf
-          wr_total_access<=1;
+      `ifdef perfmonitors
+          if(req.access == 0)
+            wr_total_read_access <= 1;
+          if(req.access == 1)
+            wr_total_write_access <= 1;
+        `ifdef atomic
+          if(req.access == 2)
+            wr_total_atomic_access <= 1;
         `endif
+      `endif
       Bit#(paddr) phy_addr = truncate(req.address);
         Bit#(setbits) set_index=phy_addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
@@ -1048,9 +1086,12 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         complete=False;
       return complete;
     endmethod
-    `ifdef perf
-      method Bit#(5) perf_counters;
-        return {wr_total_fbfills,wr_total_io,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
+    `ifdef perfmonitors
+      method Bit#(13) perf_counters;
+        return{wr_total_read_access ,wr_total_write_access ,wr_total_atomic_access ,wr_total_io_reads
+          ,wr_total_io_writes ,wr_total_read_hits ,wr_total_write_hits ,wr_total_atomic_hits
+          ,wr_total_readfb_hits ,wr_total_writefb_hits ,wr_total_atomicfb_hits ,wr_total_fbfills
+        ,wr_total_evictions};
       endmethod
     `endif
       method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) write_mem_req_rd;

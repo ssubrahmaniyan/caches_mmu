@@ -74,7 +74,7 @@ package l1icache_vipt;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
-    `ifdef perf
+    `ifdef perfmonitors
       method Bit#(5) perf_counters;
     `endif
     method Action cache_enable(Bool c);
@@ -181,7 +181,7 @@ package l1icache_vipt;
     `ifdef pysimulate
       FIFOF#(Bit#(1)) ff_meta <- mkSizedFIFOF(2);
     `endif
-    `ifdef perf
+    `ifdef perfmonitors
       Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_cache_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fb_hits <- mkDWire(0);
@@ -303,20 +303,21 @@ package l1icache_vipt;
       Bit#(respwidth) word=0;
       Bool err=False;
       let set_index=req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+    `ifdef perfmonitors
+      if(wr_ram_response == Hit || wr_fb_response == Hit)
+        wr_total_cache_hits<=1;
+    `endif
       if(wr_ram_response==Hit)begin
         word=wr_ram_hitword;
         if(alg=="PLRU") begin
           wr_ram_hitindex<=tagged Valid set_index;
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
         end
-        `ifdef perf
-          wr_total_cache_hits<=1;
-        `endif
       end
       else if(wr_fb_response==Hit)begin
         word=wr_fb_word;
         err=unpack(wr_fb_err);
-        `ifdef perf
+        `ifdef perfmonitors
           // Only when the hit in the LB is not because of a miss should the counter be enabled.
           if(!rg_miss_ongoing)
             wr_total_fb_hits<=1;
@@ -325,7 +326,7 @@ package l1icache_vipt;
       else if(wr_nc_response==Hit)begin
         word=wr_nc_word;
         err=wr_nc_err;
-        `ifdef perf
+        `ifdef perfmonitors
           wr_total_nc<=1;
         `endif
       end
@@ -593,7 +594,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         rg_valid[set_index][waynum]<=1'b1;
         if(fb_full && fillindex==rg_latest_index)
           rg_replaylatest<=True;
-        `ifdef perf
+        `ifdef perfmonitors
           wr_total_fbfills<=1;
         `endif
         `logLevel( icache, 1, $format("ICACHE : ReleaseFiring. rg_fbwb:%d index:%d tag:%h way:%d", 
@@ -616,7 +617,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     interface core_req=interface Put
       method Action put(ICache_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                                 !rg_replaylatest &&  !rg_fence_stall && !fb_full);
-        `ifdef perf
+        `ifdef perfmonitors
           wr_total_access<=1;
         `endif
         Bit#(setbits) set_index=req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -677,7 +678,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     method Action cache_enable(Bool c);
       wr_cache_enable<=c;
     endmethod
-    `ifdef perf
+    `ifdef perfmonitors
       method Bit#(5) perf_counters;
         return {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
       endmethod
