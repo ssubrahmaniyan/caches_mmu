@@ -76,9 +76,9 @@ package nb_dcache;
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
-		interface Put#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_from_core;
+		interface Put#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_from_core;
 		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	 subifc_resp_to_core;
-		interface Get#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_to_ptw;
+		interface Get#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_to_ptw;
 		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 	 subifc_read_req_to_mem;
 		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	 subifc_read_resp_from_mem;
 		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	 subifc_write_req_to_mem;
@@ -186,7 +186,7 @@ package nb_dcache;
 		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
-		Ifc_tlb#(xlen, paddr) tlb <-mktlb;
+		Ifc_fa_dtlb#(xlen, paddr) tlb <-mkfa_dtlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
@@ -312,6 +312,21 @@ package nb_dcache;
 			return lv_should_flush;
 		endfunction
 
+		function Cache_DTLB_request#(xlen) convert_core_to_tlb_req(Req_from_core#(xlen, datawidth, rob_index, prf_index) core_req);
+			Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;	//TODO add atomic support
+
+			Cache_DTLB_request#(xlen) dtlb_req= Cache_DTLB_request { address: core_req.addr,
+																														 access: access,
+																														 ptwalk_trap: core_req.ptwalk_trap,
+																														 ptwalk_req: (core_req.origin==PTW),
+																														 sfence: core_req.sfence }
+			return dtlb_req;
+		endfunction
+
+		function Bool is_IO(Bit#(xlen) addr); //TODO remove this dummy is_IO function
+			return False;
+		endfunction
+
 		rule rl_initialize(!rg_initialize_done);
       `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
 			for(Integer i=0; i<ways_val; i=i+1) begin
@@ -335,25 +350,26 @@ package nb_dcache;
 				data_arr[i].read(set_index);
 				tag_arr[i].read(set_index);
 			end
-			let resp_from_tlb<- tlb.translate(core_req.addr, is_actual_store);
-			Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{	addr: resp_from_tlb.paddr,
+			let resp_from_tlb<- tlb.translate(convert_core_to_tlb_req(core_req));
+			Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{	addr: resp_from_tlb.address,
 																																			access_size: core_req.access_size,
 																																			data: core_req.data,
 																																			origin: core_req.origin,
 																																			rob: core_req.rob,
 																																			prf_index: core_req.prf_index };
-			if(resp_from_tlb.is_hit) begin			//Hit in the TLB
+			Bool is_IO_access= is_IO(core_req.addr);
+			if(!resp_from_tlb.tlbmiss || is_io_access) begin			//Hit in the TLB or is an IO operation
 
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
-				if(resp_from_tlb.is_fault) begin	//Access fault
+				if(resp_from_tlb.trap) begin	//Access fault
 					if(!wr_is_mshr_resp_to_core) begin
 						wr_resp_to_core<= Resp_to_core { data: ?,
 																						 prf_index: req.prf_index,
-																						 exception: Access_fault };
+																						 exception: resp_from_tlb.exception };
 					end
 				end
 				else begin	//Access is valid
-					if(resp_from_tlb.is_io) begin
+					if(is_IO_access) begin	//IO operation
 						//Enqueue into a separate FIFO that handles IO Requests
 						ff_io_request.enq(req);
 					end
@@ -364,7 +380,7 @@ package nb_dcache;
 				end
 
 			end
-			else begin		//Miss in the TLB
+			else begin		//Miss in the TLB and not IO operation
       	`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
 				wr_req_to_ptw<= core_req;		//TODO PTW will store the req and send it again, once PTW is done.
 				rg_cache_busy[0]<= True;
