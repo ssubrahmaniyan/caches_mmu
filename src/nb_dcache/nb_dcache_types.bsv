@@ -135,5 +135,64 @@ package nb_dcache_types;
 															payload: 'd0,
 															origin: defaultValue }; 
 	endinstance
-	
+
+	// -------------- TLB defines ------------------ //
+  typedef struct{
+    Bit#(addr)        address;
+    Bit#(2)           access; //00: Load, 01: Store, 10: Atomic, 11: Instruction
+    Bit#(`causesize)  cause;
+    Bool              ptwalk_trap;
+    Bool              ptwalk_req;
+    Bool              sfence;
+  } DTLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)        address;
+    Bool              trap;
+    Bit#(`causesize)  cause;
+    Bool              tlbmiss;
+  } DTLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)        address;
+    Bit#(2)           access;
+  }PTWalk_tlb_request#(numeric type addr) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr)            pte;
+    Bit#(TLog#(level))    levels;
+    Bool                  trap;
+    Bit#(`causesize)      cause;
+  }PTWalk_tlb_response#(numeric type addr, numeric type level) deriving(Bits, Eq, FShow);
+
+  typedef struct {
+  	Bool v;					//valid
+  	Bool r;					//allow reads
+  	Bool w;					//allow writes
+  	Bool x;					//allow execute(instruction read)
+  	Bool u;					//allow supervisor
+  	Bool g;					//global page
+  	Bool a;					//accessed already
+  	Bool d;					//dirty
+  } TLB_permissions deriving(Eq, FShow);
+
+  instance Bits#(TLB_permissions,8);
+    /*doc:func: */
+    function Bit#(8) pack (TLB_permissions p);
+      return {pack(p.d), pack(p.a), pack(p.g), pack(p.u), 
+              pack(p.x), pack(p.w), pack(p.r), pack(p.v)};
+    endfunction
+    /*doc:func: */
+    function TLB_permissions unpack (Bit#(8) perms);
+		  return TLB_permissions { v : unpack(perms[0]),
+			  											 r : unpack(perms[1]),
+				  										 w : unpack(perms[2]),
+					  									 x : unpack(perms[3]),
+						  								 u : unpack(perms[4]),
+							  							 g : unpack(perms[5]),
+								  						 a : unpack(perms[6]),
+									  					 d : unpack(perms[7])};
+     endfunction
+  endinstance
+
 endpackage
