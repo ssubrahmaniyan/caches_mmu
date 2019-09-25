@@ -74,7 +74,7 @@ package nb_dcache_types;
 	//														rob: 'd0}; 
 	//endinstance
 	
-	typedef enum {No_exception, Bus_error, Access_fault} DCache_exception deriving (Bits, Eq, FShow);
+	typedef enum {No_exception, Load_access_fault} DCache_exception deriving (Bits, Eq, FShow);
 	
 	typedef struct {
 		Bit#(data) data;
@@ -105,12 +105,12 @@ package nb_dcache_types;
 		Bool is_burst;
 	} Write_req_to_mem#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
 
-	typedef struct {
-		Bool is_hit;
-		Bool is_fault;
-		Bit#(addr) paddr;
-		Bool is_io;
-	} Resp_from_tlb#(numeric type addr) deriving (Bits, Eq, FShow);
+	//typedef struct {
+	//	Bool is_hit;
+	//	Bool is_fault;
+	//	Bit#(addr) paddr;
+	//	Bool is_io;
+	//} Resp_from_tlb#(numeric type addr) deriving (Bits, Eq, FShow);
 
 	typedef struct {
 		Bool valid;
@@ -140,18 +140,17 @@ package nb_dcache_types;
   typedef struct{
     Bit#(addr)        address;
     Bit#(2)           access; //00: Load, 01: Store, 10: Atomic, 11: Instruction
-    Bit#(`causesize)  cause;
     Bool              ptwalk_trap;
     Bool              ptwalk_req;
     Bool              sfence;
-  } DTLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
+  } Cache_DTLB_request# (numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bit#(addr)        address;
     Bool              trap;
-    Bit#(`causesize)  cause;
+    DCache_exception  exception;
     Bool              tlbmiss;
-  } DTLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
+  } DTLB_Cache_response# (numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bit#(addr)        address;
@@ -162,7 +161,6 @@ package nb_dcache_types;
     Bit#(addr)            pte;
     Bit#(TLog#(level))    levels;
     Bool                  trap;
-    Bit#(`causesize)      cause;
   }PTWalk_tlb_response#(numeric type addr, numeric type level) deriving(Bits, Eq, FShow);
 
   typedef struct {

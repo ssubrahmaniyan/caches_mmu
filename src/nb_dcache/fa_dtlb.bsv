@@ -47,19 +47,9 @@ package fa_dtlb;
     Bit#(`ppnsize) ppn;
   } VPNTag deriving(Bits, FShow, Eq);
 
-  typedef struct{
-    Bool trap;
-    Bit#(`causesize) cause;
-    Bool tlbmiss;
-    Bool translation_done;
-    Bit#(xlen) va;
-    VPNTag pte;
-    Bit#(2) access;
-  } LookUpResult#(numeric type xlen) deriving(Bits, FShow, Eq);
-
   interface Ifc_fa_dtlb#(numeric type xlen, numeric type paddr);
 
-    method ActionValue#(DTLB_core_response#(paddr)) translate(DTLB_core_request#(xlen) req);
+    method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req);
 
     interface Get#(PTWalk_tlb_request#(xlen)) request_to_ptw;
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
@@ -166,7 +156,7 @@ package fa_dtlb;
       `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
     endrule
 
-    method ActionValue#(DTLB_core_response#(paddr)) translate(DTLB_core_request#(xlen) req) if(!rg_sfence);
+    method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
       `logLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
 
       Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
@@ -178,7 +168,7 @@ package fa_dtlb;
       endfunction
 
       Bit#(xlen) va = req.address;
-      Bit#(`causesize) cause = req.cause;
+      DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
@@ -187,11 +177,11 @@ package fa_dtlb;
       Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(req.address);
       Bit#(2) priv = mprv == 0?wr_priv : mpp;
       translation_done = (satp_mode == 0 || priv == 3 || req.ptwalk_req || req.ptwalk_trap);
-      DTLB_core_response#(paddr) core_resp= ?;
+      DTLB_Cache_response#(paddr) core_resp= ?;
 
       if(!trap && translation_done)begin
          trap = |upper_bits == 1;
-         cause = req.access == 0? `Load_access_fault: `Store_access_fault;
+         exception = req.access == 0? Load_access_fault: Store_access_fault;
       end
 
       if(req.sfence && !req.ptwalk_req)begin
@@ -200,9 +190,9 @@ package fa_dtlb;
       else begin
         Bit#(12) page_offset = va[11 : 0];
         if(translation_done)begin
-          core_resp= (DTLB_core_response{address: truncate(va),
+          core_resp= (DTLB_Cache_response{address: truncate(va),
                                          trap: trap,
-                                         cause: cause,
+                                         exception: exception,
                                          tlbmiss: False});
         end
         else begin
@@ -253,17 +243,17 @@ package fa_dtlb;
           if(tlbmiss)begin
             rg_miss_queue <= va;
             wr_request_to_ptw<= PTWalk_tlb_request{address : va, access : req.access };
-            core_resp= (DTLB_core_response{address  : ?,
+            core_resp= (DTLB_Cache_response{address  : ?,
                                            trap     : False,
-                                           cause    : ?,
-                                           tlbmiss  : True});
+                                           exception: exception,
+                                           tlbmis  : True});
           end
           else begin
             `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
             `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
-            core_resp= (DTLB_core_response{address  : truncate(physicaladdress),
+            core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
                                            trap     : page_fault,
-                                           cause    : cause,
+                                           exception: exception,
                                            tlbmiss  : False});
           end
         end
