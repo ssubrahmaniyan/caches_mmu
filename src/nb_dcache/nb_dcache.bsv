@@ -67,7 +67,7 @@ package nb_dcache;
 													numeric type setsize,		//number of sets
 													numeric type ways,			//number of ways
 													numeric type paddr,			//physical address width in bits
-													numeric type vaddr,			//virtual address width in bits
+													numeric type xlen,			//virtual address width in bits
 													numeric type dsram,			//no. of bits in a row of SRAM cells for the data array
 													numeric type tsram,			//no. of bits in a row of SRAM cells for the tag array
 													numeric type prf_index,	//no. of bits to index the prf
@@ -76,9 +76,9 @@ package nb_dcache;
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
-		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_from_core;
+		interface Put#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_from_core;
 		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	 subifc_resp_to_core;
-		interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_to_ptw;
+		interface Get#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index)) subifc_req_to_ptw;
 		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 	 subifc_read_req_to_mem;
 		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	 subifc_read_resp_from_mem;
 		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	 subifc_write_req_to_mem;
@@ -130,11 +130,11 @@ package nb_dcache;
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
 	(*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
-	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_get_response_from_TLB, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
+	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
 	(*conflict_free="rl_MSHR_req_to_fill_buffer, mshr.rl_deq_ff"*)
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
-		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
+		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, xlen, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
 	// 4,				 3,							 128
 		provisos(
 			Log#(wordsize, wordbits),
@@ -151,7 +151,7 @@ package nb_dcache;
 			//Add#(c__, lineoffset, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
 			Add#(e__, TLog#(mshrsize), id_bits),
-			Add#(f__, paddr, vaddr),
+			Add#(f__, paddr, xlen),
 			Mul#(g__, buswidth, linewidth),
 			Add#(h__, buswidth, linewidth),
 			Add#(i__, datawidth, linewidth),
@@ -186,7 +186,7 @@ package nb_dcache;
 		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
-		Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
+		Ifc_tlb#(xlen, paddr) tlb <-mktlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
@@ -198,7 +198,7 @@ package nb_dcache;
 
 		//Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val]; 				// data array
 		//Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram) tag_arr [ways_val]; // extra valid and dirty bits
-		//Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
+		//Ifc_tlb#(xlen, paddr) tlb <-mktlb;
 		//let fill_buffer <-fillbuffer;
 		//let mshr <-mshrmod;
 		//let repl <-replace;
@@ -210,14 +210,14 @@ package nb_dcache;
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
-		FIFO#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
+		FIFO#(Req_from_core#(xlen, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
 		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
 		//to the cache. Now, this request will be a hit in the TLB. This FIFO is used to send the req to
 		//the PTW module
-		Wire#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) wr_req_to_ptw <- mkWire;
+		Wire#(Req_from_core#(xlen, datawidth, rob_index, prf_index)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
@@ -325,67 +325,51 @@ package nb_dcache;
 		endrule
 
 		rule rl_handle_req_from_core;
-			let req= ff_req_from_core.first;
-			Bool is_actual_store= (req.origin == Store_commit);
-			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-      `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(req), "set_index: %d", set_index))
+			let core_req= ff_req_from_core.first;
+			ff_req_from_core.deq;
+			Bool is_actual_store= (core_req.origin == Store_commit);
+			Bit#(setbits) set_index = core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+      `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
 			
 			for(Integer i = 0;i<ways_val;i = i+1) begin
 				data_arr[i].read(set_index);
 				tag_arr[i].read(set_index);
 			end
-			if(req.origin!=PTW)
-				tlb.send_req(req.addr, is_actual_store);
-		endrule
+			let resp_from_tlb<- tlb.translate(core_req.addr, is_actual_store);
+			Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{	addr: resp_from_tlb.paddr,
+																																			access_size: core_req.access_size,
+																																			data: core_req.data,
+																																			origin: core_req.origin,
+																																			rob: core_req.rob,
+																																			prf_index: core_req.prf_index };
+			if(resp_from_tlb.is_hit) begin			//Hit in the TLB
 
-		rule rl_get_response_from_TLB;
-			let orig_req= ff_req_from_core.first;
-
-			Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{	addr: orig_req.addr[paddr_val-1:0],
-																																			access_size: orig_req.access_size,
-																																			data: orig_req.data,
-																																			origin: orig_req.origin,
-																																			rob: orig_req.rob,
-																																			prf_index: orig_req.prf_index };
-			ff_req_from_core.deq;
-			if(req.origin!=PTW) begin
-				let resp_from_tlb= tlb.response;
-				if(resp_from_tlb.is_hit) begin			//Hit in the TLB
-
-      		`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
-					if(resp_from_tlb.is_fault) begin	//Access fault
-						if(!wr_is_mshr_resp_to_core) begin
-							wr_resp_to_core<= Resp_to_core { data: ?,
-																							 prf_index: orig_req.prf_index,
-																							 exception: Access_fault };
-						end
+      	`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
+				if(resp_from_tlb.is_fault) begin	//Access fault
+					if(!wr_is_mshr_resp_to_core) begin
+						wr_resp_to_core<= Resp_to_core { data: ?,
+																						 prf_index: req.prf_index,
+																						 exception: Access_fault };
 					end
-					else begin	//Access is valid
-						//The virtual address is not required here after. Hence, the addr in the req is replaced
-						//with the physical address
-						req.addr= resp_from_tlb.paddr;
-      			`logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
-						if(resp_from_tlb.is_io) begin
-							//Enqueue into a separate FIFO that handles IO Requests
-							ff_io_request.enq(req);
-						end
-						else begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
-      				`logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
-							ff_first_stage.enq(req);
-						end
+				end
+				else begin	//Access is valid
+					if(resp_from_tlb.is_io) begin
+						//Enqueue into a separate FIFO that handles IO Requests
+						ff_io_request.enq(req);
 					end
+					else begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
+      			`logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
+						ff_first_stage.enq(req);
+					end
+				end
 
-				end
-				else begin		//Miss in the TLB
-      		`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
-					wr_req_to_ptw<= orig_req;		//TODO PTW will store the req and send it again, once PTW is done.
-					rg_cache_busy[0]<= True;
-				end
 			end
-			else begin	//PTW request
-      	`logLevel( dcache, 2, $format("DCACHE : Req from PTW: ", fshow(req)))
-				ff_first_stage.enq(req);
+			else begin		//Miss in the TLB
+      	`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
+				wr_req_to_ptw<= core_req;		//TODO PTW will store the req and send it again, once PTW is done.
+				rg_cache_busy[0]<= True;
 			end
+      `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 		endrule
 
 		//In case we cannot enqueue into ff_second_stage, the second stage would stall. After some clock
@@ -753,7 +737,7 @@ package nb_dcache;
 		//endinterface
 
 		interface subifc_req_to_ptw= toGet(wr_req_to_ptw);
-	//		method ActionValue#((Cache_req#(vaddr, datawidth, prf_index))) get;
+	//		method ActionValue#((Cache_req#(xlen, datawidth, prf_index))) get;
 	//			return wr
 		interface subifc_read_req_to_mem= toGet(ff_read_req_to_mem);
 
@@ -768,7 +752,7 @@ package nb_dcache;
 		endinterface;
 
 		interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
-		//interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
+		//interface Get#(Write_req_to_mem#(xlen, data)) subifc_write_req_to_mem;
 		//	method ActionValue#(Write_req_to_mem) get;
 		//		return wr_write_req_to_mem;
 		//	endmethod
@@ -800,7 +784,7 @@ package nb_dcache;
 	endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `XLEN, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
