@@ -47,6 +47,8 @@ package nb_dcache_types;
 		Bit#(2) access_size;
 		Bit#(data) data;
 		Origin origin;
+		Bool ptwalk_trap;
+		Bool fence;
 		Bit#(rob_index) rob;
 		Bit#(prf_index) prf_index;
 	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
