@@ -232,9 +232,9 @@ package l1dcache;
       Wire#(Bit#(1)) wr_total_atomic_access <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_io_reads <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_io_writes <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_read_hits <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_write_hits <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_atomic_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_read_miss <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_write_miss <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_atomic_miss <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_readfb_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_writefb_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_atomicfb_hits <- mkDWire(0);
@@ -667,18 +667,6 @@ fbindex:%d", sbindex, request.data, phy_addr, fbindex))
       Bit#(setbits) set_index=phy_addr[v_setbits + v_blockbits + v_wordbits - 1 : v_blockbits + v_wordbits];
       let offset = (v_respwidth==64)?2:1;
       Bit#(TLog#(respwidth)) loadoffset = {phy_addr[v_wordbits - 1:0],3'b0};
-    `ifdef perfmonitors
-      if(wr_cache_response == Hit || wr_fb_response == Hit) begin
-        if(request.access == 0)
-          wr_total_read_hits <= 1;
-        if(request.access == 1)
-          wr_total_write_hits <= 1;
-      `ifdef atomic
-        if(request.access == 2)
-          wr_total_atomic_hits <= 1;
-      `endif
-      end
-    `endif
       if(wr_cache_response==Hit)begin
         word=wr_cache_hitword;
         if(alg=="PLRU") begin
@@ -824,6 +812,16 @@ pack(wr_fb_response), pack(wr_nc_response)))
         `ifdef ASSERT
           dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill-buffer");
         `endif
+      `ifdef perfmonitors
+        if(request.access == 0)
+          wr_total_read_miss <= 1;
+        if(request.access == 1)
+          wr_total_write_miss <= 1;
+        `ifdef atomic
+          if(request.access == 2)
+            wr_total_atomic_miss <= 1;
+        `endif
+      `endif
       end
       else if(request.access == 0 `ifdef atomic || request.access == 2 `endif )begin
         rg_miss_ongoing<=True;
@@ -1089,7 +1087,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     `ifdef perfmonitors
       method Bit#(13) perf_counters;
         return{wr_total_read_access ,wr_total_write_access ,wr_total_atomic_access ,wr_total_io_reads
-          ,wr_total_io_writes ,wr_total_read_hits ,wr_total_write_hits ,wr_total_atomic_hits
+          ,wr_total_io_writes ,wr_total_read_miss ,wr_total_write_miss ,wr_total_atomic_miss
           ,wr_total_readfb_hits ,wr_total_writefb_hits ,wr_total_atomicfb_hits ,wr_total_fbfills
         ,wr_total_evictions};
       endmethod
