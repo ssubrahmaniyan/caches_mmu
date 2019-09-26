@@ -183,7 +183,7 @@ package l1icache_vipt;
     `endif
     `ifdef perfmonitors
       Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
-      Wire#(Bit#(1)) wr_total_cache_hits <- mkDWire(0);
+      Wire#(Bit#(1)) wr_total_cache_misses <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fb_hits <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_nc <- mkDWire(0);
       Wire#(Bit#(1)) wr_total_fbfills <- mkDWire(0);
@@ -303,10 +303,10 @@ package l1icache_vipt;
       Bit#(respwidth) word=0;
       Bool err=False;
       let set_index=req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-    `ifdef perfmonitors
-      if(wr_ram_response == Hit || wr_fb_response == Hit)
-        wr_total_cache_hits<=1;
-    `endif
+//    `ifdef perfmonitors
+//      if(wr_ram_response == Hit || wr_fb_response == Hit)
+//        wr_total_cache_misses<=1;
+//    `endif
       if(wr_ram_response==Hit)begin
         word=wr_ram_hitword;
         if(alg=="PLRU") begin
@@ -326,9 +326,6 @@ package l1icache_vipt;
       else if(wr_nc_response==Hit)begin
         word=wr_nc_word;
         err=wr_nc_err;
-        `ifdef perfmonitors
-          wr_total_nc<=1;
-        `endif
       end
       rg_miss_ongoing<=False;
       // depending onthe request made by the core, the word is either sigextended/zeroextend and
@@ -499,6 +496,9 @@ package l1icache_vipt;
                                                     burst_len  : 0,
                                                     burst_size : fromInteger(v_wordbits)});
         `logLevel( icache, 0, $format("ICACHE : Sending IO Request for Addr:%h", pa.address))
+        `ifdef perfmonitors
+          wr_total_nc<=1;
+        `endif
       end
       else begin
         `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", pa.address)) 
@@ -515,6 +515,9 @@ package l1icache_vipt;
         fb_addr[rg_fbmissallocate]<=pa.address;
         fb_enables[rg_fbmissallocate]<=0;
         ff_fb_fillindex.enq(rg_fbmissallocate);
+    `ifdef perfmonitors
+        wr_total_cache_misses<=1;
+    `endif
       end
       rg_miss_ongoing<=True;
     endrule
@@ -680,7 +683,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     endmethod
     `ifdef perfmonitors
       method Bit#(5) perf_counters;
-        return {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_hits,wr_total_access};
+        return {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_misses,wr_total_access};
       endmethod
     `endif
   endmodule
