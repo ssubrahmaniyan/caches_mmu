@@ -195,9 +195,9 @@ package fill_buffer;
 			rg_valid[lv_index]<= 1'b1;
 		endrule
 
-		rule rl_disp;
-			`logLevel( dcache, 2, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
-		endrule
+		//rule rl_disp;
+		//	`logLevel( dcache, 2, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+		//endrule
 
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
