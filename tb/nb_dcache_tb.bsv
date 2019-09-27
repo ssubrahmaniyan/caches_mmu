@@ -152,6 +152,8 @@ package nb_dcache_tb;
 																																									 access_size: truncate(size),
 																																									 data: writedata,
 																																									 origin: req_origin,
+                                                                                   sfence: False,
+                                                                                   ptwalk_trap: False,
 																																									 rob: rob,
 																																								 	 prf_index: pack(new_token)};
 					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
