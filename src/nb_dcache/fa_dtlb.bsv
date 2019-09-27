@@ -47,13 +47,7 @@ package fa_dtlb;
     Bit#(`ppnsize) ppn;
   } VPNTag deriving(Bits, FShow, Eq);
 
-  interface Ifc_fa_dtlb#(numeric type xlen, numeric type paddr);
-
-    method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req);
-
-    interface Get#(PTWalk_tlb_request#(xlen)) request_to_ptw;
-    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
-
+  interface Ifc_ptw_meta#(numeric type xlen);
     /*doc:method: method to receive the current satp csr from the core*/
     method Action ma_satp_from_csr (Bit#(xlen) s);
 
@@ -62,22 +56,25 @@ package fa_dtlb;
 
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(xlen) m);
+
   `ifdef pmp
     /*doc:method: */
     method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
     /*doc:method: */
     method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(paddr)) pmpaddr);
   `endif
-
-    /*doc:method: */
-    method Bool mv_tlb_available;
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
   endinterface
 
+  interface Ifc_fa_dtlb#(numeric type xlen, numeric type paddr);
+    method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req);
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
+    interface Ifc_ptw_meta#(xlen) ptw_meta;
+  endinterface
+
   /*doc:module: */
-  (*conflict_free="response_frm_ptw_put, core_request_put"*)
   module mkfa_dtlb(Ifc_fa_dtlb#(xlen, paddr))
     provisos (
       Add#(TMul#(TSub#(`varpages,1),`subvpn), a__, xlen),
@@ -307,39 +304,36 @@ package fa_dtlb;
       endmethod
     endinterface;
 
-    interface request_to_ptw = toGet(wr_request_to_ptw);
+    interface ptw_meta = interface Ifc_ptw_meta
+      method Action ma_satp_from_csr (Bit#(xlen) s);
+        wr_satp <= s;
+      endmethod
 
-    method Action ma_satp_from_csr (Bit#(xlen) s);
-      wr_satp <= s;
-    endmethod
+      method Action ma_curr_priv (Bit#(2) c);
+        wr_priv <= c;
+      endmethod
 
-    method Action ma_curr_priv (Bit#(2) c);
-      wr_priv <= c;
-    endmethod
+      /*doc:method: */
+      method Action ma_mstatus_from_csr (Bit#(xlen) m);
+        wr_mstatus <= m;
+      endmethod
 
-    /*doc:method: */
-    method Action ma_mstatus_from_csr (Bit#(xlen) m);
-      wr_mstatus <= m;
-    endmethod
+    `ifdef pmp
+      method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
+          wr_pmp_cfg[i] <= pmpcfg[i];
+      endmethod
+      method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
+          wr_pmp_addr[i] <= pmpadr[i];
+      endmethod
+    `endif
 
-    /*doc:method: */
-    method mv_tlb_available = !rg_tlb_miss;
-  
-  `ifdef perfmonitors
-    method mv_perf_counters = wr_count_misses;
-  `endif
-
-  `ifdef pmp
-    method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-        wr_pmp_cfg[i] <= pmpcfg[i];
-    endmethod
-    method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
-      for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-        wr_pmp_addr[i] <= pmpadr[i];
-    endmethod
-  `endif
-
+    `ifdef perfmonitors
+      method mv_perf_counters = wr_count_misses;
+    `endif
+    endinterface;
+    
   endmodule
 
 endpackage
