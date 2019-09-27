@@ -111,6 +111,7 @@ package fill_buffer;
 
 		Wire#(MSHR_Req#(paddr, data)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
+		Wire#(Bool) wr_can_perform_store <- mkDWire(False);
 
 		let all_valid= (rg_valid=='1);
 		let all_invalid= (rg_valid=='0);
@@ -164,9 +165,9 @@ package fill_buffer;
 			//Mix the fill buffer and the data from memory response
 			Bit#(linewidth) write_linedata= generate_masked_data_bus(rg_fill_buffer, tpl_1(wr_data_from_mem), lv_index);
 
-				Bit#(TLog#(num_chunks)) lv_store_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
+			Bit#(TLog#(num_chunks)) lv_store_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 			//For a store commit combine the above data along with that of the request
-			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1) begin
+			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1 && wr_can_perform_store) begin
 				rg_dirty<= 1;
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
 								let sram_data= write_linedata;
@@ -195,9 +196,9 @@ package fill_buffer;
 			rg_valid[lv_index]<= 1'b1;
 		endrule
 
-		//rule rl_disp;
-		//	`logLevel( dcache, 2, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
-		//endrule
+		rule rl_disp;
+			`logLevel( dcache, 2, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+		endrule
 
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
@@ -214,10 +215,11 @@ package fill_buffer;
 		//For a request from ff_first_stage, they will get enqueued to ff_second_stage.
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
-			wr_req<= req;
 			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
 			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d index_valid: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid[valid_index] ))
+			wr_req<= req;
 			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:lineoffset_val]==rg_fb_addr) begin
+				wr_can_perform_store<= True;
 				return tagged Valid rg_fill_buffer;
 			end
 			else begin
