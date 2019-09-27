@@ -36,6 +36,7 @@ package fa_dtlb;
   import SpecialFIFOs :: * ;
   import Vector :: * ;
   import GetPut :: * ;
+  import ConfigReg :: * ;
   import nb_dcache_types :: * ;
 
   // structure of the virtual tag for fully-associative look-up
@@ -110,8 +111,7 @@ package fa_dtlb;
     Wire#(Bit#(xlen)) wr_mstatus <- mkWire();
 
     /*doc:reg: */
-    Reg#(Bit#(xlen)) rg_miss_queue <- mkReg(0);
-    Wire#(PTWalk_tlb_request#(xlen)) wr_request_to_ptw <- mkWire();
+    Reg#(Bit#(xlen)) rg_miss_queue <- mkConfigReg(0);
 
     // global variables based on the above wires
     Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
@@ -127,10 +127,10 @@ package fa_dtlb;
     Bit#(1) mprv = wr_mstatus[17];
 
     /*doc:reg: register to indicate that a tlb miss is in progress*/
-    Reg#(Bool) rg_tlb_miss <- mkReg(False);
+    Reg#(Bool) rg_tlb_miss <- mkConfigReg(False);
 
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
-    Reg#(Bool) rg_sfence <- mkReg(False);
+    Reg#(Bool) rg_sfence <- mkConfigReg(False);
 
   `ifdef pmp
     Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
