@@ -48,7 +48,7 @@ package nb_dcache_types;
 		Bit#(data) data;
 		Origin origin;
 		Bool ptwalk_trap;
-		Bool fence;
+		Bool sfence;
 		Bit#(rob_index) rob;
 		Bit#(prf_index) prf_index;
 	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
@@ -57,6 +57,8 @@ package nb_dcache_types;
 															access_size: 'd3,
 															data: 'd0,
 															origin: defaultValue,
+															ptwalk_trap: False,
+															sfence: False,
 															rob: 'd0,
 															prf_index: 'd0}; 
 	endinstance
@@ -76,13 +78,21 @@ package nb_dcache_types;
 	//														rob: 'd0}; 
 	//endinstance
 	
-	typedef enum {No_exception, Load_access_fault} DCache_exception deriving (Bits, Eq, FShow);
+	typedef enum {No_exception, Load_access_fault, Store_access_fault} DCache_exception deriving (Bits, Eq, FShow);	//TODO check if No_exception can be removed
+	instance DefaultValue#(DCache_exception);
+		defaultValue= No_exception;
+	endinstance
 	
 	typedef struct {
 		Bit#(data) data;
 		Bit#(prf_index) prf_index;
 		DCache_exception exception;
 	} Resp_to_core#(numeric type data, numeric type prf_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Resp_to_core#(data, prf_index));
+		defaultValue= Resp_to_core {data: 0,
+																prf_index: 0,
+																exception: defaultValue };
+	endinstance
 	
 	typedef struct {
 		Bit#(addr) addr;
@@ -153,11 +163,6 @@ package nb_dcache_types;
     DCache_exception  exception;
     Bool              tlbmiss;
   } DTLB_Cache_response# (numeric type addr) deriving(Bits, Eq, FShow);
-
-  typedef struct{
-    Bit#(addr)        address;
-    Bit#(2)           access;
-  }PTWalk_tlb_request#(numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bit#(addr)            pte;
