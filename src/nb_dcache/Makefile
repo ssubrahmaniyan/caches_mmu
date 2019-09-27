@@ -15,7 +15,7 @@ default: link_verilator simulate
 compile:
 	@echo Compiling...
 	#bsc -u -sim -simdir inter -bdir inter -D simulate=True -info-dir inter -keep-fires -p .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:./../../../common_bsv:./../../tb -g $(TOP_MODULE)  ../../tb/$(TOP_FILE) 
-	bsc -u -verilog -elab -vdir verilog -bdir inter  -D simulate=True +RTS -K100M -RTS -info-dir inter -suppress-warnings G0020 -keep-fires -p .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:./../../../common_bsv:./../../tb -g $(TOP_MODULE) ../../tb/$(TOP_FILE)
+	bsc -u -verilog -elab -vdir verilog -bdir inter  -D simulate=True  -D asidwidth=4 -D dtlbsize=8  +RTS -K100M -RTS -info-dir inter -suppress-warnings G0020 -keep-fires -p .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:./../../../common_bsv:./../../tb -g $(TOP_MODULE) ../../tb/$(TOP_FILE)
 	@echo Compilation finished
 	#@notify-send "BSV Compilation Done"
 
@@ -57,3 +57,5 @@ full_clean:
 	rm -f inter/model_mknb_dcache_tb.o inter/$(TOP_MODULE).o
 	rm -f inter/$(TOP_MODULE).h inter/model_mknb_dcache_tb.h
 	rm -f inter/$(TOP_MODULE).cxx inter/model_mknb_dcache_tb.cxx
+	rm -rf inter/*
+	rm -rf obj_dir/*
