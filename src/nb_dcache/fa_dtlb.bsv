@@ -239,11 +239,10 @@ package fa_dtlb;
           end
           if(tlbmiss)begin
             rg_miss_queue <= va;
-            wr_request_to_ptw<= PTWalk_tlb_request{address : va, access : req.access };
             core_resp= (DTLB_Cache_response{address  : ?,
                                            trap     : False,
                                            exception: exception,
-                                           tlbmis  : True});
+                                           tlbmiss  : True});
           end
           else begin
             `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
