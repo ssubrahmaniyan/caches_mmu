@@ -432,6 +432,8 @@ def test10():
     
     address=4096+(word_size*line_size*sets) # request to old line 2, should be a miss
     write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    gold_file.write(miss)
+    entrycount=entrycount+1
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -441,6 +443,8 @@ def test10():
 
     address=4096+(word_size*line_size*sets*(ways-1)) # request to old line 0, should be a miss 
     write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    gold_file.write(miss)
+    entrycount=entrycount+1
     if repl=="PLRU" :
         gold_file.write(miss)
         entrycount=entrycount+1
@@ -527,6 +531,8 @@ def test12():
 
     address=4096 # request to old line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index)
+    gold_file.write(miss)
+    entrycount=entrycount+1
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -571,6 +577,8 @@ def test13():
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence, rob_index) # request to old line 3
+    gold_file.write(miss)
+    entrycount=entrycount+1
     if repl=="PLRU" :
         gold_file.write(hit)
         entrycount=entrycount+1
@@ -907,21 +915,21 @@ def test21():
     
     return 0
 
-def test22():
+def test22a():
 
     global entrycount
 
     address=5000
     for i in range(20):
         address= address+1;
-        write_to_file(address,read,byte,unsigned,nodelay,nofence,rob_index)
+        write_to_file(address,write,byte,unsigned,nodelay,nofence,rob_index)
         entrycount=entrycount+1
         gold_file.write(miss)
     
     return 0
 
 #evicting a line and then loading it again
-def test22():
+def test22b():
     global entrycount
     address=4096
     cache_size=word_size*line_size*sets
@@ -1219,6 +1227,8 @@ def test29():
         entrycount=entrycount+1
         gold_file.write(miss)
 
+test0() #1548
+#test1() #1658
 #test02() #1698
 #test03() #1788
 #test04() #1558
@@ -1244,10 +1254,11 @@ def test29():
 #test19() #2308
 #test20() #2608
 #test21() #1588
-#test22() #1588
+#test22a() #1988
+#test22b() 
 #test23() #2808
 #test24() #2658
-test25() #2808
+#test25() #2808
 #test26() #no_end 1548
 #test27() #no_end 2328
 #test28() #no_end 1868
