@@ -51,10 +51,13 @@ package mshr;
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
+		method Action fence;
+		method Bool not_empty;
 	endinterface
 
 	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
 	//(*preempts= "cff_valid.initialize, (cff_valid.incCtr, cff_valid.decCtr, cff_valid.both) "*)
+  //(*execution_order="rl_deq_ff, ack_from_fb"*)
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index))
 				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr),
 				 						Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
@@ -86,6 +89,8 @@ package mshr;
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
 		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
+		Reg#(Bool) rg_fence <- mkReg(False);
+		Reg#(Bool) rg_wait_state <- mkReg(False);
 
 		FIFOF#(MSHR_Req#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
@@ -148,6 +153,15 @@ package mshr;
 			cff_valid[id].deq;
 		endrule
 
+		rule rl_done_fencing(!rg_wait_state && rg_fence && !mshr_not_empty);
+			rg_wait_state<= True;
+		endrule
+
+		rule rl_reset_fence(rg_wait_state && !mshr_not_empty);
+			rg_fence<= False;
+			rg_wait_state<= False;
+		endrule
+
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req)
 												if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
@@ -207,7 +221,7 @@ package mshr;
 					let fifo_top= ff_mshr[req_rid].first;
 					let cfifo_valid= cff_valid[req_rid].first;
 
-					if(cfifo_valid==1'b1) begin
+					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
@@ -224,12 +238,11 @@ package mshr;
 				end
 			end
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
-				
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
 					let cfifo_valid= cff_valid[curr_rid].first;
 
-					if(cfifo_valid==1'b1) begin
+					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
@@ -290,6 +303,14 @@ package mshr;
       	`logLevel( nb_dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
 				cff_valid[i].initialize(valid);
 			end
+		endmethod
+
+		method Action fence;
+			rg_fence<= True;
+		endmethod
+
+		method Bool not_empty;
+			return mshr_not_empty;
 		endmethod
 	endmodule
 
