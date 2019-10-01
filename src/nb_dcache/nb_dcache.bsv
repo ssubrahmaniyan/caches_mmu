@@ -28,20 +28,22 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 TODO
-1. Optimize the first stage buffer where you do not send the virtual page number to the next stage.
+-DONE-1. Optimize the first stage buffer where you do not send the virtual page number to the next stage.
    Instead, when you get the physical page number, concat that with the offset address and send it to 
 	 the next stage.
 2. Change appropriate interface parameters to module parameters
-3. Add flush logic
+-DONE-3. Add flush logic
 4. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
 	 be directly given through a separate master, or can be muxed with the existing master.
-5. Integrate TLB
+-DONE-5. Integrate TLB
 6. Optimize the FIFOs by :
 	 6.1 Changing PipelineFIFOs to normals FIFOs
 	 6.2 Check if release of FB can be done one cycle earlier
 7. Optimize the fill buffer logic by:
 	 7.1 Making rg_valid and rg_fill_buffer as CReg and then in the first cycle perform the MSHR requests.
 	 7.2 If the above results in the critical path, then perform stores in the subsequent cycle. Make sure that generate_masked_data and generate_masked_data_bus do not fall in the same cycle.
+	 7.3 Instead of rg_valid going from 1111 to 0000 and then to, let's say 0010, make it go from 1111 to 0010 directly.
+8. Optimize fence logic once 7.3 is done by changing rg_fb_state!=Write_SRAMs.
 */
 package nb_dcache;
 	import nb_dcache_types::*;          // for local cache types
@@ -134,10 +136,11 @@ package nb_dcache;
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
 	(*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
-	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer)"*)
+	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache)"*)
 	(*conflict_free="rl_MSHR_req_to_fill_buffer, mshr.rl_deq_ff"*)
 	(*preempts="rl_sram_resp_to_core, rl_access_fault_response_to_core"*)
 	(*preempts="rl_stage2_fb_resp_to_core, rl_access_fault_response_to_core"*)
+	(*preempts="rl_fence_fb, rl_fence_cache"*)
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, xlen, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
@@ -266,6 +269,9 @@ package nb_dcache;
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
 		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
 		Reg#(Bool) rg_mshr_flush_done <- mkReg(True);
+		Reg#(Bool) rg_fence <- mkReg(False);
+		Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
+		Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(MSHR_Req#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
@@ -366,10 +372,20 @@ package nb_dcache;
 			end
 		endrule
 
-		rule rl_handle_req_from_core(!rg_cache_busy);
+		rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence);
 			let core_req= ff_req_from_core.first;
 			Bool is_actual_store= (core_req.origin == Store_commit);
-			Bit#(setbits) set_index = core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+			Bit#(setbits) set_index;
+			//For a fence instruction, start from cache index 0.
+			if(core_req.sfence) begin
+				set_index= rg_fence_set_index;
+        `ifdef ASSERT
+					dynamicAssert(rg_fence_set_index==0,"Fence starting with index!=0");
+				`endif
+			end
+			else begin
+				set_index= core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+			end
       `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
 			
 			for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -386,7 +402,14 @@ package nb_dcache;
 																																			rob: core_req.rob,
 																																			prf_index: core_req.prf_index };
 			Bool is_IO_access= is_IO(core_req.addr);
-			if(!resp_from_tlb.tlbmiss || is_IO_access) begin			//Hit in the TLB or is an IO operation
+			if(core_req.sfence) begin
+					ff_req_from_core.deq;
+					mshr.fence;
+					rg_fence<= True;
+					rg_SRAM_fence[0]<= True;
+					rg_cache_busy<= True;
+			end
+			else if(!resp_from_tlb.tlbmiss || is_IO_access) begin			//Hit in the TLB or is an IO operation
 
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
 				if(resp_from_tlb.trap) begin	//Access fault
@@ -409,7 +432,7 @@ package nb_dcache;
 				end
 
 			end
-			else begin		//Miss in the TLB and not IO operation
+			else begin		//Miss in the TLB and not IO or fence operation
 				ff_req_from_core.deq;
       	`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
 				wr_req_to_ptw<= core_req;		//TODO PTW will store the req and send it again, once PTW is done.
@@ -442,7 +465,7 @@ package nb_dcache;
 		//This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
 		//to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
 		//cache, then the request is sent to the fill buffer.
-		rule rl_tag_and_data_array_read_response;
+		rule rl_tag_and_data_array_read_response(!rg_fence);
 			let req= ff_first_stage.first;
       `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
 
@@ -611,10 +634,12 @@ package nb_dcache;
 		rule rl_access_MSHRs;
 			let req= ff_second_stage.first;
 			ff_second_stage.deq;
-			
-			//If rg_flush is Invalid, or when flush is happening, "req" is after flush in program order
 			let flush= rg_flush[1];
-			if(!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob)) begin
+
+					//If no flush, or when flush is happening, "req" is after flush in program order
+					//OR if fence && a store request
+			if( (!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob))
+				  || (rg_fence && req.origin==Store_buffer) ) begin  
 				let mshr_resp<- mshr.allocate(req);
 				if(mshr_resp matches tagged Valid .read_id) begin
 					Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
@@ -710,7 +735,7 @@ package nb_dcache;
 		//*Caveat: Though the FIFOs, corresponding to the MSHR entry (corresponding to the line address)
 		//				 might be empty, there might be a request pending in the ff_second_stage. This is fine
 		//				 as the fill buffer is invalidated only after 3 clock cycles.
-		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==defaultValue && ff_write_req_to_mem.notFull);
+		rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence);
 			Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
 			`logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
 			for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -775,8 +800,92 @@ package nb_dcache;
 		rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
 			fill_buffer.release_fb;
 			//mshr.fb_released;
-			rg_fb_state<= defaultValue;
+			rg_fb_state<= Read_SRAMs;
 			`logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
+		endrule
+
+		//Fence logic
+
+		//This rule fires whent the fill buffer is ready to be released.
+		//Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
+		//in Write_SRAMs state, the fence should begin only after rg_fb_state becomes Read_SRAMs.
+		//Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
+		rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1);
+			let data= tpl_2(fill_buffer.data);
+			let line_addr= fill_buffer.line_addr;
+			Bit#(setbits) set_index= line_addr[setbits_val-1:0];
+			Bit#(tagbits) tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
+			Bit#(lineoffset) some_zeros= 0;
+			Bit#(paddr) evict_lineaddr= {set_index, tag, some_zeros};
+			ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+																								data: data,
+																								is_burst: True });
+			`logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
+		endrule
+
+		//TODO To reduce one cycle per dirty set, implement this function to check if exactly one dirty way exists
+		function Bool check_only_one_evict(Bit#(ways) evict);
+			return unpack(|(evict));
+		endfunction
+
+		rule rl_fence_cache (rg_fence && rg_SRAM_fence[0] && rg_cache_busy && rg_fb_state==Read_SRAMs);
+			Bit#(linewidth) dataline [ways_val];
+			Bit#(TAdd#(tagbits,2)) tag [ways_val];
+			Bit#(ways) dirty=0;
+			Bit#(ways) valid=0;
+			Bool incr_fence_set_index= False;
+			Bool lv_evict= False;
+			Bit#(TLog#(ways)) evict_index= 0;
+
+			for(Integer i = 0; i<ways_val; i = i+1) begin
+				dataline[i]= data_arr[i].read_response;
+				tag[i]= tag_arr[i].read_response;
+			end
+			for(Integer i = 0; i<ways_val; i = i+1) begin
+				valid[i]= tag[i][tagbits_val];		//Valid bit
+				dirty[i]= tag[i][tagbits_val+1];	//Dirty bit
+				if(valid[i]==1 && dirty[i]==1) begin
+					lv_evict=True;
+					evict_index= fromInteger(i);
+				end
+			end
+
+			if(lv_evict) begin
+				Bit#(lineoffset) some_zeros= 0;
+				Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
+				Bit#(paddr) evict_lineaddr= {rg_fence_set_index, evict_tag, some_zeros};
+				Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+
+				//Updating only the valid bit of the SRAM in order to save power.
+				tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
+
+				//Evicting the line
+				ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+																									data: dataline[evict_index],
+																									is_burst: True });
+				`logLevel( dcache, 2, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
+
+				Bit#(ways) evict_indices= valid & dirty;
+				Bool only_one_dirty= check_only_one_evict(evict_indices);
+				if(only_one_dirty)
+					incr_fence_set_index= True;
+				//else fence_set_index remains unchanged so that rest of the dirty lines in this set get evicted.
+			end
+			else begin	//Nothing to evict. Hence, increment fence index
+				incr_fence_set_index= True;
+			end
+
+			if(rg_fence_set_index=='1) begin
+				rg_SRAM_fence[0]<= False;
+			end
+
+			if(incr_fence_set_index)
+				rg_fence_set_index<= rg_fence_set_index + 1;
+		endrule
+
+		rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[1] && mshr.not_empty);
+				rg_cache_busy<= False;
+				rg_fence<= False;
 		endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
