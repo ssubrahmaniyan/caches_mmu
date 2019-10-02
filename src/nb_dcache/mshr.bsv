@@ -221,7 +221,10 @@ package mshr;
 					let fifo_top= ff_mshr[req_rid].first;
 					let cfifo_valid= cff_valid[req_rid].first;
 
-					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
+					//If a store_commit is pending, perform it irrespective of whether the cfifo_valid bit is 
+					//set, or if it is a fence instruction as this store got committed before the flush or fence 
+					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
+					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
