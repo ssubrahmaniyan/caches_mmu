@@ -50,6 +50,7 @@ package nb_dcache_tb;
 	`include "parameters.txt"
   `include "Logger.bsv"           // for logging
 	import CompletionBuffer::*;
+  import fa_dtlb::*;  //for accessing ifc_meta of fa_dtlb
   
   `define sets 64
   `define word_size 4
@@ -174,6 +175,13 @@ package nb_dcache_tb;
 				end
 			end
     end
+  endrule
+
+  rule rl_pt_meta;
+    dcache.subifc_ptw_meta.ma_satp_from_csr(0);     //transparent translation
+    dcache.subifc_ptw_meta.ma_curr_priv (0);        //machine mode
+    dcache.subifc_ptw_meta.ma_mstatus_from_csr(0);  //don't care for now since translating transparently
+    //dcache.subifc_ptw_meta.ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
   endrule
 
 	rule rl_endsim;
