@@ -234,6 +234,7 @@ package fill_buffer;
 		method Action release_fb if(all_valid);
 			rg_valid<= 'd0;
 			rg_dirty<= 0;
+			rg_fb_addr<= 0;
 		endmethod
 
 		method Bool can_release;
