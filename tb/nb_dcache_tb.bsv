@@ -37,6 +37,7 @@ package nb_dcache_tb;
   import BRAMCore::*;
   import FIFO::*;
   import GetPut::*;
+	import DefaultValue::*;
   //import dcache_nway::*;
   import test_caches::*;
   //import icache_dm::*;
@@ -141,7 +142,12 @@ package nb_dcache_tb;
       Bit#(TMul#(`Wordsize, 8)) writedata=truncateLSB(req);
 			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: %h Rob:%d Delay:%h Request:%h", req, rob, delay, request);
 
-			if(delay==0 && request!=0) begin // // not end of simulation
+			if(fence==1) begin
+				Req_from_core#(`XLEN, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= defaultValue;
+				temp_req.sfence=True;
+        dcache.subifc_req_from_core.put(temp_req);
+			end
+			else if(delay==0 && request!=0) begin // // not end of simulation
 				ff_req.enq(req);
 				let new_token<- cbuf.reserve.get;
 				if(request!='1) begin		//not finish test 
@@ -209,12 +215,14 @@ package nb_dcache_tb;
     Bit#(1) fence=control[1];
     Bit#(TMul#(`Wordsize, 8)) writedata=truncateLSB(req);
 
-    let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,zeroExtend(writedata));
+    Bit#(`Buswidth) expected_data=0;
+		if(fence==0)
+			expected_data<-testcache.memory_operation(truncate(req),readwrite,size,zeroExtend(writedata));
     Bool datafail=False;
 		$display("\n");
   
-		if(readwrite!='d1) begin
-			$display($format("[%10d", ____t) + $format("] "),"\tTB: Store request. No comparison being done.");
+		if(readwrite!='d1 || fence==1) begin
+			$display($format("[%10d", ____t) + $format("] "),"\tTB: Store/Fence request. No comparison being done.");
 		end
     else if(truncate(expected_data)!=read_data)begin
         $display($format("[%10d", ____t) + $format("] "),"\tTB: Output from cache is wrong for Req: %h",req);
@@ -341,7 +349,7 @@ package nb_dcache_tb;
     Bit#(19) index = truncate(addr>>v_wordbits);
     let loaded_data=data.sub(index);
 
-    Bit#(`Buswidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:size[1:0]==3?'hFFFFFFFF_FFFF_FFFF:'1;
+    Bit#(`Buswidth) mask = size[2:0]==0?'hFF:size[2:0]==1?'hFFFF:size[2:0]==2?'hFFFFFFFF:size[2:0]==3?'hFFFFFFFF_FFFF_FFFF:'1;
     Bit#(TLog#(`Wordsize)) shift_amt=addr[v_wordbits-1:0];
     mask= mask<<shift_amt;
 

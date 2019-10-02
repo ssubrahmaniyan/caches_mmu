@@ -1227,6 +1227,45 @@ def test29():
         entrycount=entrycount+1
         gold_file.write(miss)
 
+def test30():
+    global entrycount
+    address=4096
+    rob_index=0
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #0
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    #address=address+8
+    rob_index=rob_index+1
+    write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index) #1
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    for i in range(50):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    rob_index=rob_index+1
+    write_to_file(address,write,word,unsigned,nodelay,fence,rob_index) #2
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    rob_index=rob_index+1
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #3
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    for i in range(20):
+        write_to_file(address,read,word,unsigned,delay,nofence,rob_index)
+        entrycount=entrycount+1
+        gold_file.write(miss)
+
+    rob_index=rob_index+1
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #3
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
 test0() #1548
 #test1() #1658
 #test02() #1698
@@ -1255,7 +1294,7 @@ test0() #1548
 #test20() #2608
 #test21() #1588
 #test22a() #1988
-#test22b() 
+#test22b() #1608 
 #test23() #2808
 #test24() #2658
 #test25() #2808
@@ -1263,6 +1302,7 @@ test0() #1548
 #test27() #no_end 2328
 #test28() #no_end 1868
 #test29() #no_end 1808
+#test30()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
