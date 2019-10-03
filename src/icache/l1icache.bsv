@@ -45,11 +45,20 @@ package l1icache;
   import Assert::*;
   import GetPut::*;
   import BUtils::*;
+  import ConfigReg::*;
 
   import globals::*;
   import cache_types::*;
   import mem_config::*;
   import replacement::*;
+  
+`ifdef ECC
+  import ecc_hamming::*;
+`endif
+`ifdef ecc_test
+  import LFSR :: *;
+`endif
+
   `include "cache.defines"
   `include "Logger.bsv"
   
@@ -61,6 +70,10 @@ package l1icache;
                            numeric type vaddr,
                            numeric type fbsize,
                            numeric type esize,
+                        `ifdef ECC
+			                     numeric type ecc_wordsize,
+                           numeric type ebanks,
+                        `endif
                            numeric type dbanks,
                            numeric type tbanks,
                            numeric type buswidth
@@ -87,7 +100,7 @@ package l1icache;
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,dbanks,tbanks,buswidth)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,`ifdef ECC ecc_wordsize, ebanks, `endif dbanks,tbanks,buswidth)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -125,6 +138,34 @@ package l1icache;
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
           Add#(j__, TDiv#(linewidth, 8), linewidth),
           Add#(k__, TLog#(ways), TLog#(TAdd#(1, ways)))
+`ifdef ECC 
+        ,Mul#(TAdd#(2, TLog#(ecc_wordsize)), TDiv#(respwidth, ecc_wordsize), ecc_encoded_parity_wordsize),
+    	  Add#(s__, ecc_encoded_parity_wordsize, TMul#(TDiv#(blocksize, TDiv#(buswidth, ecc_wordsize)), ecc_encoded_parity_wordsize)),
+        Add#(ad__, ecc_wordsize, respwidth),
+	      Log#(TMul#(TDiv#(blocksize, TDiv#(buswidth, respwidth)), ecc_encoded_parity_wordsize_mtpl), TAdd#(blockbits, TLog#(ecc_encoded_parity_wordsize_mtpl))), 
+	      Add#(ae__, TAdd#(2, TLog#(ecc_wordsize)), TMul#(TDiv#(buswidth, respwidth), TMul#(TDiv#(respwidth, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize))))),
+	      Add#(af__, TMul#(TDiv#(buswidth, respwidth), TMul#(TDiv#(respwidth, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize)))), TMul#(TDiv#(blocksize, TDiv#(buswidth, respwidth)), ecc_encoded_parity_wordsize_mtpl)),
+	      Add#(ag__, ecc_encoded_parity_wordsize_mtpl, TMul#(TDiv#(blocksize, TDiv#(buswidth, respwidth)), ecc_encoded_parity_wordsize_mtpl)),
+
+        Mul#(TDiv#(buswidth,respwidth), ecc_encoded_parity_wordsize,ecc_encoded_parity_wordsize_mtpl ),
+        Add#(tt__, TAdd#(2, TLog#(ecc_wordsize)), TMul#(TDiv#(respwidth,ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize)))),
+        Add#(u__, TMul#(TDiv#(ecc_wordsize, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize))), TMul#(blocksize, ecc_encoded_parity_wordsize)),
+        Add#(v__, TDiv#(TMul#(blocksize, ecc_encoded_parity_wordsize), ebanks), TMul#(blocksize, ecc_encoded_parity_wordsize)),
+        Mul#(TDiv#(TMul#(blocksize, ecc_encoded_parity_wordsize), ebanks), ebanks, TMul#(blocksize, ecc_encoded_parity_wordsize)),
+        Add#(2, TLog#(ecc_wordsize), encoded_paritysize),
+        Add#(w__, ecc_encoded_parity_wordsize, ecc_encoded_parity_linewidth),
+        Mul#(TMul#(TDiv#(respwidth,ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize))), x__, ecc_encoded_parity_linewidth),
+        Mul#(TMul#(TDiv#(ecc_wordsize, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize))), y__, TMul#(blocksize, ecc_encoded_parity_wordsize)),
+        Add#(z__, TAdd#(2, TLog#(ecc_wordsize)), ecc_encoded_parity_linewidth),
+        Add#(aa__, ecc_encoded_parity_wordsize, TMul#(blocksize, ecc_encoded_parity_wordsize)),
+
+	      Add#(r__, TAdd#(2, TLog#(ecc_wordsize)), TMul#(TDiv#(buswidth,ecc_wordsize),TAdd#(2,TLog#(ecc_wordsize)))),
+	      Add#(w__, TMul#(TDiv#(buswidth, ecc_wordsize),TAdd#(2,TLog#(ecc_wordsize))), TMul#(TDiv#(blocksize,TDiv#(buswidth,ecc_wordsize)),ecc_encoded_parity_wordsize)),
+
+	      Add#(t__, TAdd#(2, TLog#(ecc_wordsize)), TMul#(TDiv#(buswidth, ecc_wordsize), TMul#(TDiv#(ecc_wordsize, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize))))),
+	      Add#(ab__, TMul#(TDiv#(buswidth, ecc_wordsize), TMul#(TDiv#(ecc_wordsize, ecc_wordsize), TAdd#(2, TLog#(ecc_wordsize)))), TMul#(TDiv#(blocksize, TDiv#(buswidth, ecc_wordsize)), ecc_encoded_parity_wordsize_mtpl)),
+	      Add#(ac__, ecc_encoded_parity_wordsize_mtpl, TMul#(TDiv#(blocksize, TDiv#(buswidth, ecc_wordsize)), ecc_encoded_parity_wordsize_mtpl))
+`endif
           
     );
 
@@ -142,6 +183,15 @@ package l1icache;
     let v_fbsize=valueOf(fbsize);
     let v_respwidth=valueOf(respwidth);
 
+`ifdef ECC 
+    let v_ecc_wordsize=valueOf(ecc_wordsize);
+    let v_ecc_encoded_parity_wordsize= valueOf(ecc_encoded_parity_wordsize);
+    let v_ecc_encoded_parity_wordsize_mtpl= valueOf(ecc_encoded_parity_wordsize_mtpl);
+    let v_num_ecc_per_word = valueOf(TDiv#(respwidth, ecc_wordsize));
+    let v_encoded_paritysize = valueOf((TAdd#(2, TLog#(ecc_wordsize)))) ;
+    let v_decoded_paritysize = valueOf((TAdd#(1, TLog#(ecc_wordsize)))) ;
+`endif
+
     //Following function returns the info regarding word_position in line getting filled
     function Bit#(blocksize) fn_enable(Bit#(blockbits)word_index);
        Bit#(blocksize) write_enable ='h0; //
@@ -156,6 +206,7 @@ package l1icache;
     function Bool isOne(Bit#(1) a);
       return unpack(a);
     endfunction
+
   
 //    String alg ="RROBIN";
 
@@ -188,11 +239,17 @@ package l1icache;
 
    
     // ------------------------ Structures required for cache RAMS ------------------------------//
+`ifdef ECC
+    Ifc_mem_config1rw#(sets, (TMul#(blocksize,ecc_encoded_parity_wordsize)), ebanks) ecc_arr [v_ways]; // ecc array
+`endif
     Ifc_mem_config1rw#(sets, linewidth, dbanks) data_arr [v_ways]; // data array
     Ifc_mem_config1rw#(sets, tagbits, tbanks) tag_arr [v_ways];// one extra valid bit
     for(Integer i=0;i<v_ways;i=i+1)begin
       data_arr[i]<-mkmem_config1rw(False, "single"); 
       tag_arr[i]<-mkmem_config1rw(False, "single");
+`ifdef ECC
+      ecc_arr[i]<-mkmem_config1rw(False, "single");
+`endif
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
     Reg#(Bit#(ways)) rg_valid[v_sets];
@@ -227,10 +284,17 @@ package l1icache;
     Reg#(Bit#(1)) fb_err [v_fbsize];
     Vector#(fbsize,Reg#(Bool)) fb_valid<-replicateM(mkReg(False));
     for(Integer i=0;i<v_fbsize;i=i+1)begin
-      fb_dataline[i]<-mkReg(0);
+`ifdef ECC
+      fb_addr[i]<-mkConfigReg(0);
+      fb_enables[i]<-mkConfigReg(0);
+      fb_dataline[i]<-mkConfigReg(0);
+      fb_err[i]<-mkConfigReg(0);
+`else
       fb_addr[i]<-mkReg(0);
       fb_enables[i]<-mkReg(0);
+      fb_dataline[i]<-mkReg(0);
       fb_err[i]<-mkReg(0);
+`endif
     end
     Wire#(RespState) wr_fb_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_fb_word <-mkDWire(0);
@@ -267,6 +331,43 @@ package l1icache;
     Bit#(linewidth) writedata=fb_dataline[rg_fbwriteback];
     // ------------------------------------------------------------------------------------------//
 
+
+    /**************************************ECC Hamming Encoded Parity structures******************/
+
+`ifdef ECC
+    Reg#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line [v_fbsize];
+    Reg#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line_full [v_fbsize];
+    Reg#(Bit#(TAdd#(1,blockbits))) rg_j[2]  <- mkCReg(2,0);
+    for(Integer i=0;i<v_fbsize;i=i+1)begin
+      fb_ecc_encoded_parity_line[i]<-mkConfigReg(0);
+      fb_ecc_encoded_parity_line_full[i]<-mkConfigReg(0);
+    end
+    
+    Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) writeecc=fb_ecc_encoded_parity_line[rg_fbwriteback];
+    Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) junkecc=0;   
+
+    Wire#(Bit#(ecc_encoded_parity_linewidth)) wr_hitline_ecc <-mkDWire(0);
+
+    Wire#(Bool) wr_fb_ecc_fault <- mkDWire(False);
+    Wire#(Bool) wr_resp_ecc_fault <- mkDWire(False);
+
+`endif
+
+    // ------------------------------------------------------------------------------------------//
+  `ifdef ecc_test
+    LFSR#(Bit#(5)) lfsr <- mkFeedLFSR('h12);
+    Reg#(Bool) rg_init <- mkReg(True);
+    Wire#(Bit#(respwidth)) wr_err_mask <- mkWire();
+    rule rl_initialize(rg_init);
+      rg_init <= False;
+      lfsr.seed('d20);
+    endrule
+    rule generate_error(!rg_init);
+      wr_err_mask <= 'b1 << lfsr.value;
+      lfsr.next;
+    endrule
+  `endif
+
     rule display_stuff;
       `logLevel( icache, 2, $format("ICACHE: fbfull:%b fbempty:%b rgfbwb:%d rgfbmiss:%d", fb_full,
                                                       fb_empty, rg_fbwriteback, rg_fbmissallocate))
@@ -294,7 +395,7 @@ package l1icache;
       let req = ff_core_request.first();
       Bit#(paddr) phy_addr=truncate(req.address);
       Bit#(respwidth) word=0;
-      Bool err=wr_access_fault;
+      Bool err=wr_access_fault `ifdef ECC || wr_resp_ecc_fault `endif ;
       let set_index=phy_addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       if(wr_ram_response==Hit)begin
         word=wr_ram_hitword;
@@ -347,6 +448,11 @@ package l1icache;
       Bit#(paddr) phy_addr=truncate(req.address);
       Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phy_addr[v_blockbits+v_wordbits-1:0],3'b0};
+`ifdef ECC
+      Bit#(TAdd#(TLog#(ecc_encoded_parity_wordsize),blockbits)) block_offset_ecc=(phy_addr[v_blockbits+v_wordbits-1:v_wordbits]); //ported bug fix
+      Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) dataline_ecc[v_ways];
+      Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) hitline_ecc=0;
+`endif
       Bit#(blockbits) word_index= phy_addr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(tagbits) request_tag = phy_addr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phy_addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -356,6 +462,9 @@ package l1icache;
       for(Integer i=0;i<v_ways;i=i+1)begin
         tag[i]<- tag_arr[i].read_response;
         dataline[i]<- data_arr[i].read_response;
+`ifdef ECC
+        dataline_ecc[i]<- ecc_arr[i].read_response;
+`endif
       end
       Bit#(linewidth) hitline=0;
       Bit#(ways) hit=0;
@@ -374,16 +483,51 @@ package l1icache;
         if(rg_valid[set_index][i]==1 && request_tag==tag[i])begin
           hit[i]=1'b1;
           hitline=dataline[i];
+`ifdef ECC
+          hitline_ecc=dataline_ecc[i];
+`endif
         end
       end
       Bool cache_hit=unpack(|(hit));
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
-      Bit#(respwidth) response_word=truncate(hitline>>block_offset);
+      Bit#(respwidth) response_word=truncate(hitline>>block_offset) `ifdef ecc_test ^ wr_err_mask `endif ;
+
+`ifdef ECC
+      Bit#(ecc_encoded_parity_wordsize) response_word_ecc = 0;
+      Bit#(TAdd#(1, TLog#(ecc_wordsize))) decoded_parity = 0;
+      Bit#(respwidth) response_word_correct = 0;
+      Bit#(1) det_only = 0;
+      Bool trap = False;
+      Bool resp_ecc_fault = False;
+
+      response_word_ecc= truncate(hitline_ecc>> ((block_offset_ecc)*fromInteger(v_ecc_encoded_parity_wordsize)));
+
+      Bit#(ecc_wordsize) ecc_word = 0;
+      Bit#(encoded_paritysize) ecc_enc_word = 0;
+      Bit#(ecc_wordsize) word_correct = 0;
+      for (Integer i=0; i < v_num_ecc_per_word; i=i+1) begin
+        ecc_word = response_word[i*v_ecc_wordsize+v_ecc_wordsize-1:i*v_ecc_wordsize];
+        ecc_enc_word = response_word_ecc[i*v_encoded_paritysize+v_encoded_paritysize-1:i*v_encoded_paritysize];
+        {word_correct,decoded_parity, trap} = ecc_hamming_decode_correct(ecc_word,ecc_enc_word,det_only);
+        if (trap) begin
+           resp_ecc_fault = resp_ecc_fault || trap;
+        end
+        else begin
+           response_word_correct[i*v_ecc_wordsize+v_ecc_wordsize-1:i*v_ecc_wordsize] = word_correct;
+        end
+      end
+      wr_resp_ecc_fault <= resp_ecc_fault;
+`endif
+
       if(|upper_bits==1)
         wr_access_fault<=True;
       else if(cache_hit)begin
         wr_ram_response<=Hit;
+`ifdef ECC
+        wr_ram_hitword<=response_word_correct;
+`else
         wr_ram_hitword<=response_word;
+`endif
       end
       else begin
         wr_ram_response<=Miss;
@@ -407,6 +551,12 @@ package l1icache;
       Bit#(paddr) phy_addr=truncate(req.address);
       Bit#(setbits) read_set = phy_addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phy_addr[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(TAdd#(3,(wordbits))) byte_index = {phy_addr[v_wordbits-1:0],3'b000}; // bug fix
+`ifdef ECC
+      Bit#(TAdd#(TLog#(ecc_encoded_parity_wordsize),blockbits))block_offset_ecc=phy_addr[v_blockbits+v_wordbits-1:v_wordbits]; //bug_fix
+      Bit#(TAdd#(3,TAdd#(TLog#(respwidth),blockbits)))block_offset_tmp={phy_addr[v_blockbits+v_wordbits-1:v_wordbits]} * fromInteger(v_respwidth);
+      Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) hitline_ecc=0;
+`endif
       Bit#(blockbits) word_index=phy_addr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(phy_addr);
       Bit#(fbsize) fbhit=0;
@@ -429,6 +579,13 @@ package l1icache;
         // we use truncateLSB because we need to match only the tag and set bits
         if( truncateLSB(fb_addr[i])==t && fb_valid[i])begin
           hitline=fb_dataline[i];
+`ifdef ECC
+          let m= valueOf(TDiv#(buswidth,respwidth));
+	  if((rg_j[1] >= 0) && (rg_j[1] <= fromInteger(v_blocksize/m)))
+                hitline_ecc=fb_ecc_encoded_parity_line[i];
+          else
+	        hitline_ecc=fb_ecc_encoded_parity_line_full[i];
+`endif
           fberr=fb_err[i];
           fbhit[i]=1;
           if(fb_enables[i][word_index]==1'b1) begin
@@ -447,12 +604,51 @@ package l1icache;
       `ifdef pysimulate
         wrpolling<=rg_polling;
       `endif
-      wr_fb_word<=truncate(hitline>>block_offset); 
-      wr_fb_err <= fberr;
+
+      Bit#(respwidth) fb_word = 0;
+      Bool fb_ecc_fault = False;
+      fb_word=truncate(hitline>>block_offset); 
+
+`ifdef ECC
+      Bit#(respwidth) fb_word_tmp = 0;
+      fb_word_tmp=truncate(hitline>>(block_offset_tmp)) `ifdef ecc_test ^ wr_err_mask `endif ; // bug fix
+      //fb_word_tmp=truncate(hitline>>(block_offset_tmp/fromInteger(m))); // bug fix
+      Bit#(ecc_encoded_parity_wordsize) fb_word_ecc = 0;
+      Bit#(TAdd#(1, TLog#(ecc_wordsize))) decoded_parity = 0;
+      Bit#(respwidth) fb_word_correct = 0;
+      Bit#(1) det_only = 0;
+      Bool trap = False;
+
+      //fb_word_ecc= truncate(hitline_ecc>> ((block_offset_ecc/fromInteger(m))*fromInteger(v_ecc_encoded_parity_wordsize)));
+      fb_word_ecc= truncate(hitline_ecc>> ((block_offset_ecc)*fromInteger(v_ecc_encoded_parity_wordsize)));
+
+      Bit#(ecc_wordsize) ecc_word = 0;
+      Bit#(encoded_paritysize) ecc_enc_word = 0;
+      Bit#(ecc_wordsize) word_correct = 0;
+      for (Integer i=0; i < v_num_ecc_per_word; i=i+1) begin
+        ecc_word = fb_word_tmp[i*v_ecc_wordsize+v_ecc_wordsize-1:i*v_ecc_wordsize];
+        ecc_enc_word = fb_word_ecc[i*v_encoded_paritysize+v_encoded_paritysize-1:i*v_encoded_paritysize];
+      	{word_correct,decoded_parity, trap} = ecc_hamming_decode_correct(ecc_word,ecc_enc_word,det_only);
+	if (trap == True) begin
+           fb_ecc_fault = fb_ecc_fault || trap;
+	end
+        else begin
+	//if (((decoded_parity == 0) || (det_only == 1'b1)) && (trap == False)) begin
+           fb_word_correct[i*v_ecc_wordsize+v_ecc_wordsize-1:i*v_ecc_wordsize] = word_correct;
+        end
+      end
+      
+      wr_fb_word <= fb_word_correct >> byte_index;
+`else
+      wr_fb_word <= fb_word ;
+`endif
+
+      wr_fb_err <= fberr | pack(fb_ecc_fault);
 
       `logLevel( icache, 0, $format("ICACHE : FB Polling for Req: ",fshow(req)))
       `logLevel( icache, 1, $format("ICACHE : FP Polling Result. linehit:%b wordhit:%b", 
                                     linehit, wordhit))
+
 
       `ifdef ASSERT
         dynamicAssert(countOnes(fbhit)<=1,"More than one line in FB is hit");
@@ -508,12 +704,35 @@ package l1icache;
     // This rule will update an entry pointed by the register rg_fbbeingfilled with the incoming
     // response from the lower memory level.
     rule update_fb_with_memory_response;
+
       let response=ff_read_mem_response.first();
+
+`ifdef ECC
+      let m= valueOf(TDiv#(buswidth,respwidth));
+      Bit#(ecc_wordsize) ecc_word = 0;
+      Bit#(TAdd#(2, TLog#(ecc_wordsize))) ecc_encoded_parity = 0;
+      Bit#(TMul#((TDiv#(respwidth, ecc_wordsize)), (TAdd#(2, TLog#(ecc_wordsize)))) )  ecc_encoded_parity_word = 0;
+      Bit#(TMul#(TDiv#(buswidth,respwidth), TMul#((TDiv#(respwidth, ecc_wordsize)), TAdd#(2, TLog#(ecc_wordsize))) ))  ecc_encoded_parity_word_mtpl = 0;
+      for (Integer j=0; j < m; j=j+1) begin
+      	for (Integer i=0; i < v_num_ecc_per_word; i=i+1) begin
+		let k = (j*v_num_ecc_per_word) + i;
+        	ecc_word = response.data[k*v_ecc_wordsize+v_ecc_wordsize-1:k*v_ecc_wordsize];
+        	ecc_encoded_parity = ecc_hamming_encode(ecc_word);
+		ecc_encoded_parity_word[i* v_encoded_paritysize+ v_encoded_paritysize -1:i*v_encoded_paritysize] = ecc_encoded_parity;
+		ecc_encoded_parity_word_mtpl[k* v_encoded_paritysize+ v_encoded_paritysize -1:k*v_encoded_paritysize] = ecc_encoded_parity;
+      	end 
+      end
+`endif
+
       rg_fb_err<=response.err;
       ff_read_mem_response.deq;
       let fbindex=ff_fb_fillindex.first();
       Bit#(blocksize) temp=0;
       Bit#(blockbits) word_index=fb_addr[fbindex][v_blockbits+v_wordbits-1:v_wordbits];
+`ifdef ECC
+      Bit#(TAdd#(blockbits,TLog#(ecc_encoded_parity_wordsize_mtpl))) word_index_ecc=fb_addr[fbindex][v_blockbits+v_wordbits-1:v_wordbits]; // bug fix
+`endif
+
       if(fb_enables[fbindex]==0)
         temp=fn_enable(word_index);
       else
@@ -528,6 +747,33 @@ package l1icache;
         mask[i*v_respwidth+v_respwidth-1:i*v_respwidth]=we;
       end
       fb_dataline[fbindex]<=(~mask&fb_dataline[fbindex])|(mask&duplicate(response.data));
+
+`ifdef ECC
+      Bit#(TMul#(TDiv#(blocksize,(TDiv#(buswidth,respwidth))),ecc_encoded_parity_wordsize_mtpl)) fb_ecc_encoded_parity_line_temp = 0;
+      Bit#(TMul#(TDiv#(blocksize,(TDiv#(buswidth,respwidth))),ecc_encoded_parity_wordsize_mtpl)) fb_ecc_mask_temp = 0;
+      Bit#(ecc_encoded_parity_wordsize_mtpl) mask_temp = '1;
+
+      //for (Integer i=0; i < (v_blocksize/m); i=i+1) begin 
+      for (Integer i=0; i < (v_blocksize/m); i=i+1) begin 
+        if (fromInteger(i) == rg_j[0]) begin
+      	   fb_ecc_encoded_parity_line_temp[i*v_ecc_encoded_parity_wordsize_mtpl+v_ecc_encoded_parity_wordsize_mtpl-1:i*v_ecc_encoded_parity_wordsize_mtpl] =ecc_encoded_parity_word_mtpl;
+           fb_ecc_mask_temp[i*v_ecc_encoded_parity_wordsize_mtpl+v_ecc_encoded_parity_wordsize_mtpl-1:i*v_ecc_encoded_parity_wordsize_mtpl] = mask_temp;
+        end
+      end 
+      let shift_val = unpack((word_index_ecc/fromInteger(m))*fromInteger(v_ecc_encoded_parity_wordsize_mtpl));
+      fb_ecc_encoded_parity_line_temp= rotateBitsBy(fb_ecc_encoded_parity_line_temp,shift_val); // bug fix
+      fb_ecc_mask_temp= rotateBitsBy(fb_ecc_mask_temp,shift_val); // bug fix
+      if (rg_j[0] < fromInteger(v_blocksize/m)) begin //bug_fix
+        if ( rg_j[0] == fromInteger((v_blocksize/m)-1)) begin
+	  rg_j[0] <=0;
+          //fb_ecc_encoded_parity_line_full[fbindex][0] <= (((~fb_ecc_mask_temp & fb_ecc_encoded_parity_line[fbindex]) | fb_ecc_encoded_parity_line_temp)) ;
+        end 
+        else
+          rg_j[0] <= rg_j[0] + 1;
+        fb_ecc_encoded_parity_line[fbindex] <= (((~fb_ecc_mask_temp & fb_ecc_encoded_parity_line[fbindex])| fb_ecc_encoded_parity_line_temp));
+      end 
+`endif
+
       fb_err[fbindex]<=pack(response.err);
       if(response.last)
         ff_fb_fillindex.deq();
@@ -575,6 +821,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
               replacement.update_set(set_index,waynum);
           end
         end
+`ifdef ECC
+        ecc_arr[waynum].request(1'b1,set_index,writeecc);
+`endif
         tag_arr[waynum].request(1'b1,set_index,writetag);
         data_arr[waynum].request(1'b1,set_index,writedata);
         rg_valid[set_index][waynum]<=1'b1;
@@ -594,6 +843,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
     rule replay_latest_request(rg_replaylatest);
       rg_replaylatest<=False;
       for(Integer i=0;i<v_ways;i=i+1)begin
+`ifdef ECC
+        ecc_arr[i].request(1'b0,rg_latest_index,writeecc);
+`endif
         data_arr[i].request(1'b0,rg_latest_index,writedata);
         tag_arr[i].request(1'b0,rg_latest_index,writetag);
       end
@@ -611,6 +863,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin
+`ifdef ECC
+          ecc_arr[i].request(1'b0,set_index,writeecc);
+`endif
           data_arr[i].request(1'b0,set_index,writedata);
           tag_arr[i].request(1'b0,set_index,writetag);
         end

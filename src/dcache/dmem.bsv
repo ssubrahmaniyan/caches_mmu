@@ -57,7 +57,8 @@ package dmem;
 
   (*synthesize*)
   module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,`dfbsize,
-                                                      `dsbsize, `desize, `ddbanks, `dtbanks ));
+                                                      `dsbsize, `desize, 
+                                `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks ));
     let ifc();
   `ifdef dcache
     mkl1dcache#(isIO,"RROBIN") _temp(ifc);

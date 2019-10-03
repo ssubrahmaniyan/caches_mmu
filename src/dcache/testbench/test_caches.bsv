@@ -37,6 +37,7 @@ package test_caches;
   import FIFO::*;
   import BUtils::*;
   import RegFile::*;
+  `include "Logger.bsv"
 
   interface Ifc_test_caches#(numeric type wordsize, 
                            numeric type blocksize,  
@@ -92,8 +93,8 @@ package test_caches;
         Bit#(TAdd#(3,TLog#(wordsize))) shift_amt={addr[v_wordbits-1:0],3'b0};
         mask= mask<<shift_amt;
         Bit#(respwidth) write_word=~mask&loaded_data|mask&data;
-        $display($time,"\tTEST: addr: %h index: %d access: %d size: %b Loadeddata: %h mask: %h write_Word:%h",
-            addr, index, access, size, loaded_data, mask, write_word);
+        `logLevel( testcache, 0, $format("\tTEST: addr: %h index: %d access: %d size: %b Loadeddata: %h mask: %h write_Word:%h",
+          addr, index, access, size, loaded_data, mask, write_word))
         if(access==1)
           mem.upd(index,write_word);
         return response_word;
