@@ -44,6 +44,7 @@ TODO
 	 7.2 If the above results in the critical path, then perform stores in the subsequent cycle. Make sure that generate_masked_data and generate_masked_data_bus do not fall in the same cycle.
 	 7.3 Instead of rg_valid going from 1111 to 0000 and then to, let's say 0010, make it go from 1111 to 0010 directly.
 8. Optimize fence logic once 7.3 is done by changing rg_fb_state!=Write_SRAMs.
+9. Change hit_way to OInt type.
 */
 package nb_dcache;
 	import nb_dcache_types::*;          // for local cache types
@@ -494,7 +495,7 @@ package nb_dcache;
 			if(way_num!='1) begin																		//It's a line hit
 				Bit#(TLog#(ways)) hit_way= truncate(way_num);
 				Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-				let line= dataline[hit_way];
+				let line= dataline[hit_way];	//TODO change this to OInt type
 				let disp_tag= tag_arr[hit_way].read_response;
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
       	`logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, line, disp_tag))
