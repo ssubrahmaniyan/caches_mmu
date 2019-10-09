@@ -1,0 +1,217 @@
+/* 
+Copyright (c) 2019, IIT Madras All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted
+provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this list of conditions
+  and the following disclaimer.  
+* Redistributions in binary form must reproduce the above copyright notice, this list of 
+  conditions and the following disclaimer in the documentation and/or other materials provided 
+  with the distribution.  
+* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
+  promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
+OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
+OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+--------------------------------------------------------------------------------------------------
+
+Author: Neel Gala
+Email id: neelgala@gmail.com
+Details:
+
+--------------------------------------------------------------------------------------------------
+*/
+package icache;
+  `include "Logger.bsv"
+  import FIFO :: * ;
+  import FIFOF :: * ;
+  import SpecialFIFOs :: * ;
+  import BRAMCore :: * ;
+  import Vector :: * ;
+  import GetPut :: * ;
+  import Assert  :: * ;
+  import OInt :: * ;
+
+  `include "cache.defines"
+  import cache_types :: * ;
+  import globals :: * ;
+
+  interface Ifc_icache#(numeric type wordsize, 
+                        numeric type blocksize,  
+                        numeric type sets,
+                        numeric type ways,
+                        numeric type paddr,
+                        numeric type vaddr,
+                        numeric type esize,
+                      `ifdef ECC
+			                  numeric type ecc_wordsize,
+                        numeric type ebanks,
+                      `endif
+                        numeric type dbanks,
+                        numeric type tbanks,
+                        numeric type buswidth
+                           );
+    interface Put#(ICache_request#(vaddr,esize)) core_req;
+    interface Get#(FetchResponse#(TMul#(wordsize,8),esize)) core_resp;
+    interface Get#(ICache_mem_request#(paddr)) read_mem_req;
+    interface Put#(ICache_mem_response#(buswidth)) read_mem_resp;
+    `ifdef perfmonitors
+      method Bit#(5) perf_counters;
+    `endif
+    method Action ma_cache_enable(Bool c);
+  endinterface
+
+  /*doc:module: */
+  module mkicache (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, esize, dbanks, tbanks,
+                            buswidth))
+    provisos(
+          Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
+          Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
+          Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
+          Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
+          Log#(sets, setbits),           // setbits is the no. of bits used as index in BRAMs.
+          Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
+          Add#(_a, setbits, _b),        // _b total bits for index+offset, 
+          Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
+          Div#(buswidth,respwidth,o__), 
+          Add#(o__, p__, 2),            // ensure that the buswidth is no more than twice the size of respwidth
+
+          // required by bsc
+          Mul#(TDiv#(linewidth, TDiv#(linewidth, 8)), TDiv#(linewidth, 8),linewidth),
+          Add#(a__, paddr, vaddr),
+          Add#(b__, respwidth, linewidth)
+    );
+
+    String icache = "";
+    let v_sets=valueOf(sets);
+    let v_setbits=valueOf(setbits);
+    let v_wordbits=valueOf(wordbits);
+    let v_blockbits=valueOf(blockbits);
+    let v_linewidth=valueOf(linewidth);
+    let v_tagbits=valueOf(tagbits);
+    let v_paddr=valueOf(paddr);
+    let v_ways=valueOf(ways);
+    let v_wordsize=valueOf(wordsize);
+    let v_blocksize=valueOf(blocksize);
+    let v_respwidth=valueOf(respwidth);
+    // ----------------------- FIFOs to interact with interface of the design -------------------//
+    /*doc:fifo: This fifo stores the request from the core.*/
+    FIFOF#(ICache_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
+    /*doc:fifo: This fifo stores the response that needs to be sent back to the core.*/
+    FIFOF#(FetchResponse#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
+    /*doc:fifo: this fifo stores the read request that needs to be sent to the next memory level.*/
+    FIFOF#(ICache_mem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
+    /*doc:fifo: This fifo stores the response from the next level memory.*/
+    FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
+   
+    // -------------------- Register declarations ----------------------------------------------//
+    /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
+     new requests from the core*/
+    Reg#(Bool) rg_fence_stall <- mkReg(False);
+
+    // -------------------- Wire declarations ----------------------------------------------//
+    /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
+    Wire#(Bool) wr_cache_enable<-mkWire();
+  `ifdef perfmonitors
+    /*doc:wire: wire to pulse on every access*/
+    Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
+    /*doc:wire: wire to pulse on every cache miss*/
+    Wire#(Bit#(1)) wr_total_cache_misses <- mkDWire(0);
+    /*doc:wire: wire to pulse on non-cacheable accesses*/
+    Wire#(Bit#(1)) wr_total_nc <- mkDWire(0);
+  `endif
+    
+    
+    // ----------------------- Storage elements -------------------------------------------//
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
+    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
+    BRAM_DUAL_PORT_BE#(Bit#(TLog#(sets)), Bit#(linewidth), TDiv#(linewidth,8)) bram_data [v_ways];
+    for (Integer i = 0; i<v_ways; i = i + 1) begin
+      bram_tag[i]  <- mkBRAMCore2(v_sets, False);
+      bram_data[i] <- mkBRAMCore2BE(v_sets, False);
+    end
+
+
+    // --------------------------- Rule operations ------------------------------------- //
+    /*doc:rule: rule that fences the cache by invalidating all the lines*/
+    rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall ) ;
+      `logLevel( icache, 0, $format("ICACHE : Fence operation in progress"))
+      for (Integer i = 0; i< v_sets ; i = i + 1) begin
+        v_reg_valid[i] <= 0;
+      end      
+      rg_fence_stall <= False;
+      ff_core_request.deq;
+      // TODO: reset replacement as well
+    endrule
+
+    /*doc:rule: This rule checks the tag rams for a hit*/
+    rule rl_ram_check(!ff_core_request.first.fence);
+      let req = ff_core_request.first;
+    `ifdef supervisor
+      Bit#(paddr) phyaddr = ff_from_tlb.first;
+    `else
+      Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
+      Bit#(paddr) phyaddr = truncate(req.address);
+      Bool lv_access_fault = unpack(|upper_bits);
+    `endif
+      Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
+      Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+
+      Vector#(v_ways, Bit#(linewidth)) datalines;
+      Bit#(ways) hit_tag =0;
+      for (Integer i = 0; i< v_ways; i = i + 1)
+        datalines[i] = bram_data[i].a.read;
+      for (Integer i = 0; i< v_ways; i = i + 1)
+        hit_tag[i] = (bram_tag[i].a.read == request_tag)?1'b1:1'b0;
+
+      let hit_dataline = select(datalines, unpack(hit_tag));
+      Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
+    `ifdef ASSRT
+      dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
+    `endif
+    endrule
+    
+    interface core_req=interface Put
+      method Action put(ICache_request#(vaddr,esize) req)if( ff_core_response.notFull && 
+                            !rg_fence_stall);
+      `ifdef perfmonitors
+        wr_total_access<=1;
+      `endif
+        Bit#(paddr) phyaddr = truncate(req.address);
+        Bit#(setbits) set_index=phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+        ff_core_request.enq(req);
+        rg_fence_stall<=req.fence;
+        for(Integer i=0;i<v_ways;i=i+1)begin
+          bram_data[i].a.put('b0,set_index,?);
+          bram_tag[i].a.put(False,set_index,?);
+        end
+        `logLevel( icache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
+      endmethod
+    endinterface;
+    method Action ma_cache_enable(Bool c);
+      wr_cache_enable <= c;
+    endmethod
+   
+    interface read_mem_req = toGet(ff_read_mem_request);
+    interface read_mem_resp = toPut(ff_read_mem_response);
+    interface core_resp = toGet(ff_core_response);
+  endmodule
+
+  (*synthesize*)
+  module mkinstance(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
+                                `iesize, `idbanks, `itbanks, `ibuswidth));
+    let ifc();
+    mkicache _temp(ifc);
+    return (ifc);
+  endmodule
+endpackage
+
