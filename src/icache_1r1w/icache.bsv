@@ -69,7 +69,8 @@ package icache;
   endinterface
 
   /*doc:module: */
-  module mkicache (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, esize, dbanks, tbanks,
+  module mkicache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable)) 
+                  (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, esize, dbanks, tbanks,
                             buswidth))
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
@@ -116,6 +117,9 @@ package icache;
      new requests from the core*/
     Reg#(Bool) rg_fence_stall <- mkReg(False);
 
+    /*doc:reg: */
+    Reg#(Bool) rg_handling_miss <- mkReg(False);
+
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
@@ -152,7 +156,7 @@ package icache;
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
-    rule rl_ram_check(!ff_core_request.first.fence);
+    rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss);
       let req = ff_core_request.first;
     `ifdef supervisor
       Bit#(paddr) phyaddr = ff_from_tlb.first;
@@ -171,13 +175,49 @@ package icache;
       for (Integer i = 0; i< v_ways; i = i + 1)
         datalines[i] = bram_data[i].a.read;
       for (Integer i = 0; i< v_ways; i = i + 1)
-        hit_tag[i] = (bram_tag[i].a.read == request_tag)?1'b1:1'b0;
+        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].a.read == request_tag);
 
       let hit_dataline = select(datalines, unpack(hit_tag));
       Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
     `ifdef ASSRT
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
+      
+      let lv_core_response = FetchResponse{instr:response_word, trap: lv_access_fault,
+                                          cause: `Inst_access_fault, epochs: req.epochs};
+      // TODO: check on fill-buffer
+      if(lv_access_fault || |(hit_tag) == 1) begin// trap or hit in RAMs
+        ff_core_response.enq(lv_core_response);
+        ff_core_request.deq;
+      end
+      else begin
+        // TODO: Send request to memory
+        if(isNonCacheable(phyaddr,wr_cache_enable)) begin
+          ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
+                                                    burst_len  : 0,
+                                                    burst_size : fromInteger(v_wordbits)});
+          `logLevel( icache, 0, $format("ICACHE: Sending IO Request for Addr:%h",phyaddr))
+        `ifdef perfmonitors
+          wr_total_nc <= 1;
+        `endif
+        end
+        else begin
+        `ifdef perfmonitors
+          wr_total_cache_misses <= 1;
+        `endif
+          // TODO allocate new line in FB
+          `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr)) 
+          let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
+          phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
+          let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
+          let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
+          ff_read_mem_request.enq(ICache_mem_request{ address    : phyaddr,
+                                                    burst_len  : fromInteger(burst_len),
+                                                    burst_size : fromInteger(burst_size)});
+
+        end
+        rg_handling_miss <= True;
+      end
     endrule
     
     interface core_req=interface Put
@@ -206,11 +246,15 @@ package icache;
     interface core_resp = toGet(ff_core_response);
   endmodule
 
+
+  function Bool isIO(Bit#(`paddr) a, Bool b);
+    return False;
+  endfunction
   (*synthesize*)
   module mkinstance(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
                                 `iesize, `idbanks, `itbanks, `ibuswidth));
     let ifc();
-    mkicache _temp(ifc);
+    mkicache#(isIO) _temp(ifc);
     return (ifc);
   endmodule
 endpackage
