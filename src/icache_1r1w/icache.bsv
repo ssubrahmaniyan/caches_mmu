@@ -38,11 +38,17 @@ package icache;
   import GetPut :: * ;
   import Assert  :: * ;
   import OInt :: * ;
+  import BUtils :: * ;
 
   `include "cache.defines"
   import cache_types :: * ;
   import globals :: * ;
-
+  
+  typedef struct{
+    Bit#(addr)  phyaddr;
+    Bit#(besize) init_enable;
+  } Pending_req#(numeric type addr, numeric type besize) deriving(Bits, Eq, FShow);
+    
   interface Ifc_icache#(numeric type wordsize, 
                         numeric type blocksize,  
                         numeric type sets,
@@ -87,7 +93,8 @@ package icache;
           // required by bsc
           Mul#(TDiv#(linewidth, TDiv#(linewidth, 8)), TDiv#(linewidth, 8),linewidth),
           Add#(a__, paddr, vaddr),
-          Add#(b__, respwidth, linewidth)
+          Add#(b__, respwidth, linewidth),
+          Mul#(buswidth, c__, linewidth)
     );
 
     String icache = "";
@@ -102,6 +109,12 @@ package icache;
     let v_wordsize=valueOf(wordsize);
     let v_blocksize=valueOf(blocksize);
     let v_respwidth=valueOf(respwidth);
+
+    function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
+      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << word_index;
+      return write_enable;
+    endfunction
+
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
     FIFOF#(ICache_request#(vaddr,esize)) ff_core_request <- mkSizedFIFOF(2); 
@@ -111,14 +124,20 @@ package icache;
     FIFOF#(ICache_mem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
+
+    // ------------------------ FIFOs for internal state-maintenance ---------------------------//
+    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8))) ff_pending_req <- mkSizedFIFOF(2);
    
     // -------------------- Register declarations ----------------------------------------------//
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
     Reg#(Bool) rg_fence_stall <- mkReg(False);
 
-    /*doc:reg: */
+    /*doc:reg: When tru indicates that a miss is being catered to*/
     Reg#(Bool) rg_handling_miss <- mkReg(False);
+
+    Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
+    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
@@ -190,8 +209,10 @@ package icache;
         ff_core_response.enq(lv_core_response);
         ff_core_request.deq;
       end
-      else begin
+      else begin // in case of miss from cache
         // TODO: Send request to memory
+        let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index)};
+        ff_pending_req.enq(pend_req);
         if(isNonCacheable(phyaddr,wr_cache_enable)) begin
           ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
                                                     burst_len  : 0,
@@ -218,6 +239,27 @@ package icache;
         end
         rg_handling_miss <= True;
       end
+    endrule
+
+    /*doc:rule: */
+    rule rl_fill_from_memory;
+      let pending_req = ff_pending_req.first;
+      let response = ff_read_mem_response.first;
+      Bit#(setbits) set_index=pending_req.phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      Bit#(TDiv#(linewidth,8)) lv_current_enable = rg_fb_enable == 0? pending_req.init_enable:
+                                                                    rg_fb_enable;
+      let rotate_amount = valueOf(TDiv#(buswidth,8));
+      if(response.last) begin
+        ff_pending_req.deq;
+        rg_fb_enable <= 0 ;
+      end
+      else
+        rg_fb_enable <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount)); 
+
+      bram_data[0].b.put(lv_current_enable,set_index,duplicate(response.data));
+
+      `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
+      `logLevel( icache, 0, $format("ICACHE: current_en:%b",lv_current_enable))
     endrule
     
     interface core_req=interface Put
