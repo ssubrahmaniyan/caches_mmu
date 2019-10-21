@@ -142,6 +142,15 @@ package icache;
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
+
+    /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
+    Wire#(RespState) wr_ram_state <- mkDWire(None);
+    Wire#(FetchResponse#(respwidth,esize)) wr_ram_response <- mkDWire(?);
+
+    /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
+    Wire#(RespState) wr_fb_state <- mkDWire(None);
+    Wire#(FetchResponse#(respwidth,esize)) wr_fb_response <- mkDWire(?);
+
   `ifdef perfmonitors
     /*doc:wire: wire to pulse on every access*/
     Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
@@ -185,7 +194,6 @@ package icache;
       Bool lv_access_fault = unpack(|upper_bits);
     `endif
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
-      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
@@ -202,43 +210,73 @@ package icache;
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
       
-      let lv_core_response = FetchResponse{instr:response_word, trap: lv_access_fault,
+      let lv_response <= FetchResponse{instr:response_word, trap: lv_access_fault,
                                           cause: `Inst_access_fault, epochs: req.epochs};
-      // TODO: check on fill-buffer
+      wr_ram_response <= lv_response;
       if(lv_access_fault || |(hit_tag) == 1) begin// trap or hit in RAMs
-        ff_core_response.enq(lv_core_response);
+        wr_ram_state <= Hit;
         ff_core_request.deq;
       end
       else begin // in case of miss from cache
-        // TODO: Send request to memory
-        let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index)};
-        ff_pending_req.enq(pend_req);
-        if(isNonCacheable(phyaddr,wr_cache_enable)) begin
-          ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
-                                                    burst_len  : 0,
-                                                    burst_size : fromInteger(v_wordbits)});
-          `logLevel( icache, 0, $format("ICACHE: Sending IO Request for Addr:%h",phyaddr))
-        `ifdef perfmonitors
-          wr_total_nc <= 1;
-        `endif
-        end
-        else begin
-        `ifdef perfmonitors
-          wr_total_cache_misses <= 1;
-        `endif
-          // TODO allocate new line in FB
-          `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr)) 
-          let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
-          phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
-          let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
-          let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
-          ff_read_mem_request.enq(ICache_mem_request{ address    : phyaddr,
-                                                    burst_len  : fromInteger(burst_len),
-                                                    burst_size : fromInteger(burst_size)});
-
-        end
-        rg_handling_miss <= True;
+        wr_ram_state <= Miss;
       end
+      `logLevel( icache, 0, $format("ICACHE: Hit:%b, Response:", |(hit_tag),lv_response))
+    endrule
+
+    /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
+    rule rl_fillbuffer_check(!ff_core_request.first.fence && ff_pending_req.notFull);
+      
+    endrule
+
+    /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
+     fill-buffer or if there was an error in the request */
+    rule rl_response_to_core(!ff_core_request.first.fence && (
+                                wr_ram_state == Hit || wr_fb_state == Hit));
+      if(wr_ram_state == Hit) begin
+        `logLevel( icache, 0, $format("ICACHE: Hit from SRAM");
+        ff_core_response.enq(wr_ram_response);
+      end
+      else begin
+        `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer");
+        ff_core_response.enq(wr_fb_response);
+      end
+      ff_core_request.deq;
+    endrule
+
+    /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
+     * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
+     * be a miss in both the SRAMs and the FB and thus need to be checked only here */
+    rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss);
+      let req = ff_core_request.first;
+      Bit#(paddr) phyaddr = truncate(req.address);
+      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index)};
+      ff_pending_req.enq(pend_req);
+      if(isNonCacheable(phyaddr,wr_cache_enable)) begin
+        ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
+                                                  burst_len  : 0,
+                                                  burst_size : fromInteger(v_wordbits)});
+        `logLevel( icache, 0, $format("ICACHE: Sending IO Request for Addr:%h",phyaddr))
+      `ifdef perfmonitors
+        wr_total_nc <= 1;
+      `endif
+      end
+      else begin
+      `ifdef perfmonitors
+        wr_total_cache_misses <= 1;
+      `endif
+        // TODO allocate new line in FB
+        `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr)) 
+        let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
+        phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
+        let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
+        let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
+        ff_read_mem_request.enq(ICache_mem_request{ address    : phyaddr,
+                                                  burst_len  : fromInteger(burst_len),
+                                                  burst_size : fromInteger(burst_size)});
+
+      end
+      rg_handling_miss <= True;
     endrule
 
     /*doc:rule: */
