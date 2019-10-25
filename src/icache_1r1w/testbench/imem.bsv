@@ -49,23 +49,19 @@ package imem;
     `ifdef supervisor
       import l1icache_vipt :: *;
     `else
-      import l1icache :: *;
+      import icache :: *;
     `endif
   `else
     import null_icache :: *;
   `endif
 
   (*synthesize*)
-  module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
-                                         `ifbsize, `iesize, 
+  module mkinstance(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
+                                         `iesize, 
                                      `ifdef ECC 32, 1, `endif 
                                         `idbanks, `itbanks, `ibuswidth));
     let ifc();
-  `ifdef icache
-    mkl1icache#(isIO,"RROBIN") _temp(ifc);
-  `else
-    mknull_cache _temp(ifc);
-  `endif
+    mkicache#(isIO) _temp(ifc);
     return (ifc);
   endmodule
 
@@ -84,10 +80,6 @@ package imem;
     method Action cache_enable(Bool c);
     interface Get#(ICache_mem_request#(`paddr)) read_mem_req;
     interface Put#(ICache_mem_response#(`ibuswidth)) read_mem_resp; 
-  `ifdef icache
-    interface Get#(ICache_mem_request#(`paddr)) nc_read_req;
-    interface Put#(ICache_mem_response#(TMul#(`iwords, 8))) nc_read_resp;
-  `endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces - --------------------- //
   `ifdef supervisor
@@ -119,7 +111,7 @@ package imem;
 
   (*synthesize*)
   module mkimem(Ifc_imem);
-    let icache <- mkicache;
+    let icache <- mkinstance;
   `ifdef supervisor
     let itlb <- mkitlb;
     mkConnection(itlb.core_response, icache.pa_from_tlb);
@@ -143,12 +135,8 @@ package imem;
     interface read_mem_req = icache.read_mem_req;
     interface read_mem_resp = icache.read_mem_resp;
     method Action cache_enable (Bool c);
-      icache.cache_enable(c);
+      icache.ma_cache_enable(c);
     endmethod
-  `ifdef icache
-    interface nc_read_req = icache.nc_read_req;
-    interface nc_read_resp = icache.nc_read_resp;
-  `endif
   `ifdef supervisor
     interface request_to_ptw = itlb.request_to_ptw;
     interface response_frm_ptw = itlb.response_frm_ptw;

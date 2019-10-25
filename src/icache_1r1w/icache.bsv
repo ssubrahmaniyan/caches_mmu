@@ -138,6 +138,8 @@ package icache;
 
     Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
     Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
+    Reg#(Bit#(TSub#(paddr,(TAdd#(wordbits,blockbits))))) rg_fb_addr <- mkReg(0);
+    Reg#(Bool) rg_fb_valid <- mkReg(False);
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
@@ -210,12 +212,11 @@ package icache;
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
       
-      let lv_response <= FetchResponse{instr:response_word, trap: lv_access_fault,
+      let lv_response = FetchResponse{instr:response_word, trap: lv_access_fault,
                                           cause: `Inst_access_fault, epochs: req.epochs};
       wr_ram_response <= lv_response;
       if(lv_access_fault || |(hit_tag) == 1) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
-        ff_core_request.deq;
       end
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
@@ -225,6 +226,13 @@ package icache;
 
     /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
     rule rl_fillbuffer_check(!ff_core_request.first.fence && ff_pending_req.notFull);
+      let req = ff_core_request.first;
+    `ifdef supervisor
+      Bit#(paddr) phyaddr = ff_from_tlb.first;
+    `else
+      Bit#(paddr) phyaddr = truncate(req.address);
+    `endif
+
       
     endrule
 
@@ -233,11 +241,11 @@ package icache;
     rule rl_response_to_core(!ff_core_request.first.fence && (
                                 wr_ram_state == Hit || wr_fb_state == Hit));
       if(wr_ram_state == Hit) begin
-        `logLevel( icache, 0, $format("ICACHE: Hit from SRAM");
+        `logLevel( icache, 0, $format("ICACHE: Hit from SRAM"))
         ff_core_response.enq(wr_ram_response);
       end
       else begin
-        `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer");
+        `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer"))
         ff_core_response.enq(wr_fb_response);
       end
       ff_core_request.deq;

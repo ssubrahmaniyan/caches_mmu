@@ -23,8 +23,8 @@ THREADS=1
 COVERAGE=line
 TRACE=disable
 
-TOP_MODULE:=mkinstance
+TOP_MODULE:=mkimem_tb
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../:../../tlbs/
-TOP_DIR:= ../
-TOP_FILE:= icache.bsv
+TOP_DIR:= ./
+TOP_FILE:= imem_tb.bsv
 
