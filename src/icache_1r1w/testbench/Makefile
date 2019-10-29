@@ -117,7 +117,7 @@ link_verilator:
 simulate:
 	@echo Simulation...
 	$(call presim_config)
-	@exec ./$(BSVOUTDIR)/out
+	@exec ./$(BSVOUTDIR)/out +fullverbose > log
 	@echo Simulation finished
 
 .PHONY: clean
