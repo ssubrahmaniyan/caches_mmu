@@ -61,7 +61,7 @@ package imem;
                                      `ifdef ECC 32, 1, `endif 
                                         `idbanks, `itbanks, `ibuswidth));
     let ifc();
-    mkicache#(isIO) _temp(ifc);
+    mkicache#(isIO,"RROBIN") _temp(ifc);
     return (ifc);
   endmodule
 

@@ -28,13 +28,6 @@ Details:
 */
 package imem_tb;
 
-  `define sets 64
-  `define word_size 4
-  `define block_size 16
-  `define addr_width 32
-  `define ways 4
-  `define repl RROBIN
-
   import imem::*;
   import cache_types::*;
   import mem_config::*;

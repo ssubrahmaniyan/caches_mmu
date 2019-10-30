@@ -45,6 +45,7 @@ package icache;
   `include "cache.defines"
   import cache_types :: * ;
   import globals :: * ;
+  import replacement :: * ;
 
   typedef struct{
     Bit#(addr)  phyaddr;
@@ -77,7 +78,8 @@ package icache;
   endinterface
 
   /*doc:module: */
-  module mkicache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable))
+  module mkicache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
+                    parameter String alg)
                   (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, esize, dbanks, tbanks,
                             buswidth))
     provisos(
@@ -97,7 +99,9 @@ package icache;
           Add#(a__, paddr, vaddr),
           Add#(b__, respwidth, linewidth),
           Mul#(buswidth, c__, linewidth),
-          Add#(TAdd#(wordbits, blockbits), d__, paddr)
+          Add#(TAdd#(wordbits, blockbits), d__, paddr),
+          Add#(e__, TLog#(ways), 4),
+          Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways)))
     );
 
     String icache = "";
@@ -151,6 +155,7 @@ package icache;
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
     Wire#(FetchResponse#(respwidth,esize)) wr_ram_response <- mkDWire(?);
+    Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
     Wire#(RespState) wr_fb_state <- mkDWire(None);
@@ -174,7 +179,7 @@ package icache;
       bram_tag[i]  <- mkBRAMCore2(v_sets, False);
       bram_data[i] <- mkBRAMCore2BE(v_sets, False);
     end
-
+    Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
     // --------------------------- Rule operations ------------------------------------- //
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
@@ -185,7 +190,7 @@ package icache;
       end
       rg_fence_stall <= False;
       ff_core_request.deq;
-      // TODO: reset replacement as well
+      replacement.reset_repl;
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
@@ -219,6 +224,7 @@ package icache;
       let lv_response = FetchResponse{instr:response_word, trap: lv_access_fault,
                                           cause: `Inst_access_fault, epochs: req.epochs};
       wr_ram_response <= lv_response;
+      wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
       if(lv_access_fault || |(hit_tag) == 1) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
@@ -269,9 +275,18 @@ package icache;
      fill-buffer or if there was an error in the request */
     rule rl_response_to_core(!ff_core_request.first.fence && (
                                 wr_ram_state == Hit || wr_fb_state == Hit));
+      let req = ff_core_request.first;
+    `ifdef supervisor
+      Bit#(paddr) phyaddr = ff_from_tlb.first;
+    `else
+      Bit#(paddr) phyaddr = truncate(req.address);
+    `endif
+      Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       if(wr_ram_state == Hit) begin
         `logLevel( icache, 0, $format("ICACHE: Hit from SRAM"))
         ff_core_response.enq(wr_ram_response);
+        if(alg == "PLRU")
+          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
       else begin
         `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer"))
@@ -317,7 +332,9 @@ package icache;
       rg_handling_miss <= True;
     endrule
 
-    /*doc:rule: */
+    /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
+    * has been received the entire line and tag are written in to the BRAM and the fill buffer is
+    * released in the next cycle*/
     rule rl_fill_from_memory(!rg_fb_release && ff_pending_req.notEmpty);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
@@ -330,10 +347,13 @@ package icache;
       let rotate_amount = valueOf(TDiv#(buswidth,8));
       let lv_fb_linedata = updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
       if(response.last) begin
+        let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index]);
+        replacement.update_set(set_index,waynum);
         rg_fb_release <= True;
-        bram_tag[0].b.put(True,set_index,lv_write_tag);
-        bram_data[0].b.put('1,set_index,lv_fb_linedata);
-        v_reg_valid[set_index][0]<= 1'b1;
+      // TODO define the way that needs to be replaced
+        bram_tag[waynum].b.put(True,set_index,lv_write_tag);
+        bram_data[waynum].b.put('1,set_index,lv_fb_linedata);
+        v_reg_valid[set_index][waynum]<= 1'b1;
         `logLevel( icache, 0, $format("ICACHE: Writing Tag:%h Index:%d",lv_write_tag,set_index))
       end
       else begin
@@ -341,12 +361,12 @@ package icache;
         rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
       rg_fb_linedata <=  lv_fb_linedata;
-      // TODO define the way that needs to be replaced
 
       `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
     endrule
 
-    /*doc:rule: */
+    /*doc:rule: hold the fillbuffer for an extra cycle since the write to the BRAM is only available
+    * in the next cycle. This rule will also re-initialize all the fb related registers*/
     rule rl_delay_fb_release(rg_fb_release);
       rg_fb_enable <= 0;
       rg_fb_enable_temp <= 0;
