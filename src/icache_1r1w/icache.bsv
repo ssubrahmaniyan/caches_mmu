@@ -96,7 +96,8 @@ package icache;
           Mul#(TDiv#(linewidth, TDiv#(linewidth, 8)), TDiv#(linewidth, 8),linewidth),
           Add#(a__, paddr, vaddr),
           Add#(b__, respwidth, linewidth),
-          Mul#(buswidth, c__, linewidth)
+          Mul#(buswidth, c__, linewidth),
+          Add#(TAdd#(wordbits, blockbits), d__, paddr)
     );
 
     String icache = "";
@@ -113,7 +114,7 @@ package icache;
     let v_respwidth=valueOf(respwidth);
 
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
-      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << word_index;
+      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*4);
       return write_enable;
     endfunction
 
@@ -128,7 +129,7 @@ package icache;
     FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
-    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8))) ff_pending_req <- mkSizedFIFOF(2);
+    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8))) ff_pending_req <- mkUGSizedFIFOF(2);
 
     // -------------------- Register declarations ----------------------------------------------//
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
@@ -141,10 +142,7 @@ package icache;
     Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
     Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
     Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkReg(0);
-    Reg#(Bit#(TSub#(paddr,(TAdd#(wordbits,blockbits))))) rg_fb_addr <- mkReg(0);
     Reg#(Bool) rg_fb_release <- mkDReg(False);
-    /*doc:reg: */
-    Reg#(Bool) rg_fb_valid[2] <- mkCReg(2,False);
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
@@ -180,7 +178,7 @@ package icache;
 
     // --------------------------- Rule operations ------------------------------------- //
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
-    rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall ) ;
+    rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && !ff_pending_req.notEmpty ) ;
       `logLevel( icache, 0, $format("ICACHE : Fence operation in progress"))
       for (Integer i = 0; i< v_sets ; i = i + 1) begin
         v_reg_valid[i] <= 0;
@@ -191,7 +189,7 @@ package icache;
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
-    rule rl_ram_check(!ff_core_request.first.fence);
+    rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss);
       let req = ff_core_request.first;
     `ifdef supervisor
       Bit#(paddr) phyaddr = ff_from_tlb.first;
@@ -208,8 +206,9 @@ package icache;
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1)
         datalines[i] = bram_data[i].a.read;
-      for (Integer i = 0; i< v_ways; i = i + 1)
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
         hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].a.read == request_tag);
+      end
 
       let hit_dataline = select(datalines, unpack(hit_tag));
       Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
@@ -226,11 +225,12 @@ package icache;
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
       end
-      `logLevel( icache, 0, $format("ICACHE: Hit:%b, Response:", |(hit_tag),lv_response))
+      `logLevel( icache, 0, $format("ICACHE: Hit:%b For Req:",|(hit_tag),fshow(req)," Response:", 
+                                      fshow(lv_response)))
     endrule
 
     /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
-    rule rl_fillbuffer_check(!ff_core_request.first.fence && ff_pending_req.notFull);
+    rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
     `ifdef supervisor
       Bit#(paddr) phyaddr = ff_from_tlb.first;
@@ -240,14 +240,13 @@ package icache;
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(respwidth) response_word=truncate(rg_fb_linedata >> block_offset);
-
       let required_enable = fn_enable(word_index);
       let lv_response = FetchResponse{instr:response_word, trap: False,
                                           cause: `Inst_access_fault, epochs: req.epochs};
       `logLevel( icache, 1, $format("ICACHE: FB processing Req: ",fshow(req)))
-//      `logLevel( icache, 1, $format("ICACHE: FB required enable:%b rg_fb_addr:%h rg_fb_enable:%b",
-//                                required_enable, rg_fb_addr, rg_fb_enable))
-      if(truncateLSB(phyaddr) == rg_fb_addr && rg_fb_valid[0])begin
+      Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_fb_addr = truncateLSB(ff_pending_req.first.phyaddr);
+      Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_req_addr = truncateLSB(phyaddr);
+      if(lv_req_addr == lv_fb_addr && ff_pending_req.notEmpty)begin
         `logLevel( icache, 1, $format("ICACHE: Hit in FB Line for Addr:%h",phyaddr))
         if((required_enable & rg_fb_enable) !=0)begin
           wr_fb_state <= Hit;
@@ -279,12 +278,13 @@ package icache;
         ff_core_response.enq(wr_fb_response);
       end
       ff_core_request.deq;
+      rg_handling_miss <= False;
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
      * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
-    rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss);
+    rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
       Bit#(paddr) phyaddr = truncate(req.address);
       Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
@@ -303,8 +303,6 @@ package icache;
       `ifdef perfmonitors
         wr_total_cache_misses <= 1;
       `endif
-        rg_fb_addr <= truncateLSB(phyaddr);
-        rg_fb_valid[1] <= True;
         // TODO allocate new line in FB
         `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr))
         let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
@@ -316,10 +314,11 @@ package icache;
                                                   burst_size : fromInteger(burst_size)});
 
       end
+      rg_handling_miss <= True;
     endrule
 
     /*doc:rule: */
-    rule rl_fill_from_memory(!rg_fb_release);
+    rule rl_fill_from_memory(!rg_fb_release && ff_pending_req.notEmpty);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
       ff_read_mem_response.deq;
@@ -327,20 +326,24 @@ package icache;
       Bit#(TDiv#(linewidth,8)) lv_current_enable = rg_fb_enable == 0? pending_req.init_enable:
                                                                     rg_fb_enable_temp;
       Bit#(linewidth) lv_new_word = duplicate(response.data);
+      Bit#(tagbits) lv_write_tag = truncateLSB(pending_req.phyaddr);
       let rotate_amount = valueOf(TDiv#(buswidth,8));
+      let lv_fb_linedata = updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
       if(response.last) begin
         rg_fb_release <= True;
+        bram_tag[0].b.put(True,set_index,lv_write_tag);
+        bram_data[0].b.put('1,set_index,lv_fb_linedata);
+        v_reg_valid[set_index][0]<= 1'b1;
+        `logLevel( icache, 0, $format("ICACHE: Writing Tag:%h Index:%d",lv_write_tag,set_index))
       end
       else begin
         rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount));
         rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
-      rg_fb_linedata <=  updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
+      rg_fb_linedata <=  lv_fb_linedata;
       // TODO define the way that needs to be replaced
-      bram_data[0].b.put(lv_current_enable,set_index,duplicate(response.data));
 
       `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
-      `logLevel( icache, 0, $format("ICACHE: current_en:%b",lv_current_enable))
     endrule
 
     /*doc:rule: */
@@ -349,8 +352,8 @@ package icache;
       rg_fb_enable_temp <= 0;
       rg_fb_linedata <= 0;
       ff_pending_req.deq;
-      rg_fb_valid[0] <= False;
-      `logLevel( icache, 1, $format("ICACHE: Releasing FB line"))
+      `logLevel( icache, 1, $format("ICACHE: Releasing FB. Addr:",fshow(ff_pending_req.first),
+                                    " Data:%h",rg_fb_linedata))
     endrule
 
     interface core_req=interface Put
