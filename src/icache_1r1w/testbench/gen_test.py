@@ -552,8 +552,8 @@ def random_test():
     write_to_file(0,read,nodelay,fence)
     entrycount=entrycount+1
 
-    for i in range(30000):
-        address = int(random.uniform(0,maxaddr))
+    for i in range(256000):
+        address = int(random.randrange(0, maxaddr, 4))
         write_to_file(address, read, nodelay, nofence)
         entrycount = entrycount + 1
 
@@ -581,7 +581,7 @@ random_test()
 write_to_file(0,read,nodelay,nofence)
 entrycount=entrycount+1
 print("Total Entries in Test: "+str(entrycount))
-while entrycount<32768:
+while entrycount<262144:
     write_to_file(0,read,nodelay,nofence)
     entrycount=entrycount+1
 

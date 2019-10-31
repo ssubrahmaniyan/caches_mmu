@@ -58,7 +58,7 @@ package imem_tb;
   Ifc_imem imem <- mkimem;
   let testcache<- mktest();
 
-  RegFile#(Bit#(15), Bit#(TAdd#( 4, `paddr ))) stim <- mkRegFileFullLoad("test.mem");
+  RegFile#(Bit#(18), Bit#(TAdd#( 4, `paddr ))) stim <- mkRegFileFullLoad("test.mem");
   RegFile#(Bit#(19), Bit#(`ibuswidth)) data <- mkRegFileFullLoad("data.mem");
 
   Reg#(Bit#(32)) index<- mkReg(0);
