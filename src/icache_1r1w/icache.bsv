@@ -204,10 +204,10 @@ package icache;
     BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
 
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
-    BRAM_DUAL_PORT_BE#(Bit#(TLog#(sets)), Bit#(linewidth), TDiv#(linewidth,8)) bram_data [v_ways];
+    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(linewidth)) bram_data [v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
       bram_tag[i]  <- mkBRAMCore2(v_sets, False);
-      bram_data[i] <- mkBRAMCore2BE(v_sets, False);
+      bram_data[i] <- mkBRAMCore2(v_sets, False);
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
@@ -389,7 +389,7 @@ package icache;
         rg_fb_release <= True;
       // TODO define the way that needs to be replaced
         bram_tag[waynum].b.put(True,set_index,lv_write_tag);
-        bram_data[waynum].b.put('1,set_index,lv_fb_linedata);
+        bram_data[waynum].b.put(True,set_index,lv_fb_linedata);
         v_reg_valid[set_index][waynum]<= 1'b1;
         `logLevel( icache, 0, $format("ICACHE: Writing Tag:%h Index:%d",lv_write_tag,set_index))
       end
@@ -437,7 +437,7 @@ package icache;
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin
-          bram_data[i].a.put('b0,set_index,?);
+          bram_data[i].a.put(False,set_index,?);
           bram_tag[i].a.put(False,set_index,?);
         end
         `logLevel( icache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
