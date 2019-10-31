@@ -189,6 +189,9 @@ package imem_tb;
     let v_wordbits = valueOf(TLog#(TDiv#(`ibuswidth,8)));
     Bit#(19) index = truncate(req.address>>v_wordbits);
     let dat=data.sub(truncate(index));
+    Bit#(TLog#(TDiv#(`ibuswidth,8))) zeros = 0;
+    Bit#(TMul#(2,TLog#(TDiv#(`ibuswidth,8)))) shift={req.address[v_wordbits-1:0],zeros};
+    dat = dat >> shift;
     imem.read_mem_resp.put(ICache_mem_response{data:dat, last: rg_read_burst_count==req.burst_len,
                                                                                         err:False});
     `logLevel( tb, 0, $format("TB: Memory Read index: %d responding with: %h ",index,dat))

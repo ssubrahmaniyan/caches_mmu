@@ -61,7 +61,8 @@ package test_icache;
             Mul#(8, e__, respwidth),
             Mul#(16, f__, respwidth),
             Mul#(32, g__, respwidth),
-            Add#(h__, respwidth, ibuswidth)
+            Add#(h__, respwidth, ibuswidth),
+            Add#(i__, TLog#(TDiv#(ibuswidth, 8)), TMul#(2, TLog#(TDiv#(ibuswidth,8))))
 
     );
     RegFile#(Bit#(19), Bit#(ibuswidth)) mem <- mkRegFileFullLoad("data.mem");
@@ -80,7 +81,8 @@ package test_icache;
         let v_wordbits = valueOf(TLog#(TDiv#(ibuswidth,8)));
         Bit#(19) index = truncate(addr>>v_wordbits);
         let loaded_data=mem.sub(index);
-        Bit#(TAdd#(3,TLog#(TDiv#(ibuswidth,8)))) shift={addr[v_wordbits-1:0],3'b0};
+        Bit#(TLog#(TDiv#(ibuswidth,8))) zeros = 0;
+        Bit#(TMul#(2,TLog#(TDiv#(ibuswidth,8)))) shift={addr[v_wordbits-1:0],zeros};
         let temp = loaded_data>>shift;
         Bit#(respwidth) response_word = case (size)
             'b000: signExtend(temp[7:0]);
