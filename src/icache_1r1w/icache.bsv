@@ -119,11 +119,33 @@ package icache;
     let v_wordsize=valueOf(wordsize);
     let v_blocksize=valueOf(blocksize);
     let v_respwidth=valueOf(respwidth);
+    Integer lv_offset = case(valueOf(respwidth))
+      32: 4;
+      64: 8;
+      128: 16;
+    endcase;
+    Integer lv_offset1 = case(valueOf(buswidth))
+      32: 4;
+      64: 8;
+      128: 16;
+    endcase;
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
-      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*4);
+      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*fromInteger(lv_offset));
+      return write_enable;
+    endfunction
+    
+    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
+     * request made by the core */
+    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TDiv#(linewidth,buswidth)) word_index);
+      Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
+        32: 'hF;
+        64:'hFF;
+        default:'hFFFF;
+      endcase;
+      Bit#(TDiv#(linewidth,8)) write_enable = we << ({4'b0,word_index}*fromInteger(lv_offset1));
       return write_enable;
     endfunction
 
@@ -145,29 +167,29 @@ package icache;
 
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
-    Reg#(Bool) rg_fence_stall <- mkReg(False);
+    Reg#(Bool) rg_fence_stall <- mkRegA(False);
 
     /*doc:reg: When tru indicates that a miss is being catered to*/
-    Reg#(Bool) rg_handling_miss <- mkReg(False);
+    Reg#(Bool) rg_handling_miss <- mkRegA(False);
 
     /*doc:reg: this register holds the incoming line from the memory on a miss request*/
-    Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
+    Reg#(Bit#(linewidth)) rg_fb_linedata <- mkRegA(0);
 
     /*doc:reg: this register indicates if the current line being filled in the FB had an error from
     * the memory*/
-    Reg#(Bool) rg_fb_err <- mkReg(False);
+    Reg#(Bool) rg_fb_err <- mkRegA(False);
 
     /*doc:reg: this register holds the currently available bytes within the fill-buffer that can be
      * used to respond back to core*/
-    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
+    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkRegA(0);
 
     /*doc:reg:This register holds the next set of byte-enables that the response from the memory is
     * supposed to fill in the fill-buffer*/
-    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkReg(0);
+    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkRegA(0);
 
     /*doc:reg: This register when True indicates that the fill-buffer line has been filled and
     * updated in the ram and thus the fill-buffer entries must be released and reset.*/
-    Reg#(Bool) rg_fb_release <- mkDReg(False);
+    Reg#(Bool) rg_fb_release <- mkDRegA(False);
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
@@ -198,7 +220,7 @@ package icache;
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
-    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
@@ -261,7 +283,7 @@ package icache;
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
       end
-      `logLevel( icache, 0, $format("ICACHE: Hit:%b For Req:",|(hit_tag),fshow(req)," Response:", 
+      `logLevel( icache, 0, $format("ICACHE: Hit:%b For Req:",(hit_tag),fshow(req)," Response:", 
                                       fshow(lv_response)))
     endrule
 
@@ -336,9 +358,12 @@ package icache;
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
       Bit#(paddr) phyaddr = truncate(req.address);
-      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8)));
+      let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth)));
+      Bit#(TDiv#(linewidth,buswidth)) word_index= phyaddr[lv_busblocks+lv_busbits-1:lv_busbits];
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
-      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index), 
+      `logLevel( icache, 0, $format("ICACHE: word_index:%d",word_index))
+      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req};
       ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
@@ -387,18 +412,19 @@ package icache;
         let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index]);
         replacement.update_set(set_index,waynum);
         rg_fb_release <= True;
-      // TODO define the way that needs to be replaced
         bram_tag[waynum].b.put(True,set_index,lv_write_tag);
         bram_data[waynum].b.put(True,set_index,lv_fb_linedata);
         v_reg_valid[set_index][waynum]<= 1'b1;
-        `logLevel( icache, 0, $format("ICACHE: Writing Tag:%h Index:%d",lv_write_tag,set_index))
+        `logLevel( icache, 0, $format("ICACHE: Writing set:%d tag:%h way:%d",
+                                                                    set_index,lv_write_tag,waynum))
+        `logLevel( icache, 0, $format("ICACHE: Writing data:%h",lv_fb_linedata))
       end
       else begin
         rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount));
         rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
       rg_fb_linedata <=  lv_fb_linedata;
-
+      `logLevel( icache, 0, $format("ICACHE: current_enable:%h",lv_current_enable))
       `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
     endrule
 
@@ -422,8 +448,7 @@ package icache;
       rg_fb_enable_temp <= 0;
       rg_fb_linedata <= 0;
       ff_pending_req.deq;
-      `logLevel( icache, 1, $format("ICACHE: Releasing FB. Addr:",fshow(ff_pending_req.first),
-                                    " Data:%h",rg_fb_linedata))
+      `logLevel( icache, 1, $format("ICACHE: Releasing FB. Addr:",fshow(ff_pending_req.first)))
     endrule
 
     interface core_req=interface Put
@@ -441,6 +466,7 @@ package icache;
           bram_tag[i].a.put(False,set_index,?);
         end
         `logLevel( icache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
+        `logLevel( icache, 0, $format("ICACHE : set:%d",set_index))
       endmethod
     endinterface;
     method Action ma_cache_enable(Bool c);
