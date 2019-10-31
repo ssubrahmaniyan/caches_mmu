@@ -42,10 +42,12 @@ package icache;
   import Memory :: * ;
   import DReg :: * ;
 
+
   `include "cache.defines"
   import cache_types :: * ;
   import globals :: * ;
   import replacement :: * ;
+  import mem_config :: * ;
 
   typedef struct{
     Bit#(addr)  phyaddr;
@@ -104,7 +106,13 @@ package icache;
           Add#(TAdd#(wordbits, blockbits), d__, paddr),
           Add#(e__, TLog#(ways), 4),
           Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
-          Add#(g__, respwidth, buswidth)
+          Add#(g__, respwidth, buswidth),
+
+          // for using mem_config
+          Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
+          Add#(h__, TDiv#(tagbits, tbanks), tagbits),
+          Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
+          Add#(i__, TDiv#(linewidth, dbanks), linewidth)
     );
 
     String icache = "";
@@ -223,13 +231,15 @@ package icache;
     Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
-    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
+    Ifc_mem_config1r1w#(sets, tagbits, tbanks) bram_tag [v_ways];
+//    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
 
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
-    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(linewidth)) bram_data [v_ways];
+    Ifc_mem_config1r1w#(sets, linewidth, dbanks) bram_data[v_ways];
+//    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(linewidth)) bram_data [v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
-      bram_tag[i]  <- mkBRAMCore2(v_sets, False);
-      bram_data[i] <- mkBRAMCore2(v_sets, False);
+      bram_tag[i]  <- mkmem_config1r1w(False,"double");
+      bram_data[i] <- mkmem_config1r1w(False,"double");
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
@@ -261,10 +271,11 @@ package icache;
 
       Vector#(v_ways, Bit#(linewidth)) datalines;
       Bit#(ways) hit_tag =0;
-      for (Integer i = 0; i< v_ways; i = i + 1)
-        datalines[i] = bram_data[i].a.read;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].a.read == request_tag);
+        datalines[i] = bram_data[i].read_response;
+      end
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
+        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
       end
 
       let hit_dataline = select(datalines, unpack(hit_tag));
@@ -412,8 +423,8 @@ package icache;
         let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index]);
         replacement.update_set(set_index,waynum);
         rg_fb_release <= True;
-        bram_tag[waynum].b.put(True,set_index,lv_write_tag);
-        bram_data[waynum].b.put(True,set_index,lv_fb_linedata);
+        bram_tag[waynum].write(1,set_index,lv_write_tag);
+        bram_data[waynum].write(1,set_index,lv_fb_linedata);
         v_reg_valid[set_index][waynum]<= 1'b1;
         `logLevel( icache, 0, $format("ICACHE: Writing set:%d tag:%h way:%d",
                                                                     set_index,lv_write_tag,waynum))
@@ -462,8 +473,8 @@ package icache;
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin
-          bram_data[i].a.put(False,set_index,?);
-          bram_tag[i].a.put(False,set_index,?);
+          bram_data[i].read(set_index);
+          bram_tag[i].read(set_index);
         end
         `logLevel( icache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
         `logLevel( icache, 0, $format("ICACHE : set:%d",set_index))
