@@ -50,6 +50,7 @@ package icache;
   typedef struct{
     Bit#(addr)  phyaddr;
     Bit#(besize) init_enable;
+    Bool io_request;
   } Pending_req#(numeric type addr, numeric type besize) deriving(Bits, Eq, FShow);
 
   interface Ifc_icache#(numeric type wordsize,
@@ -78,6 +79,7 @@ package icache;
   endinterface
 
   /*doc:module: */
+  (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
   module mkicache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
                     parameter String alg)
                   (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, esize, dbanks, tbanks,
@@ -101,7 +103,8 @@ package icache;
           Mul#(buswidth, c__, linewidth),
           Add#(TAdd#(wordbits, blockbits), d__, paddr),
           Add#(e__, TLog#(ways), 4),
-          Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways)))
+          Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
+          Add#(g__, respwidth, buswidth)
     );
 
     String icache = "";
@@ -117,6 +120,8 @@ package icache;
     let v_blocksize=valueOf(blocksize);
     let v_respwidth=valueOf(respwidth);
 
+    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
+     * request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*4);
       return write_enable;
@@ -133,9 +138,11 @@ package icache;
     FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
+    /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
     FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8))) ff_pending_req <- mkUGSizedFIFOF(2);
 
     // -------------------- Register declarations ----------------------------------------------//
+
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
     Reg#(Bool) rg_fence_stall <- mkReg(False);
@@ -143,9 +150,23 @@ package icache;
     /*doc:reg: When tru indicates that a miss is being catered to*/
     Reg#(Bool) rg_handling_miss <- mkReg(False);
 
+    /*doc:reg: this register holds the incoming line from the memory on a miss request*/
     Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
+
+    /*doc:reg: this register indicates if the current line being filled in the FB had an error from
+    * the memory*/
+    Reg#(Bool) rg_fb_err <- mkReg(False);
+
+    /*doc:reg: this register holds the currently available bytes within the fill-buffer that can be
+     * used to respond back to core*/
     Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
+
+    /*doc:reg:This register holds the next set of byte-enables that the response from the memory is
+    * supposed to fill in the fill-buffer*/
     Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkReg(0);
+
+    /*doc:reg: This register when True indicates that the fill-buffer line has been filled and
+    * updated in the ram and thus the fill-buffer entries must be released and reset.*/
     Reg#(Bool) rg_fb_release <- mkDReg(False);
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -161,6 +182,9 @@ package icache;
     Wire#(RespState) wr_fb_state <- mkDWire(None);
     Wire#(FetchResponse#(respwidth,esize)) wr_fb_response <- mkDWire(?);
 
+    Wire#(RespState) wr_nc_state <- mkDWire(None);
+    Wire#(FetchResponse#(respwidth,esize)) wr_nc_response <- mkDWire(?);
+
   `ifdef perfmonitors
     /*doc:wire: wire to pulse on every access*/
     Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
@@ -172,8 +196,14 @@ package icache;
 
 
     // ----------------------- Storage elements -------------------------------------------//
+    /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
+     * 'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
+    
+    /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
+
+    /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     BRAM_DUAL_PORT_BE#(Bit#(TLog#(sets)), Bit#(linewidth), TDiv#(linewidth,8)) bram_data [v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
       bram_tag[i]  <- mkBRAMCore2(v_sets, False);
@@ -274,7 +304,7 @@ package icache;
     /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
      fill-buffer or if there was an error in the request */
     rule rl_response_to_core(!ff_core_request.first.fence && (
-                                wr_ram_state == Hit || wr_fb_state == Hit));
+                                wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
       let req = ff_core_request.first;
     `ifdef supervisor
       Bit#(paddr) phyaddr = ff_from_tlb.first;
@@ -288,9 +318,13 @@ package icache;
         if(alg == "PLRU")
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
-      else begin
+      else if(wr_fb_state == Hit) begin
         `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer"))
         ff_core_response.enq(wr_fb_response);
+      end
+      else begin
+        `logLevel( icache, 0, $format("ICACHE: Hit from NC"))
+        ff_core_response.enq(wr_nc_response);
       end
       ff_core_request.deq;
       rg_handling_miss <= False;
@@ -303,9 +337,11 @@ package icache;
       let req = ff_core_request.first;
       Bit#(paddr) phyaddr = truncate(req.address);
       Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
-      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index)};
+      let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
+      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_enable(word_index), 
+                                io_request: lv_io_req};
       ff_pending_req.enq(pend_req);
-      if(isNonCacheable(phyaddr,wr_cache_enable)) begin
+      if(lv_io_req) begin
         ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
                                                   burst_len  : 0,
                                                   burst_size : fromInteger(v_wordbits)});
@@ -335,7 +371,8 @@ package icache;
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
     * has been received the entire line and tag are written in to the BRAM and the fill buffer is
     * released in the next cycle*/
-    rule rl_fill_from_memory(!rg_fb_release && ff_pending_req.notEmpty);
+    rule rl_fill_from_memory(!rg_fb_release && ff_pending_req.notEmpty &&
+                                                                  !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
       ff_read_mem_response.deq;
@@ -365,9 +402,22 @@ package icache;
       `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
     endrule
 
+    /*doc:rule: this rule is responsible for capturing the memory response for an IO request.*/
+    rule rl_capture_io_response(ff_pending_req.notEmpty && ff_pending_req.first.io_request);
+      let response = ff_read_mem_response.first;
+      let req = ff_core_request.first;
+      let lv_response = FetchResponse{instr:truncate(response.data), trap: response.err,
+                                          cause: `Inst_access_fault, epochs: req.epochs};
+      wr_nc_response <= lv_response;
+      wr_nc_state <= Hit;
+      ff_read_mem_response.deq;
+      ff_pending_req.deq;
+      `logLevel( icache, 2, $format("ICACHE: IO Response from Memory: ",fshow(response)))
+    endrule
+
     /*doc:rule: hold the fillbuffer for an extra cycle since the write to the BRAM is only available
     * in the next cycle. This rule will also re-initialize all the fb related registers*/
-    rule rl_delay_fb_release(rg_fb_release);
+    rule rl_delay_fb_release(rg_fb_release && !ff_pending_req.first.io_request);
       rg_fb_enable <= 0;
       rg_fb_enable_temp <= 0;
       rg_fb_linedata <= 0;
@@ -400,6 +450,11 @@ package icache;
     interface read_mem_req = toGet(ff_read_mem_request);
     interface read_mem_resp = toPut(ff_read_mem_response);
     interface core_resp = toGet(ff_core_response);
+    `ifdef perfmonitors
+      method Bit#(5) perf_counters;
+        return {1'b0,wr_total_nc,1'b0,wr_total_cache_misses,wr_total_access};
+      endmethod
+    `endif
   endmodule
 endpackage
 
