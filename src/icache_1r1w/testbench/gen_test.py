@@ -546,9 +546,21 @@ def test15():
     write_to_file(address,read,nodelay,nofence)
     entrycount=entrycount+1
 
+def random_test():
+    global entrycount
 
+    write_to_file(0,read,nodelay,fence)
+    entrycount=entrycount+1
+
+    for i in range(30000):
+        address = int(random.uniform(0,maxaddr))
+        write_to_file(address, read, nodelay, nofence)
+        entrycount = entrycount + 1
 
    
+    write_to_file(maxaddr, write,delay,fence)
+    entrycount=entrycount+1
+
 test1()
 test2()
 test3()
@@ -565,10 +577,11 @@ test13()
 test14a()
 test14b()
 test15()
+random_test()
 write_to_file(0,read,nodelay,nofence)
 entrycount=entrycount+1
 print("Total Entries in Test: "+str(entrycount))
-while entrycount<1024:
+while entrycount<32768:
     write_to_file(0,read,nodelay,nofence)
     entrycount=entrycount+1
 
