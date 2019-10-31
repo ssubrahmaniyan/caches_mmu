@@ -22,7 +22,7 @@ ifeq ($(ICACHE), enable)
 endif
 
 ifneq ($(SUPERVISOR),  none)
-  override define_macros += -D supervisor=True -D $(SUPERVISOR)
+  override define_macros += -D supervisor=True -D $(SUPERVISOR) -D perfmonitors
 endif
 ifeq ($(COVERAGE), none)
 else ifeq ($(COVERAGE),all)
