@@ -55,6 +55,8 @@ VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x
 -Wno-lint -Wno-COMBDLY -Wno-INITIALDLY --autoflush $(coverage) $(trace) --threads $(THREADS) \
 -DBSV_RESET_FIFO_HEAD -DBSV_RESET_FIFO_ARRAY -DVERBOSE --output-split 20000 --output-split-ctrace 10000
 
+VCS_MACROS = +define+BSV_RESET_FIFO_HEAD=True +define+BSV_RESET_FIFO_ARRAY=True +define+BSV_ASYNC_RESET +define+VERBOSE
+
 define presim_config
 	python3 gen_test.py
 endef
@@ -100,6 +102,16 @@ generate_verilog:
 	@cp ${BLUESPECDIR}/Verilog/SizedFIFO.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/RegFileLoad.v ./verilog/
 	@$(VERILOGLICENSE)
+
+.PHONY: link_vcs
+link_vcs: ## Generate simulation executable using Synopsys VCS
+	@rm -rf $(BSVOUTDIR)
+	@mkdir -p $(BSVOUTDIR)
+	vcs -gui -LDFLAGS -Wl,--no-as-needed -l vcs_compile.log -sverilog +vpi +v2k -lca +define+TOP=$(TOP_MODULE) $(VCS_MACROS) \
+	+define+BSV_TIMESCALE=1ns/1ps +cli+4 +libext+.v +notimingcheck \
+	-y $(VERILOGDIR)/ -y common_verilog/ \
+	${BLUESPECDIR}/Verilog/main.v -o out
+	@mv csrc out* $(BSVOUTDIR)
 
 .PHONY: link_verilator
 link_verilator: 
