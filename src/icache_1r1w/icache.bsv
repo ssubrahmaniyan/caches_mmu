@@ -110,6 +110,9 @@ package icache;
           Add#(e__, TLog#(ways), 4),
           Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
           Add#(g__, respwidth, buswidth),
+        `ifdef ASSERT
+          Add#(1, j__, TLog#(TAdd#(1, ways))),
+        `endif
 
           // for using mem_config
           Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
@@ -290,7 +293,7 @@ package icache;
 
       let hit_dataline = select(datalines, unpack(hit_tag));
       Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
-    `ifdef ASSRT
+    `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
 
@@ -372,6 +375,13 @@ package icache;
       end
       ff_core_request.deq;
       rg_handling_miss <= False;
+    `ifdef ASSERT
+      Bit#(3) __t ;
+      __t[0]= pack(wr_ram_state == Hit);
+      __t[1]= pack(wr_fb_state == Hit);
+      __t[2] =pack(wr_nc_state == Hit);
+      dynamicAssert(countOnes(__t) == 1, "More than one data structure shows a hit");
+    `endif
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the

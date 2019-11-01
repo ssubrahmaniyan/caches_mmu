@@ -73,18 +73,18 @@ package dcache;
                            );
     interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Get#(DCache_mem_readreq#(paddr)) read_mem_req;
     interface Put#(DCache_mem_readresp#(buswidth)) read_mem_resp;
   `ifdef supervisor
+    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
   `endif
     method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) write_mem_req;
     method Action write_mem_req_deq;
     interface Put#(DCache_mem_writeresp) write_mem_resp;
-    `ifdef perfmonitors
-      method Bit#(5) perf_counters;
-    `endif
+  `ifdef perfmonitors
+    method Bit#(5) perf_counters;
+  `endif
     method Action ma_cache_enable(Bool c);
     method Bool mv_storebuffer_empty;
     method Action ma_perform_store(Bit#(esize) currepoch);
@@ -122,6 +122,10 @@ package dcache;
           Add#(j__, 8, respwidth),
           Add#(k__, 16, respwidth),
           Add#(l__, 32, respwidth),
+          Add#(m__, respwidth, vaddr),
+        `ifdef ASSERT
+          Add#(1, n__, TLog#(TAdd#(1, ways))),
+        `endif
 
           // for using mem_config
           Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
@@ -177,8 +181,10 @@ package dcache;
     FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_core_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response that needs to be sent back to the core.*/
     FIFOF#(DMem_core_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
+  `ifdef supervisor
     /*doc:fifo: This fifo stores the response that needs to be sent back to the ptw.*/
     FIFOF#(DMem_core_response#(respwidth,esize))ff_ptw_response <- mkBypassFIFOF();
+  `endif
     /*doc:fifo: this fifo stores the read request that needs to be sent to the next memory level.*/
     FIFOF#(DCache_mem_readreq#(paddr)) ff_read_mem_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
@@ -326,12 +332,13 @@ package dcache;
     `ifdef supervisor
       Bit#(paddr) phyaddr = ff_from_tlb.first.address;
       Bool lv_access_fault = ff_from_tlb.first.trap;
-      Bit#(`causesize) lv_cause = lv_access_fault? ff_from_tlb.first.cause:`Inst_access_fault;
+      Bit#(`causesize) lv_cause = lv_access_fault? ff_from_tlb.first.cause:
+                                  req.access == 0?`Load_access_fault:`Store_access_fault;
     `else
       Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
       Bit#(paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
-      Bit#(`causesize) lv_cause = `Inst_access_fault;
+      Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
     `endif
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
@@ -348,7 +355,7 @@ package dcache;
 
       let hit_dataline = select(datalines, unpack(hit_tag));
       Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
-    `ifdef ASSRT
+    `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the cache");
     `endif
 
@@ -378,8 +385,9 @@ package dcache;
       Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(respwidth) response_word=truncate(rg_fb_linedata >> block_offset);
       let required_enable = fn_enable(word_index);
+      Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
       let lv_response = DMem_core_response{word:response_word, trap: rg_fb_err,
-                                          cause: `Inst_access_fault, epochs: req.epochs};
+                                          cause: lv_cause, epochs: req.epochs};
       `logLevel( dcache, 1, $format("DCACHE: FB processing Req: ",fshow(req)))
       Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_fb_addr = truncateLSB(ff_pending_req.first.phyaddr);
       Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_req_addr = truncateLSB(phyaddr);
@@ -408,7 +416,8 @@ package dcache;
                                 wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+      let pa_response = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = pa_response.address;
       ff_from_tlb.deq;
     `else
       Bit#(paddr) phyaddr = truncate(req.address);
@@ -429,7 +438,7 @@ package dcache;
         `logLevel( dcache, 0, $format("DCACHE: Hit from NC"))
         lv_response = wr_nc_response;
       end
-      lv_response.word=
+      lv_response.word= lv_response.trap?truncate(req.address):
         case (req.size)
           'b000 : signExtend(lv_response.word[7 : 0]);
           'b001 : signExtend(lv_response.word[15 : 0]);
@@ -440,8 +449,23 @@ package dcache;
           default : lv_response.word;
         endcase;
       ff_core_request.deq;
+    `ifdef supervisor
+      if(pa_response.tlbmiss)
+        ff_hold_request.enq(ff_core_request.first());
+      if(req.ptwalk_req && !pa_response.tlbmiss)
+        ff_ptw_response.enq(lv_response);
+      else
+    `endif
       ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
+    `ifdef ASSERT
+      Bit#(3) __t ;
+      __t[0]= pack(wr_ram_state == Hit);
+      __t[1]= pack(wr_fb_state == Hit);
+      __t[2] =pack(wr_nc_state == Hit);
+      dynamicAssert(countOnes(__t) == 1, "More than one data structure shows a hit");
+    `endif
+
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
@@ -535,8 +559,9 @@ package dcache;
     rule rl_capture_io_response(ff_pending_req.notEmpty && ff_pending_req.first.io_request);
       let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
+      Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
       let lv_response = DMem_core_response{word:truncate(response.data), trap: response.err,
-                                          cause: `Inst_access_fault, epochs: req.epochs};
+                                          cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
       wr_nc_state <= Hit;
       ff_read_mem_response.deq;
@@ -588,8 +613,8 @@ package dcache;
     interface read_mem_resp = toPut(ff_read_mem_response);
     interface core_resp = toGet(ff_core_response);
     // TODO
-    interface ptw_resp = toGet(ff_ptw_response);
   `ifdef supervisor
+    interface ptw_resp = toGet(ff_ptw_response);
     interface mav_pa_from_tlb = toPut(ff_from_tlb);
   `endif
     `ifdef perfmonitors
@@ -600,7 +625,7 @@ package dcache;
     //TODO
     method mv_storebuffer_empty = True;
     method mv_cacheable_store = True;
-    method mv_cache_available = True;
+    method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull;
   endmodule
 endpackage
 
