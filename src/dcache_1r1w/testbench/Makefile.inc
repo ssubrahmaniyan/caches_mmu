@@ -24,8 +24,8 @@ THREADS=1
 COVERAGE=line
 TRACE=disable
 
-TOP_MODULE:=mkdmem
+TOP_MODULE:=mkdmem_tb
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../:../../tlbs/
-TOP_DIR:= ../
-TOP_FILE:= dmem.bsv
+TOP_DIR:= ./
+TOP_FILE:= dmem_tb.bsv
 

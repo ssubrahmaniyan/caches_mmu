@@ -306,13 +306,15 @@ package dcache;
     // --------------------------- Rule operations ------------------------------------- //
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && !ff_pending_req.notEmpty ) ;
-      `logLevel( dcache, 0, $format("ICACHE : Fence operation in progress"))
+      `logLevel( dcache, 0, $format("DCACHE : Fence operation in progress"))
       for (Integer i = 0; i< v_sets ; i = i + 1) begin
         v_reg_valid[i] <= 0;
       end
       rg_fence_stall <= False;
       ff_core_request.deq;
       replacement.reset_repl;
+      ff_core_response.enq(DMem_core_response{word:?, trap: False,
+                              cause: ?, epochs: ff_core_request.first.epochs});
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
@@ -344,7 +346,7 @@ package dcache;
       let hit_dataline = select(datalines, unpack(hit_tag));
       Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
     `ifdef ASSRT
-      dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
+      dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the cache");
     `endif
 
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
@@ -357,7 +359,7 @@ package dcache;
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
       end
-      `logLevel( dcache, 0, $format("ICACHE: Hit:%b For Req:",(hit_tag),fshow(req)," Response:", 
+      `logLevel( dcache, 0, $format("DCACHE: Hit:%b For Req:",(hit_tag),fshow(req)," Response:", 
                                       fshow(lv_response)))
     endrule
 
@@ -375,24 +377,24 @@ package dcache;
       let required_enable = fn_enable(word_index);
       let lv_response = DMem_core_response{word:response_word, trap: rg_fb_err,
                                           cause: `Inst_access_fault, epochs: req.epochs};
-      `logLevel( dcache, 1, $format("ICACHE: FB processing Req: ",fshow(req)))
+      `logLevel( dcache, 1, $format("DCACHE: FB processing Req: ",fshow(req)))
       Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_fb_addr = truncateLSB(ff_pending_req.first.phyaddr);
       Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_req_addr = truncateLSB(phyaddr);
       if(lv_req_addr == lv_fb_addr && ff_pending_req.notEmpty)begin
-        `logLevel( dcache, 1, $format("ICACHE: Hit in FB Line for Addr:%h",phyaddr))
+        `logLevel( dcache, 1, $format("DCACHE: Hit in FB Line for Addr:%h",phyaddr))
         if((required_enable & rg_fb_enable) !=0)begin
           wr_fb_state <= Hit;
           wr_fb_response <= lv_response;
-          `logLevel( dcache, 1, $format("ICACHE: Required Word found in FB"))
+          `logLevel( dcache, 1, $format("DCACHE: Required Word found in FB"))
         end
         else begin
           wr_fb_state <= None;
-          `logLevel( dcache, 1, $format("ICACHE: Required word not available in the FB yet"))
+          `logLevel( dcache, 1, $format("DCACHE: Required word not available in the FB yet"))
         end
       end
       else begin
         wr_fb_state <= Miss;
-        `logLevel( dcache, 1, $format("ICACHE: Miss in FB also"))
+        `logLevel( dcache, 1, $format("DCACHE: Miss in FB also"))
       end
 
     endrule
@@ -410,17 +412,17 @@ package dcache;
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       if(wr_ram_state == Hit) begin
-        `logLevel( dcache, 0, $format("ICACHE: Hit from SRAM"))
+        `logLevel( dcache, 0, $format("DCACHE: Hit from SRAM"))
         ff_core_response.enq(wr_ram_response);
         if(alg == "PLRU")
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
       else if(wr_fb_state == Hit) begin
-        `logLevel( dcache, 0, $format("ICACHE: Hit from Fillbuffer"))
+        `logLevel( dcache, 0, $format("DCACHE: Hit from Fillbuffer"))
         ff_core_response.enq(wr_fb_response);
       end
       else begin
-        `logLevel( dcache, 0, $format("ICACHE: Hit from NC"))
+        `logLevel( dcache, 0, $format("DCACHE: Hit from NC"))
         ff_core_response.enq(wr_nc_response);
       end
       ff_core_request.deq;
@@ -437,7 +439,7 @@ package dcache;
       let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth)));
       Bit#(TDiv#(linewidth,buswidth)) word_index= phyaddr[lv_busblocks+lv_busbits-1:lv_busbits];
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
-      `logLevel( dcache, 0, $format("ICACHE: word_index:%d",word_index))
+      `logLevel( dcache, 0, $format("DCACHE: word_index:%d",word_index))
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req};
       ff_pending_req.enq(pend_req);
@@ -445,7 +447,7 @@ package dcache;
         ff_read_mem_request.enq(DCache_mem_readreq{  address    : phyaddr,
                                                   burst_len  : 0,
                                                   burst_size : fromInteger(v_wordbits)});
-        `logLevel( dcache, 0, $format("ICACHE: Sending IO Request for Addr:%h",phyaddr))
+        `logLevel( dcache, 0, $format("DCACHE: Sending IO Request for Addr:%h",phyaddr))
       `ifdef perfmonitors
         if(request.access == 0)
           wr_total_io_reads <= 1;
@@ -464,7 +466,7 @@ package dcache;
             wr_total_atomic_miss <= 1;
         `endif
       `endif
-        `logLevel( dcache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr))
+        `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", phyaddr))
         let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
         phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
         let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
@@ -500,9 +502,9 @@ package dcache;
         bram_tag[waynum].write(1,set_index,lv_write_tag);
         bram_data[waynum].write(1,set_index,lv_fb_linedata);
         v_reg_valid[set_index][waynum]<= 1'b1;
-        `logLevel( dcache, 0, $format("ICACHE: Writing set:%d tag:%h way:%d",
+        `logLevel( dcache, 0, $format("DCACHE: Writing set:%d tag:%h way:%d",
                                                                     set_index,lv_write_tag,waynum))
-        `logLevel( dcache, 0, $format("ICACHE: Writing data:%h",lv_fb_linedata))
+        `logLevel( dcache, 0, $format("DCACHE: Writing data:%h",lv_fb_linedata))
       end
       else begin
         rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount));
@@ -510,8 +512,8 @@ package dcache;
       end
       rg_fb_linedata <=  lv_fb_linedata;
       rg_fb_err <= response.err;
-      `logLevel( dcache, 0, $format("ICACHE: current_enable:%h",lv_current_enable))
-      `logLevel( dcache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
+      `logLevel( dcache, 0, $format("DCACHE: current_enable:%h",lv_current_enable))
+      `logLevel( dcache, 0, $format("DCACHE: Response from Memory:",fshow(response)))
     endrule
 
     /*doc:rule: this rule is responsible for capturing the memory response for an IO request.*/
@@ -524,7 +526,7 @@ package dcache;
       wr_nc_state <= Hit;
       ff_read_mem_response.deq;
       ff_pending_req.deq;
-      `logLevel( dcache, 2, $format("ICACHE: IO Response from Memory: ",fshow(response)))
+      `logLevel( dcache, 2, $format("DCACHE: IO Response from Memory: ",fshow(response)))
     endrule
 
     /*doc:rule: hold the fillbuffer for an extra cycle since the write to the BRAM is only available
@@ -535,7 +537,7 @@ package dcache;
       rg_fb_linedata <= 0;
       rg_fb_err <= False;
       ff_pending_req.deq;
-      `logLevel( dcache, 1, $format("ICACHE: Releasing FB. Addr:",fshow(ff_pending_req.first)))
+      `logLevel( dcache, 1, $format("DCACHE: Releasing FB. Addr:",fshow(ff_pending_req.first)))
     endrule
 
     interface core_req=interface Put
@@ -559,8 +561,8 @@ package dcache;
           bram_data[i].read(set_index);
           bram_tag[i].read(set_index);
         end
-        `logLevel( dcache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
-        `logLevel( dcache, 0, $format("ICACHE : set:%d",set_index))
+        `logLevel( dcache, 0, $format("DCACHE : Receiving request: ",fshow(req)))
+        `logLevel( dcache, 0, $format("DCACHE : set:%d",set_index))
       endmethod
     endinterface;
     method Action ma_cache_enable(Bool c);
