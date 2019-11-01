@@ -119,6 +119,9 @@ package dcache;
           Add#(e__, TLog#(ways), 4),
           Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
           Add#(g__, respwidth, buswidth),
+          Add#(j__, 8, respwidth),
+          Add#(k__, 16, respwidth),
+          Add#(l__, 32, respwidth),
 
           // for using mem_config
           Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
@@ -411,21 +414,33 @@ package dcache;
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      DMem_core_response#(respwidth,esize) lv_response;
       if(wr_ram_state == Hit) begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from SRAM"))
-        ff_core_response.enq(wr_ram_response);
+        lv_response = wr_ram_response;
         if(alg == "PLRU")
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
       else if(wr_fb_state == Hit) begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from Fillbuffer"))
-        ff_core_response.enq(wr_fb_response);
+        lv_response = wr_fb_response;
       end
       else begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from NC"))
-        ff_core_response.enq(wr_nc_response);
+        lv_response = wr_nc_response;
       end
+      lv_response.word=
+        case (req.size)
+          'b000 : signExtend(lv_response.word[7 : 0]);
+          'b001 : signExtend(lv_response.word[15 : 0]);
+          'b010 : signExtend(lv_response.word[31 : 0]);
+          'b100 : zeroExtend(lv_response.word[7 : 0]);
+          'b101 : zeroExtend(lv_response.word[15 : 0]);
+          'b110 : zeroExtend(lv_response.word[31 : 0]);
+          default : lv_response.word;
+        endcase;
       ff_core_request.deq;
+      ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
     endrule
 
