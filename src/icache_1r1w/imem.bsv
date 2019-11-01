@@ -46,11 +46,7 @@ package imem;
     import fa_itlb :: * ;
   `endif
   `ifdef icache
-    `ifdef supervisor
-      import l1icache_vipt :: *;
-    `else
-      import icache :: *;
-    `endif
+    import icache :: *;
   `else
     import null_icache :: *;
   `endif
@@ -114,7 +110,7 @@ package imem;
     let icache <- mkinstance;
   `ifdef supervisor
     let itlb <- mkitlb;
-    mkConnection(itlb.core_response, icache.pa_from_tlb);
+    mkConnection(itlb.core_response, icache.mav_pa_from_tlb);
   `endif
     interface core_req = interface Put
       method Action put (ICache_request#(`vaddr ,`iesize) req);

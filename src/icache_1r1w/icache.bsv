@@ -74,9 +74,12 @@ package icache;
     interface Get#(FetchResponse#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(ICache_mem_request#(paddr)) read_mem_req;
     interface Put#(ICache_mem_response#(buswidth)) read_mem_resp;
-    `ifdef perfmonitors
-      method Bit#(5) perf_counters;
-    `endif
+  `ifdef supervisor
+    interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
+  `endif
+  `ifdef perfmonitors
+    method Bit#(5) perf_counters;
+  `endif
     method Action ma_cache_enable(Bool c);
   endinterface
 
@@ -166,6 +169,10 @@ package icache;
     FIFOF#(ICache_mem_request#(paddr)) ff_read_mem_request    <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(ICache_mem_response#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
+  `ifdef supervisor 
+    /*doc:fifo: this fifo receives the physical address from the TLB */
+    FIFOF#(ITLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
+  `endif
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
     /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
@@ -259,8 +266,11 @@ package icache;
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss);
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+      Bool lv_access_fault = ff_from_tlb.first.trap;
+      Bit#(`causesize) lv_cause = lv_access_fault? ff_from_tlb.first.cause:`Inst_access_fault;
     `else
+      Bit#(`causesize) lv_cause = `Inst_access_fault;
       Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
       Bit#(paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
@@ -285,7 +295,7 @@ package icache;
     `endif
 
       let lv_response = FetchResponse{instr:response_word, trap: lv_access_fault,
-                                          cause: `Inst_access_fault, epochs: req.epochs};
+                                          cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
       if(lv_access_fault || |(hit_tag) == 1) begin// trap or hit in RAMs
@@ -302,7 +312,7 @@ package icache;
     rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
     `else
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
@@ -310,7 +320,7 @@ package icache;
       Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(respwidth) response_word=truncate(rg_fb_linedata >> block_offset);
       let required_enable = fn_enable(word_index);
-      let lv_response = FetchResponse{instr:response_word, trap: False,
+      let lv_response = FetchResponse{instr:response_word, trap: rg_fb_err,
                                           cause: `Inst_access_fault, epochs: req.epochs};
       `logLevel( icache, 1, $format("ICACHE: FB processing Req: ",fshow(req)))
       Bit#(TSub#(paddr, TAdd#(wordbits,blockbits))) lv_fb_addr = truncateLSB(ff_pending_req.first.phyaddr);
@@ -340,7 +350,8 @@ package icache;
                                 wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+      ff_from_tlb.deq;
     `else
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
@@ -435,6 +446,7 @@ package icache;
         rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
       rg_fb_linedata <=  lv_fb_linedata;
+      rg_fb_err <= response.err;
       `logLevel( icache, 0, $format("ICACHE: current_enable:%h",lv_current_enable))
       `logLevel( icache, 0, $format("ICACHE: Response from Memory:",fshow(response)))
     endrule
@@ -458,6 +470,7 @@ package icache;
       rg_fb_enable <= 0;
       rg_fb_enable_temp <= 0;
       rg_fb_linedata <= 0;
+      rg_fb_err <= False;
       ff_pending_req.deq;
       `logLevel( icache, 1, $format("ICACHE: Releasing FB. Addr:",fshow(ff_pending_req.first)))
     endrule
@@ -487,6 +500,9 @@ package icache;
     interface read_mem_req = toGet(ff_read_mem_request);
     interface read_mem_resp = toPut(ff_read_mem_response);
     interface core_resp = toGet(ff_core_response);
+  `ifdef supervisor
+    interface mav_pa_from_tlb = toPut(ff_from_tlb);
+  `endif
     `ifdef perfmonitors
       method Bit#(5) perf_counters;
         return {1'b0,wr_total_nc,1'b0,wr_total_cache_misses,wr_total_access};
