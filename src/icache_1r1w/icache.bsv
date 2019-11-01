@@ -242,11 +242,9 @@ package icache;
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1r1w#(sets, tagbits, tbanks) bram_tag [v_ways];
-//    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(tagbits)) bram_tag [v_ways];
 
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1r1w#(sets, linewidth, dbanks) bram_data[v_ways];
-//    BRAM_DUAL_PORT#(Bit#(TLog#(sets)), Bit#(linewidth)) bram_data [v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
       bram_tag[i]  <- mkmem_config1r1w(False,"double");
       bram_data[i] <- mkmem_config1r1w(False,"double");
