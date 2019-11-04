@@ -101,6 +101,42 @@ package fill_buffer;
 			return writedata;
 		endfunction
 
+		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size);
+    	Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
+    	                       size[1 : 0] == 1?'hFFFF : 
+    	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+    	line = line>>{line_offset,3'd0};
+			Bit#(datawidth) readdata= truncate(line) & mask;
+			return readdata;
+		endfunction
+
+    function Bit#(respwidth) fn_atomic_op (Bit#(5) op,  Bit#(respwidth) rs2,  
+                                           Bit#(respwidth) loaded);
+      Bit#(respwidth) op1 = loaded;
+      Bit#(respwidth) op2 = rs2;
+      if(op[4] == 0)begin
+	  		op1 = signExtend(loaded[31 : 0]);
+        op2 = signExtend(rs2[31 : 0]);
+      end
+      Int#(respwidth) s_op1 = unpack(op1);
+	  	Int#(respwidth) s_op2 = unpack(op2);
+      
+      case (op[3 : 0])
+	  			'b0011 : return op2;
+	  			'b0000 : return (op1 + op2);
+	  			'b0010 : return (op1^op2);
+	  			'b0110 : return (op1 & op2);
+	  			'b0100 : return (op1|op2);
+	  			'b1100 : return min(op1, op2);
+	  			'b1110 : return max(op1, op2);
+	  			'b1000 : return pack(min(s_op1, s_op2));
+	  			'b1010 : return pack(max(s_op1, s_op2));
+	  			default : return op1;
+	  		endcase
+    endfunction
+
+
 		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
 		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
@@ -170,20 +206,20 @@ package fill_buffer;
 			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1 && wr_can_perform_store) begin
 				rg_dirty<= 1;
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
-								let sram_data= write_linedata;
-								let core_data= req.payload;
-								let size= req.access_size;
-    						Bit#(data) temp = size[1 : 0] == 0?'hFF : 
-    						                  size[1 : 0] == 1?'hFFFF : 
-    						                  size[1 : 0] == 2?'hFFFFFFFF : '1;
+				let sram_data= write_linedata;
+				let core_data= req.payload;
+				let size= req.access_size;
+    		Bit#(data) temp = size[1 : 0] == 0?'hFF : 
+    		                  size[1 : 0] == 1?'hFFFF : 
+    		                  size[1 : 0] == 2?'hFFFFFFFF : '1;
 
-    						Bit#(linewidth) mask = zeroExtend(temp);
-    						mask = mask<<{write_reqaddr, 3'd0};
-								Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
-																							size=='d1? duplicate(core_data[15:0]) :
-																							size=='d2? duplicate(core_data[31:0]) :
-																												 duplicate(core_data);
-								write_linedata= (mask & data_to_mask) |(~mask & sram_data);
+    		Bit#(linewidth) mask = zeroExtend(temp);
+    		mask = mask<<{write_reqaddr, 3'd0};
+				Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+																			size=='d1? duplicate(core_data[15:0]) :
+																			size=='d2? duplicate(core_data[31:0]) :
+																								 duplicate(core_data);
+				write_linedata= (mask & data_to_mask) |(~mask & sram_data);
 			`logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h mask: %h",write_reqaddr, write_linedata, mask))
 				//write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
@@ -203,8 +239,16 @@ package fill_buffer;
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
 			if(req.origin==Store_commit) begin
+        let store_data= req.payload;
+        `ifdef atomic
+        if(!req.is_atomic) begin
+				  let data_extracted= fn_extract_data(rg_fill_buffer, truncate(req.addr), req.access_size);
+          store_data= fn_atomic_op(req.atomic_fn, req.payload, data_extracted);
+        end
+        `endif
+
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
-				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, req.payload, write_reqaddr, req.access_size);
+				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
 				rg_fill_buffer<= write_linedata;
 			end
 		endrule
