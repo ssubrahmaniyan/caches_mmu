@@ -218,4 +218,16 @@ package nb_dcache_types;
      endfunction
   endinstance
 
+  typedef struct{
+    Bool valid;
+    Bit#(addr) reserved_addr;
+    Bit#(rob_size) rob_id;
+  } Reserve_info#(numeric type addr, numeric type rob_size) deriving(Bits, Eq, FShow);
+
+  instance DefaultValue#(Reserve_info#(addr, rob_size);
+    defaultValue= Reserve_info { valid: False,
+                                 addr: ?,
+                                 rob_size: ? };
+  endinstance
+
 endpackage
