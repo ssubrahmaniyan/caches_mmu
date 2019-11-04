@@ -560,8 +560,8 @@ package nb_dcache;
 			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
 			//Here, fb_data is the complete fill buffer line
       `logLevel( dcache, 2, $format("DCACHE : Not a hit in SRAM. Checking fill buffer for req:", fshow(req)))
-			if(req.origin==Store_commit && !wr_is_mshr_resp_to_core)
-				lv_stage1_fb_deq= True;
+			//if(req.origin==Store_commit && !wr_is_mshr_resp_to_core)  //TODO Arjun NEW.
+			//	lv_stage1_fb_deq= True;
 
 			if(fill_buffer_resp matches tagged Valid .fb_data) begin
 				if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
