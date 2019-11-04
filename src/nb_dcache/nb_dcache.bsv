@@ -327,7 +327,11 @@ package nb_dcache;
 			return MSHR_Req { addr: req.addr,
 												access_size: req.access_size,
 												payload: req.data,
-												origin: req.origin };
+												origin: req.origin
+                        `ifdef atomic
+                        , atomic_fn: req.atomic_fn
+                        , is_atomic: req.is_atomic
+                        `endif };
 		endfunction
 
 		function Bool should_flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob, Bit#(rob_index) rob);
@@ -505,12 +509,12 @@ package nb_dcache;
 				//If MSHR req is not sending response, the current hit response can be sent to the processor.
 				//Hence, deq ff_first_stage. Also, for Store_buffer requests, no response needs to be sent,
 				//and therfore, ff_first_stage can be dequeued.
-				if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
+        if((!wr_is_mshr_resp_to_core `ifdef && !atomic req.is_atomic `endif ) || req.origin==Store_buffer) begin
 					wr_stage1_deq<= True;
 				end
 
 				//If MSHR req is not sending response, then this stage can send a response for hit.
-				if(send_resp && !wr_is_mshr_resp_to_core) begin
+        if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
 					wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
 																					 			prf_index: req.prf_index,
 																					 			exception: No_exception };
@@ -527,22 +531,28 @@ package nb_dcache;
       			`logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
 					end
 				end
+        `ifdef atomic
+        else if(req.is_atomic) begin
+          let data= perform_atomic_op(data_to_core, req.data, req.atomic_fn);
+          rg_atomic_data<= tagged Valid data;
+        end
+        `endif
 			end
 			else if(wr_is_mshr_req_to_fb_valid) begin		//Some pending MSHR request to FB
 				if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
 					`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
 					wr_stage2_enq<= convert_to_Cache_req(req);
-					if(req.origin==Store_commit) begin
+          if(req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif ) begin
 						wr_sram_resp_to_core<= Resp_to_core { data: ?,
 																	  							prf_index: req.prf_index,
 																	  							exception: No_exception };
 					end
 				end
 				else begin
-					`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store req: ", fshow(req)))
+					`logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store/atomic req: ", fshow(req)))
 				end
 			end
-			else begin	//Line miss; send req to FyyB since MSHR is not sending
+			else begin	//Line miss; send req to FB since MSHR is not sending
 				wr_stage2_req_to_fb<= True;
 				`logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
 			end
@@ -553,8 +563,22 @@ package nb_dcache;
 		//acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
 		rule rl_stage2_req_to_fb(wr_stage2_req_to_fb);
 			let req= ff_first_stage.first;
-			let fill_buffer_resp<- fill_buffer.request(convert_to_MSHR_Req(req)); 			//Req and resp to/from fill buffer
+      Maybe#(Bit#(linewidth)) fill_buffer_resp= tagged Invalid;
 			Bool lv_stage1_fb_deq= False;
+
+      `ifdef atomic
+      if(!req.is_atomic) begin  //If not atomic
+      `endif
+			  fill_buffer_resp<- fill_buffer.request(convert_to_MSHR_Req(req)); 			//Req and resp to/from fill buffer
+      `ifdef atomic
+      end
+      //if atomic, then wait for FB to get the complete line and also, MSHR should not be sending response in this cycle
+      else if(fill_buffer.can_release && !wr_mshr_resp_to_core) begin
+			  fill_buffer_resp<- fill_buffer.request(convert_to_MSHR_Req(req));
+      end
+      //else if req.addr matches fb_addr, then stall
+      //else enq to next stage
+      `endif
 
 			//Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
 			//if a response needs to be sent (i.e. a load_buffer or a PTW request).
@@ -582,13 +606,14 @@ package nb_dcache;
 			end
 			else begin
 				`logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
+        Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
 
 				//if store commit instruction, and mshr is sending response to core, then do not enqueue request into next cycle
-				if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
+				if(!is_store_instruction || !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_enq<= convert_to_Cache_req(req);
 				end
 				
-				if(req.origin==Store_commit) begin
+				if(is_store_instruction) begin
 					if(wr_is_mshr_resp_to_core) begin
 						`logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
 					end
