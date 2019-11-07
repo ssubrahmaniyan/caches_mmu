@@ -136,6 +136,9 @@ package nb_dcache;
 	(*execution_order = "rl_tag_and_data_array_read_response, rl_stage2_req_to_fb"*)
 	(*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
 	(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+  `ifdef atomic
+	  (*conflict_free = "rl_release_fb_cycle2, rl_core_resp_for_atomic"*)
+  `endif 
 	(*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
 	(*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache)"*)
 	(*conflict_free="rl_MSHR_req_to_fill_buffer, mshr.rl_deq_ff"*)
@@ -198,6 +201,9 @@ package nb_dcache;
       Add#(s__, 44, xlen),
       Add#(t__, 56, xlen),
       Add#(u__, 4, xlen)
+    `endif
+    `ifdef atomic
+      , Add#(w__, 32, datawidth)
     `endif
 		//----------------------//
 		);
@@ -275,6 +281,11 @@ package nb_dcache;
 		Reg#(Bit#(setbits)) rg_prev_fence_set_index <- mkConfigReg(0);
 		Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
 
+  `ifdef atomic
+    Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
+    Reg#(Tuple2#(Bool, Bit#(paddr))) rg_lr_info <- mkReg(tuple2(False, ?)); 
+  `endif
+
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
 		Wire#(MSHR_Req#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
@@ -320,7 +331,11 @@ package nb_dcache;
 												 access_size: req.access_size,
 												 payload: lv_payload,
 												 origin: req.origin,
-											 	 rob: req.rob };
+											 	 rob: req.rob
+                       `ifdef atomic
+                         , is_atomic: req.is_atomic
+                         , atomic_fn: req.atomic_fn
+                       `endif };
 		endfunction
 
 		function MSHR_Req#(addrwidth, datawidth) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
@@ -366,6 +381,33 @@ package nb_dcache;
 			return False;
 		endfunction
 
+    `ifdef atomic
+    function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded);
+      //provisos(Add#(z__, 32, datawidth));
+      Bit#(datawidth) op1 = loaded;
+      Bit#(datawidth) op2 = rs2;
+      if(op[4] == 0)begin
+	  		op1 = signExtend(loaded[31 : 0]);
+        op2 = signExtend(rs2[31 : 0]);
+      end
+      Int#(datawidth) s_op1 = unpack(op1);
+	  	Int#(datawidth) s_op2 = unpack(op2);
+      
+      case (op[3 : 0])
+	  			'b0011 : return op2;
+	  			'b0000 : return (op1 + op2);
+	  			'b0010 : return (op1^op2);
+	  			'b0110 : return (op1 & op2);
+	  			'b0100 : return (op1|op2);
+	  			'b1100 : return min(op1, op2);
+	  			'b1110 : return max(op1, op2);
+	  			'b1000 : return pack(min(s_op1, s_op2));
+	  			'b1010 : return pack(max(s_op1, s_op2));
+	  			default : return op1;
+	  		endcase
+    endfunction
+    `endif
+
 		rule rl_initialize(!rg_initialize_done);
       `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
 			for(Integer i=0; i<ways_val; i=i+1) begin
@@ -406,7 +448,11 @@ package nb_dcache;
 																																			sfence: core_req.sfence,
 																																			ptwalk_trap: core_req.ptwalk_trap,
 																																			rob: core_req.rob,
-																																			prf_index: core_req.prf_index };
+																																			prf_index: core_req.prf_index 
+                                                                      `ifdef atomic
+                                                                        , is_atomic: core_req.is_atomic
+                                                                        , atomic_fn: core_req.atomic_fn
+                                                                      `endif };
 			Bool is_IO_access= is_IO(core_req.addr);
 			if(core_req.sfence) begin
 					ff_req_from_core.deq;
@@ -471,7 +517,7 @@ package nb_dcache;
 		//This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
 		//to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
 		//cache, then the request is sent to the fill buffer.
-		rule rl_tag_and_data_array_read_response(!rg_fence);
+    rule rl_tag_and_data_array_read_response(!rg_fence `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif );
 			let req= ff_first_stage.first;
       `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
 
@@ -509,7 +555,7 @@ package nb_dcache;
 				//If MSHR req is not sending response, the current hit response can be sent to the processor.
 				//Hence, deq ff_first_stage. Also, for Store_buffer requests, no response needs to be sent,
 				//and therfore, ff_first_stage can be dequeued.
-        if((!wr_is_mshr_resp_to_core `ifdef && !atomic req.is_atomic `endif ) || req.origin==Store_buffer) begin
+        if((!wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) || req.origin==Store_buffer) begin
 					wr_stage1_deq<= True;
 				end
 
@@ -533,8 +579,8 @@ package nb_dcache;
 				end
         `ifdef atomic
         else if(req.is_atomic) begin
-          let data= perform_atomic_op(data_to_core, req.data, req.atomic_fn);
-          rg_atomic_data<= tagged Valid data;
+          //let data= perform_atomic_op(data_to_core, req.data, req.atomic_fn);
+          rg_atomic_hit_info<= tagged Valid tuple2(hit_way, data_to_core);
         end
         `endif
 			end
@@ -558,6 +604,26 @@ package nb_dcache;
 			end
 		endrule
 
+  `ifdef atomic
+    rule rl_core_resp_for_atomic(rg_atomic_hit_info matches tagged Valid .atomic_hit_info &&& !wr_is_mshr_resp_to_core);
+			let req= ff_first_stage.first;
+      let atomic_fn= req.atomic_fn;
+      match {.hit_way, .cache_data}= atomic_hit_info;
+      let atomic_result= fn_atomic_op(atomic_fn, req.data, cache_data);
+    	Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
+      let cache_line= data_arr[hit_way].read_response;
+			let write_data= generate_masked_data(cache_line, atomic_result, line_offset, req.access_size); //TODO make UniqueWrapper
+			Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+      data_arr[hit_way].write(set_index, write_data);
+      wr_stage1_deq<= True;
+      rg_atomic_hit_info<= tagged Invalid;
+			wr_sram_resp_to_core<= Resp_to_core { data: cache_data, //TODO check if correct for atomics
+														  							prf_index: req.prf_index,
+														  							exception: No_exception };
+    endrule
+  `endif
+
+
 		//This rule fires in the same cycle as rl_tag_and_data_array_read_response if tag match returned a miss.
 		//This rule sends a req to FB and checks if the response is a hit or not. If it's a hit, an
 		//acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
@@ -573,7 +639,7 @@ package nb_dcache;
       `ifdef atomic
       end
       //if atomic, then wait for FB to get the complete line and also, MSHR should not be sending response in this cycle
-      else if(fill_buffer.can_release && !wr_mshr_resp_to_core) begin
+      else if(fill_buffer.can_release && !wr_is_mshr_resp_to_core) begin
 			  fill_buffer_resp<- fill_buffer.request(convert_to_MSHR_Req(req));
       end
       //else if req.addr matches fb_addr, then stall
@@ -608,7 +674,12 @@ package nb_dcache;
 				`logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
         Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
 
-				//if store commit instruction, and mshr is sending response to core, then do not enqueue request into next cycle
+				//if store instructions, and mshr is sending response to core, then do not enqueue request into next cycle
+        //For store instructions, if TLB checks pass, the response can immediately be sent. Therefore, instead of sending it to the MSHR,
+        //We stall untill MSHR is not sending a response to the core. This way, the ROB can move forward asap.
+        //Also, this will have no impact on throughput as the same store instruction would have arrived from the store buffer
+        //a couple of clock cycles before. Therefore, even if the store is a miss in the cache, a "prefetch" would
+        //have already started.
 				if(!is_store_instruction || !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_enq<= convert_to_Cache_req(req);
 				end
@@ -733,6 +804,13 @@ package nb_dcache;
 			let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
 			//Send the req to fill buffer and check if it's a hit
 			let fill_buffer_resp<- fill_buffer.request(req_from_mshr); 			//Send request to fill buffer
+      `ifdef atomic
+        //For an atomic operation, the request should be sent only when the line has been completely
+        //loaded in the fill buffer. Until then, ack should not be sent to MSHR for the atomic req.
+        if(req_from_mshr.is_atomic && !fill_buffer.can_release) begin
+          fill_buffer_resp= tagged Invalid;
+        end
+      `endif
 			if(fill_buffer_resp matches tagged Valid .fb_data) begin
 				`logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
 				mshr.ack_from_fb;
