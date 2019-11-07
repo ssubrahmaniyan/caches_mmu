@@ -78,6 +78,10 @@ package nb_dcache_types;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(rob_index) rob;
+    `ifdef atomic
+    Bool is_atomic;
+    Bit#(5) atomic_fn;
+    `endif
 	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index) deriving (Bits, Eq, FShow);
 	//instance DefaultValue#(Cache_req#(addr, data, rob_index));
 	//	defaultValue= Cache_req {	addr: 'd0,
@@ -166,6 +170,25 @@ package nb_dcache_types;
                           };
 	endinstance
 
+	typedef struct {
+		Bit#(addr) addr;
+		Bit#(2) access_size;
+		Bit#(data) payload;
+		Origin origin;
+    `ifdef atomic
+    Bool is_atomic;
+    `endif
+	} MSHR_FIFO#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(MSHR_FIFO#(addr, data));
+		defaultValue= MSHR_FIFO {	addr: 'd0,
+															access_size: 'd3,
+															payload: 'd0,
+															origin: defaultValue
+                              `ifdef atomic
+                              , is_atomic: False
+                              `endif
+                          };
+	endinstance
 	// -------------- TLB defines ------------------ //
   typedef struct{
     Bit#(addr)        address;
@@ -218,16 +241,20 @@ package nb_dcache_types;
      endfunction
   endinstance
 
+//--------------------------------------------------------------------------------------------------
+
+`ifdef atomic
   typedef struct{
     Bool valid;
     Bit#(addr) reserved_addr;
     Bit#(rob_size) rob_id;
   } Reserve_info#(numeric type addr, numeric type rob_size) deriving(Bits, Eq, FShow);
 
-  instance DefaultValue#(Reserve_info#(addr, rob_size);
+  instance DefaultValue#(Reserve_info#(addr, rob_size));
     defaultValue= Reserve_info { valid: False,
-                                 addr: ?,
-                                 rob_size: ? };
+                                 reserved_addr: ?,
+                                 rob_id: ? };
   endinstance
+`endif
 
 endpackage
