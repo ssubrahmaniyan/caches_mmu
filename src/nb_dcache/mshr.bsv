@@ -86,13 +86,16 @@ package mshr;
 		endfunction
 
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
+    `ifdef atomic
+      Reg#(Bit#(5)) rg_atomic_fn <- mkConfigReg(0);
+    `endif
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
 		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
 		Reg#(Bool) rg_fence <- mkReg(False);
 		Reg#(Bool) rg_wait_state <- mkReg(False);
 
-		FIFOF#(MSHR_Req#(linewidthbits, data)) ff_mshr [mshrsize_val];
+		FIFOF#(MSHR_FIFO#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
@@ -184,21 +187,30 @@ package mshr;
 
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
+        `ifdef atomic
+          rg_atomic_fn<= req.atomic_fn;
+        `endif
 				wr_allocate_id<= tagged Valid mshr_unallocated_id;
-				ff_mshr[mshr_unallocated_id].enq(MSHR_Req {	addr: req.addr[linewidthbits_val-1:0],
+				ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 																										access_size: req.access_size,
 																										payload: req.payload,
-																										origin: req.origin });
+																										origin: req.origin
+                                                    `ifdef atomic 
+                                                      , is_atomic: req.is_atomic
+                                                    `endif });
 				cff_rob[mshr_unallocated_id].enq(req.rob);
 				cff_valid[mshr_unallocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
 			else if(mshr_allocated) begin
-				ff_mshr[mshr_allocated_id].enq(MSHR_Req {	addr: req.addr[linewidthbits_val-1:0],
+				ff_mshr[mshr_allocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 																									access_size: req.access_size,
 																									payload: req.payload,
-																									origin: req.origin });
+																									origin: req.origin
+                                                  `ifdef atomic 
+                                                    , is_atomic: req.is_atomic
+                                                  `endif });
 				cff_rob[mshr_allocated_id].enq(req.rob);
 				cff_valid[mshr_allocated_id].enq(1'b1);
 				return tagged Invalid;
@@ -228,7 +240,11 @@ package mshr;
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
-																					origin: fifo_top.origin });
+																					origin: fifo_top.origin
+                                          `ifdef atomic
+                                          , is_atomic: fifo_top.is_atomic
+                                          , atomic_fn: rg_atomic_fn 
+                                          `endif });
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
@@ -249,7 +265,11 @@ package mshr;
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
-																					origin: fifo_top.origin });
+																					origin: fifo_top.origin
+                                          `ifdef atomic
+                                          , is_atomic: fifo_top.is_atomic
+                                          , atomic_fn: rg_atomic_fn 
+                                          `endif });
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
