@@ -3,7 +3,7 @@
 	`define Setsize		128
 	`define Ways			4
 	`define Paddr			32
-	`define Vaddr			48
+	`define XLEN			64
 	`define Dsram			32
 	`define Tsram			32
 	`define Prf_index	6
