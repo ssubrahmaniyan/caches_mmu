@@ -62,12 +62,16 @@ package fill_buffer;
 									Log#(num_chunks, num_chunksbits),
 									Mul#(a__, data, linewidth),
 									Add#(b__, data, linewidth),
-									Add#(c__, buswidth, linewidth),			//for generate_masked_data_bus fn
-									Mul#(d__, buswidth, linewidth),			//for generate_masked_data_bus fn
-									Mul#(e__, 8, linewidth),						//for generate_masked_data fn
-									Mul#(f__, 16, linewidth),						//for generate_masked_data fn
-									Mul#(g__, 32, linewidth),						//for generate_masked_data fn
+									Add#(c__, buswidth, linewidth),			  //for generate_masked_data_bus fn
+									Mul#(d__, buswidth, linewidth),			  //for generate_masked_data_bus fn
+									Mul#(e__, 8, linewidth),						  //for generate_masked_data fn
+									Mul#(f__, 16, linewidth),						  //for generate_masked_data fn
+									Mul#(g__, 32, linewidth),						  //for generate_masked_data fn
 									Add#(num_chunksbits, h__, lineoffset) //to find fb_index for first mem_response
+                  `ifdef atomic
+                  , Add#(i__, 32, data),
+                  Add#(j__, lineoffset, paddr)
+                  `endif
 								);
 
 		let paddr_val= valueOf(paddr);
@@ -101,7 +105,8 @@ package fill_buffer;
 			return writedata;
 		endfunction
 
-		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size);
+		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size)
+      provisos(Add#(z__, datawidth, linewidth));
     	Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
@@ -111,16 +116,17 @@ package fill_buffer;
 			return readdata;
 		endfunction
 
-    function Bit#(respwidth) fn_atomic_op (Bit#(5) op,  Bit#(respwidth) rs2,  
-                                           Bit#(respwidth) loaded);
-      Bit#(respwidth) op1 = loaded;
-      Bit#(respwidth) op2 = rs2;
+    `ifdef atomic
+    function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded)
+      provisos(Add#(z__, 32, datawidth));
+      Bit#(datawidth) op1 = loaded;
+      Bit#(datawidth) op2 = rs2;
       if(op[4] == 0)begin
 	  		op1 = signExtend(loaded[31 : 0]);
         op2 = signExtend(rs2[31 : 0]);
       end
-      Int#(respwidth) s_op1 = unpack(op1);
-	  	Int#(respwidth) s_op2 = unpack(op2);
+      Int#(datawidth) s_op1 = unpack(op1);
+	  	Int#(datawidth) s_op2 = unpack(op2);
       
       case (op[3 : 0])
 	  			'b0011 : return op2;
@@ -135,7 +141,7 @@ package fill_buffer;
 	  			default : return op1;
 	  		endcase
     endfunction
-
+    `endif
 
 		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
 		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
