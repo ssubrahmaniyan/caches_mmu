@@ -1,7 +1,7 @@
 XLEN=32
 
 # Supervisor related settings
-SUPERVISOR=none
+SUPERVISOR=sv32
 ITLBSIZE=4
 ASIDWIDTH=9
 ATOMIC=disable

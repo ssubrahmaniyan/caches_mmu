@@ -85,7 +85,7 @@ package dmem_tb;
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
 
-  `ifdef perf
+  `ifdef perfmonitors
   Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
   rule performance_counters;
     Bit#(5) incr = dmem.perf_counters;
