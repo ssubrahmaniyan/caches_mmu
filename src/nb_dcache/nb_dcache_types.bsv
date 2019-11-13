@@ -77,12 +77,13 @@ package nb_dcache_types;
 		Bit#(2) access_size;
 		Bit#(data) payload;
 		Origin origin;
+		Bit#(prf_index) prf_index;
 		Bit#(rob_index) rob;
     `ifdef atomic
     Bool is_atomic;
     Bit#(5) atomic_fn;
     `endif
-	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index) deriving (Bits, Eq, FShow);
+	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
 	//instance DefaultValue#(Cache_req#(addr, data, rob_index));
 	//	defaultValue= Cache_req {	addr: 'd0,
 	//														access_size: 'd3,
@@ -153,16 +154,18 @@ package nb_dcache_types;
 		Bit#(2) access_size;
 		Bit#(data) payload;
 		Origin origin;
+		Bit#(prf_index) prf_index;
     `ifdef atomic
     Bool is_atomic;
     Bit#(5) atomic_fn;
     `endif
-	} MSHR_Req#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(MSHR_Req#(addr, data));
+	} MSHR_Req#(numeric type addr, numeric type data, numeric type prf_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(MSHR_Req#(addr, data, prf_index));
 		defaultValue= MSHR_Req {	addr: 'd0,
 															access_size: 'd3,
 															payload: 'd0,
-															origin: defaultValue
+															origin: defaultValue,
+                              prf_index: 'd0
                               `ifdef atomic
                               , is_atomic: False
                               , atomic_fn: 'd0
