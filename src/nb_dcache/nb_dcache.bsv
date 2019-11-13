@@ -33,7 +33,7 @@ TODO
 	 the next stage.
 2. Change appropriate interface parameters to module parameters
 -DONE-3. Add flush logic
-4. Add a mux for IO request? Currently the io requests are captured in ff_io_request. They can either
+4. Add a mux for IO request? Currently the io requests are captured in ff_io_info. They can either
 	 be directly given through a separate master, or can be muxed with the existing master.
 -DONE-5. Integrate TLB
 6. Optimize the FIFOs by :
@@ -90,6 +90,8 @@ package nb_dcache;
 		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	  subifc_read_resp_from_mem;
 		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	  subifc_write_req_to_mem;
 		interface Put#(Bool)                                        								 	  subifc_write_resp_from_mem;
+		interface Get#(IO_Req#(paddr, TMul#(wordsize,8)))            								 	  subifc_IO_req;
+    interface Put#(IO_Resp#(TMul#(wordsize,8)))                                     subifc_IO_resp;
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 		method Bool cache_busy;
 	endinterface
@@ -150,7 +152,12 @@ package nb_dcache;
 	(*preempts = "rl_sram_resp_to_core, rl_sc_fail_response_to_core"*)
 	(*preempts = "rl_stage2_fb_resp_to_core, rl_sc_fail_response_to_core"*)
 	(*preempts = "rl_access_fault_response_to_core, rl_sc_fail_response_to_core"*)
+  (*preempts = "rl_receive_IO_resp, rl_sc_fail_response_to_core"*)
  `endif
+	(*preempts = "rl_receive_IO_resp, rl_stage2_fb_resp_to_core"*)
+	(*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
+  (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
+
 
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
@@ -266,6 +273,9 @@ package nb_dcache;
 		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
 		Wire#(Bool) wr_write_resp_from_mem <- mkWire;
 
+    FIFO#(IO_Req#(paddr, datawidth)) ff_io_req <- mkSizedFIFO(1);
+    FIFO#(IO_Resp#(datawidth)) ff_io_resp <- mkSizedFIFO(1);
+
 
 		///////////////////////////// Module signals ///////////////////////////////////////////////////
 		FIFOF#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_first_stage <- mkPipelineFIFOF;
@@ -273,7 +283,7 @@ package nb_dcache;
 		for(Integer i=0; i<ways_val; i=i+1)
 			ff_first_stage_tag[i]<- mkBypassFIFO;
 		FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkFIFOF;
-		FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_request <- mkFIFO;
+		FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_info <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy <- mkConfigReg(True);	//TODO has to be reset depending upon when the leaf page is received
 																										//or when PTW walk indicates so
@@ -287,6 +297,8 @@ package nb_dcache;
 		Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
 		Reg#(Bit#(setbits)) rg_prev_fence_set_index <- mkConfigReg(0);
 		Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
+		Reg#(Tuple2#(DCache_exception, Bit#(prf_index))) rg_access_fault_response <- mkReg(tuple2(defaultValue, ?));
+    Reg#(Bool) rg_io_req_sent <- mkReg(False);
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -299,7 +311,6 @@ package nb_dcache;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
 		Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
 		Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
-		Reg#(Tuple2#(DCache_exception, Bit#(prf_index))) rg_access_fault_response <- mkReg(tuple2(defaultValue, ?));
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_mshr_resp_to_core <- mkWire;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_sram_resp_to_core <- mkWire();
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_stage2_fb_resp_to_core <- mkWire();
@@ -506,7 +517,7 @@ package nb_dcache;
 
 					if(is_IO_access) begin	//IO operation
 						//Enqueue into a separate FIFO that handles IO Requests
-						ff_io_request.enq(req);
+						ff_io_info.enq(req);
 					  rg_cache_busy<= True;
 					end
 					else if(lv_sc_pass) begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
@@ -1080,9 +1091,24 @@ package nb_dcache;
 			`logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
 		endrule
 
-    rule send_io_request(!rg_io_req_sent);
-      ff_io_req.enq
+    rule rl_send_io_request(!rg_io_req_sent);
+      let req= ff_io_info.first;
+      ff_io_req.enq(IO_Req { addr: req.addr,
+                             size: req.access_size,
+                             is_store: req.origin==Store_buffer,
+                             data: req.data });
       rg_io_req_sent<= True;
+    endrule
+
+    rule rl_receive_IO_resp(rg_cache_busy && rg_io_req_sent);
+      let resp= ff_io_resp.first;
+      ff_io_resp.deq;
+      ff_io_info.deq;
+      rg_cache_busy<= False;
+      rg_io_req_sent<= False;
+			wr_resp_to_core<= Resp_to_core { data: resp.data,
+																	     prf_index: ff_io_info.first.prf_index,
+																	     exception: No_exception };
     endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
@@ -1126,8 +1152,8 @@ package nb_dcache;
 			endmethod
 		endinterface;
 
-		//method Action fence;
-		//endmethod
+		interface subifc_IO_req= toGet(ff_io_req);
+    interface subifc_IO_resp= toPut(ff_io_resp);
 
 		//Cache is busy if a PTW is ongoing, or, (if a flush is ongoing and entries in ff_second_stage
 		//have not been resolved yet.
