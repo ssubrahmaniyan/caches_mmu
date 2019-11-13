@@ -260,4 +260,16 @@ package nb_dcache_types;
   endinstance
 `endif
 
+	typedef struct {
+		Bit#(addr) addr;
+		Bit#(2) size;
+    Bool is_store;
+    Bit#(data) data;
+	} IO_Req#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
+
+  typedef struct {
+    Bit#(data) data;
+    DCache_exception exception;
+  } IO_Resp#(numeric type data) deriving (Bits, Eq, FShow);
+
 endpackage
