@@ -45,8 +45,8 @@ package fill_buffer;
   `include "Logger.bsv"           // for logging
 
 	interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
-															numeric type linewidth, numeric type lineoffset, numeric type wordsize);
-		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
+															numeric type linewidth, numeric type lineoffset, numeric type wordsize, numeric type prf_index);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data, prf_index) req);
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last, Bit#(lineoffset) offset_val);
 		method Action release_fb;
 		method Bool can_release;
@@ -55,7 +55,7 @@ package fill_buffer;
 	endinterface
 
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
-	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, lineoffset, wordsize))
+	module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, lineoffset, wordsize, prf_index))
 				 provisos(Log#(TDiv#(buswidth,8), busoffset),
 				 					Log#(buswidth, buswidthbits),
 			 						Div#(linewidth, buswidth, num_chunks),
@@ -67,11 +67,11 @@ package fill_buffer;
 									Mul#(e__, 8, linewidth),						  //for generate_masked_data fn
 									Mul#(f__, 16, linewidth),						  //for generate_masked_data fn
 									Mul#(g__, 32, linewidth),						  //for generate_masked_data fn
-									Add#(num_chunksbits, h__, lineoffset) //to find fb_index for first mem_response
                   `ifdef atomic
-                  , Add#(i__, 32, data),
-                  Add#(j__, lineoffset, paddr)
+                  Add#(h__, 32, data),
+                  Add#(i__, lineoffset, paddr),
                   `endif
+									Add#(num_chunksbits, j__, lineoffset)//to find fb_index for first mem_response
 								);
 
 		let paddr_val= valueOf(paddr);
@@ -151,7 +151,7 @@ package fill_buffer;
 		Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fb_addr <- mkConfigReg(0);
 		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
 
-		Wire#(MSHR_Req#(paddr, data)) wr_req <- mkDWire(defaultValue);
+		Wire#(MSHR_Req#(paddr, data, prf_index)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
 		Wire#(Bool) wr_can_perform_store <- mkDWire(False);
 
@@ -209,7 +209,8 @@ package fill_buffer;
 
 			Bit#(TLog#(num_chunks)) lv_store_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 			//For a store commit combine the above data along with that of the request
-			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1 && wr_can_perform_store) begin
+			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1 && wr_can_perform_store
+        `ifdef atomic && !req.is_atomic `endif ) begin
 				rg_dirty<= 1;
 				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
 				let sram_data= write_linedata;
@@ -247,9 +248,11 @@ package fill_buffer;
 			if(req.origin==Store_commit) begin
         let store_data= req.payload;
         `ifdef atomic
-        if(!req.is_atomic) begin
+        if(req.is_atomic) begin
 				  let data_extracted= fn_extract_data(rg_fill_buffer, truncate(req.addr), req.access_size);
           store_data= fn_atomic_op(req.atomic_fn, req.payload, data_extracted);
+          //$display("cache_data: %h", data_extracted);
+			    `logLevel( dcache, 1, $format("FB : Performing atomic op: %b cache_data: rs2: %h result: %h", req.atomic_fn, req.payload, store_data))
         end
         `endif
 
@@ -263,7 +266,7 @@ package fill_buffer;
 		//entry is invalid. This does not matter however as this method returns "tagged Invalid" as the 
 		//result, and in the subsequent clock cycles, the same request will again be sent by the MSHR.
 		//For a request from ff_first_stage, they will get enqueued to ff_second_stage.
-		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data) req);
+		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data, prf_index) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
 			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
 			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d index_valid: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid[valid_index] ))
@@ -302,7 +305,7 @@ package fill_buffer;
 	endmodule
 
   (*synthesize*)
-	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 6, 8));
+	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 6, 8, 6));
     let ifc();
     mkfill_buffer _temp(ifc);
     return (ifc);
