@@ -72,7 +72,7 @@ package nb_dcache;
 													numeric type setsize,		//number of sets
 													numeric type ways,			//number of ways
 													numeric type paddr,			//physical address width in bits
-													numeric type xlen,			//virtual address width in bits
+													numeric type vaddr,			//virtual address width in bits
 													numeric type dsram,			//no. of bits in a row of SRAM cells for the data array
 													numeric type tsram,			//no. of bits in a row of SRAM cells for the tag array
 													numeric type prf_index,	//no. of bits to index the prf
@@ -154,7 +154,7 @@ package nb_dcache;
 
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
-		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, xlen, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
+		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
 	// 4,				 3,							 128
 		provisos(
 			Log#(wordsize, wordbits),
@@ -171,7 +171,7 @@ package nb_dcache;
 			//Add#(c__, lineoffset, TLog#(TAdd#(ways, 1))),	//check again
 			Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),			//Bluespec cribs
 			Add#(e__, TLog#(mshrsize), id_bits),
-			Add#(f__, paddr, xlen),
+			Add#(f__, paddr, vaddr),
 			Mul#(g__, buswidth, linewidth),
 			Add#(h__, buswidth, linewidth),
 			Add#(i__, datawidth, linewidth),
@@ -191,23 +191,23 @@ package nb_dcache;
 			Add#(mshrfifo_depth, 0, `Mshrfifo_depth),
 			Add#(TLog#(evict_iter), p__, lineoffset),	//In fill buffer while generating fb_index corresponding to first mem_response
 			//------FA TLB-------//
-     Add#(TMul#(TSub#(`varpages,1),`subvpn), v__, xlen),
+     Add#(TMul#(TSub#(`varpages,1),`subvpn), v__, vaddr),
     `ifdef sv32
-      Add#(q__, 22, xlen),
-      Add#(r__, 20, xlen),
-      Add#(s__, xlen, 34),
-      Add#(t__, 1, xlen)
+      Add#(q__, 22, vaddr),
+      Add#(r__, 20, vaddr),
+      Add#(s__, vaddr, 34),
+      Add#(t__, 1, vaddr)
     `else
       `ifdef sv39
-        Add#(q__, 40, xlen),
-        Add#(r__, 27, xlen),
+        Add#(q__, 40, vaddr),
+        Add#(r__, 27, vaddr),
       `else
-        Add#(q__, 49, xlen),
-        Add#(r__, 36, xlen),
+        Add#(q__, 49, vaddr),
+        Add#(r__, 36, vaddr),
       `endif
-      Add#(s__, 44, xlen),
-      Add#(t__, 56, xlen),
-      Add#(u__, 4, xlen)
+      Add#(s__, 44, vaddr),
+      Add#(t__, 56, vaddr),
+      Add#(u__, 4, vaddr)
     `endif
     `ifdef atomic
       , Add#(w__, 32, datawidth)
@@ -229,7 +229,7 @@ package nb_dcache;
 		Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val]; 				// data array
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
-		Ifc_fa_dtlb#(xlen, paddr) dtlb <-mkfa_dtlb;
+		Ifc_fa_dtlb#(vaddr, paddr) dtlb <-mkfa_dtlb;
 		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
@@ -241,7 +241,7 @@ package nb_dcache;
 
 		//Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val]; 				// data array
 		//Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram) tag_arr [ways_val]; // extra valid and dirty bits
-		//Ifc_tlb#(xlen, paddr) tlb <-mktlb;
+		//Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
 		//let fill_buffer <-fillbuffer;
 		//let mshr <-mshrmod;
 		//let repl <-replace;
@@ -253,14 +253,14 @@ package nb_dcache;
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
-		FIFO#(Req_from_core#(xlen, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
+		FIFO#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
 		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
 		//to the cache. Now, this request will be a hit in the TLB. This FIFO is used to send the req to
 		//the PTW module
-		Wire#(Req_from_core#(xlen, datawidth, rob_index, prf_index)) wr_req_to_ptw <- mkWire;
+		Wire#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) wr_req_to_ptw <- mkWire;
 		FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
 		Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
 		FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
@@ -376,10 +376,10 @@ package nb_dcache;
 			return lv_should_flush;
 		endfunction
 
-		function Cache_DTLB_request#(xlen) convert_core_to_tlb_req(Req_from_core#(xlen, datawidth, rob_index, prf_index) core_req);
+		function Cache_DTLB_request#(vaddr) convert_core_to_tlb_req(Req_from_core#(vaddr, datawidth, rob_index, prf_index) core_req);
 			Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;	//TODO add atomic support
 
-			Cache_DTLB_request#(xlen) dtlb_req= Cache_DTLB_request { address: core_req.addr,
+			Cache_DTLB_request#(vaddr) dtlb_req= Cache_DTLB_request { address: core_req.addr,
 																														 access: access,
 																														 ptwalk_trap: core_req.ptwalk_trap,
 																														 ptwalk_req: (core_req.origin==PTW),
@@ -387,7 +387,7 @@ package nb_dcache;
 			return dtlb_req;
 		endfunction
 
-		function Bool is_IO(Bit#(xlen) addr); //TODO remove this dummy is_IO function
+		function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
 			return False;
 		endfunction
 
@@ -1099,7 +1099,7 @@ package nb_dcache;
 		interface subifc_ptw_meta= dtlb.ptw_meta;
 
     interface subifc_response_frm_ptw= dtlb.response_frm_ptw;
-	//		method ActionValue#((Cache_req#(xlen, datawidth, prf_index))) get;
+	//		method ActionValue#((Cache_req#(vaddr, datawidth, prf_index))) get;
 	//			return wr
 		interface subifc_read_req_to_mem= toGet(ff_read_req_to_mem);
 
@@ -1114,7 +1114,7 @@ package nb_dcache;
 		endinterface;
 
 		interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
-		//interface Get#(Write_req_to_mem#(xlen, data)) subifc_write_req_to_mem;
+		//interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
 		//	method ActionValue#(Write_req_to_mem) get;
 		//		return wr_write_req_to_mem;
 		//	endmethod
@@ -1146,7 +1146,7 @@ package nb_dcache;
 	endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `XLEN, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
