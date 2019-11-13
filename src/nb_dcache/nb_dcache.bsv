@@ -145,6 +145,13 @@ package nb_dcache;
 	(*preempts="rl_sram_resp_to_core, rl_access_fault_response_to_core"*)
 	(*preempts="rl_stage2_fb_resp_to_core, rl_access_fault_response_to_core"*)
 	(*preempts="rl_fence_fb, rl_fence_cache"*)
+`ifdef atomic
+	(*preempts = "rl_MSHR_resp_to_core, rl_sc_fail_response_to_core"*)
+	(*preempts = "rl_sram_resp_to_core, rl_sc_fail_response_to_core"*)
+	(*preempts = "rl_stage2_fb_resp_to_core, rl_sc_fail_response_to_core"*)
+	(*preempts = "rl_access_fault_response_to_core, rl_sc_fail_response_to_core"*)
+ `endif
+
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, xlen, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
@@ -223,8 +230,8 @@ package nb_dcache;
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
 		Ifc_fa_dtlb#(xlen, paddr) dtlb <-mkfa_dtlb;
-		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize) fill_buffer <-mkfill_buffer;
-		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index) mshr <- mkmshr;
+		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index) fill_buffer <-mkfill_buffer;
+		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
 		for(Integer i = 0;i<ways_val;i = i+1)begin
@@ -265,7 +272,7 @@ package nb_dcache;
 		FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
 		for(Integer i=0; i<ways_val; i=i+1)
 			ff_first_stage_tag[i]<- mkBypassFIFO;
-		FIFOF#(Cache_req#(paddr, datawidth, rob_index)) ff_second_stage <- mkFIFOF;
+		FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkFIFOF;
 		FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_request <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy <- mkConfigReg(True);	//TODO has to be reset depending upon when the leaf page is received
@@ -283,15 +290,16 @@ package nb_dcache;
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
-    Reg#(Tuple2#(Bool, Bit#(paddr))) rg_lr_info <- mkReg(tuple2(False, ?)); 
+    Reg#(Tuple3#(Bool, Bit#(paddr), Bit#(rob_index))) rg_lr_info <- mkReg(tuple3(False, ?, ?));
+    Reg#(Bool) rg_sc_fail <- mkReg(False);
   `endif
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
-		Wire#(MSHR_Req#(paddr, datawidth)) wr_mshr_req_to_fb <- mkWire;
+		Wire#(MSHR_Req#(paddr, datawidth, prf_index)) wr_mshr_req_to_fb <- mkWire;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
 		Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
 		Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
-		Reg#(Resp_to_core#(datawidth, prf_index)) rg_access_fault_response <- mkReg(defaultValue);
+		Reg#(Tuple2#(DCache_exception, Bit#(prf_index))) rg_access_fault_response <- mkReg(tuple2(defaultValue, ?));
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_mshr_resp_to_core <- mkWire;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_sram_resp_to_core <- mkWire();
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_stage2_fb_resp_to_core <- mkWire();
@@ -299,8 +307,8 @@ package nb_dcache;
 		Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
-		Wire#(Cache_req#(paddr, datawidth, rob_index)) wr_stage2_enq <- mkWire;
-		Wire#(Cache_req#(paddr, datawidth, rob_index)) wr_stage2_fb_enq <- mkWire;
+		Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
+		Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
 
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
@@ -325,12 +333,13 @@ package nb_dcache;
 			return readdata;
 		endfunction
 
-		function Cache_req#(paddr, datawidth, rob_index) convert_to_Cache_req(Req_from_core#(paddr, datawidth, rob_index, prf_index) req);
+		function Cache_req#(paddr, datawidth, rob_index, prf_index) convert_to_Cache_req(Req_from_core#(paddr, datawidth, rob_index, prf_index) req);
 			Bit#(datawidth) lv_payload= req.origin==Store_commit? req.data : zeroExtend(req.prf_index);
 			return Cache_req { addr: req.addr,
 												 access_size: req.access_size,
 												 payload: lv_payload,
 												 origin: req.origin,
+                         prf_index: req.prf_index,
 											 	 rob: req.rob
                        `ifdef atomic
                          , is_atomic: req.is_atomic
@@ -338,11 +347,12 @@ package nb_dcache;
                        `endif };
 		endfunction
 
-		function MSHR_Req#(addrwidth, datawidth) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
+		function MSHR_Req#(addrwidth, datawidth, prf_index) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
 			return MSHR_Req { addr: req.addr,
 												access_size: req.access_size,
 												payload: req.data,
-												origin: req.origin
+												origin: req.origin,
+                        prf_index: req.prf_index
                         `ifdef atomic
                         , atomic_fn: req.atomic_fn
                         , is_atomic: req.is_atomic
@@ -420,8 +430,17 @@ package nb_dcache;
 			end
 		endrule
 
-		rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence);
+    /*
+    TODO
+    What if when flush is happening and rg_lr_info is set. If the lr instruction is flushed, then even this
+    register should be cleared. But currently, both the rules, rl_handle_req_from_core and rl_flush_mshr
+    update this register. How to solve? Likewise, for rg_sc_fail.
+    One possible solution is to give this more priority than mshr_resp to core. But that would result
+    in much complex conditions for rest of the rules.
+    */
+    rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif );
 			let core_req= ff_req_from_core.first;
+			ff_req_from_core.deq;
 			Bool is_actual_store= (core_req.origin == Store_commit);
 			Bit#(setbits) set_index;
 			//For a fence instruction, start from cache index 0.
@@ -455,37 +474,55 @@ package nb_dcache;
                                                                       `endif };
 			Bool is_IO_access= is_IO(core_req.addr);
 			if(core_req.sfence) begin
-					ff_req_from_core.deq;
-					mshr.fence;
-					rg_fence<= True;
-					rg_SRAM_fence[0]<= True;
-					rg_cache_busy<= True;
+				mshr.fence;
+				rg_fence<= True;
+				rg_SRAM_fence[0]<= True;
+				rg_cache_busy<= True;
 			end
 			else if(!resp_from_tlb.tlbmiss || is_IO_access) begin			//Hit in the TLB or is an IO operation
-
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
 				if(resp_from_tlb.trap) begin	//Access fault
-					ff_req_from_core.deq;
 					rg_cache_busy<= True;
-					rg_access_fault_response<= Resp_to_core { data: ?,
-																										prf_index: req.prf_index,
-																										exception: resp_from_tlb.exception };
+					rg_access_fault_response<= tuple2(resp_from_tlb.exception, core_req.prf_index);
 				end
 				else begin	//Access is valid
-					ff_req_from_core.deq;
+          Bool lv_sc_pass= True;
+        `ifdef atomic
+          if(core_req.is_atomic) begin
+            if(core_req.atomic_fn=='d2 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
+              rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
+            else
+              rg_lr_info<= tuple3(False, ?, ?);
+
+            if(core_req.atomic_fn=='d3) begin   //SC
+              Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
+              if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
+                lv_sc_pass= False;
+            end
+          end
+          else 
+            rg_lr_info<= tuple3(False, ?, ?);
+        `endif
+
 					if(is_IO_access) begin	//IO operation
 						//Enqueue into a separate FIFO that handles IO Requests
 						ff_io_request.enq(req);
+					  rg_cache_busy<= True;
 					end
-					else begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
+					else if(lv_sc_pass) begin	//Else it's a cacheable request. Enqueue in the first stage FIFO.
       			`logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
 						ff_first_stage.enq(req);
 					end
+        `ifdef atomic
+          else begin
+            rg_sc_fail<= True;
+					  rg_access_fault_response<= tuple2(defaultValue, core_req.prf_index);
+            rg_cache_busy<= True;
+          end
+        `endif
 				end
-
 			end
 			else begin		//Miss in the TLB and not IO or fence operation
-				ff_req_from_core.deq;
       	`logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
 				wr_req_to_ptw<= core_req;		//TODO PTW will store the req and send it again, once PTW is done.
 				rg_cache_busy<= True;
@@ -493,11 +530,24 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 		endrule
 
-		rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core && rg_access_fault_response.exception!=defaultValue && rg_cache_busy);
-			wr_resp_to_core<= rg_access_fault_response;
+		rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core &&
+    tpl_1(rg_access_fault_response)!=defaultValue && rg_cache_busy);
+			wr_resp_to_core<= Resp_to_core {data: ?,
+																			prf_index: tpl_2(rg_access_fault_response),
+																			exception: tpl_1(rg_access_fault_response) };
 			rg_cache_busy<= False;
-			rg_access_fault_response<= defaultValue;
+			rg_access_fault_response<= tuple2(defaultValue, ?);
 		endrule
+
+  `ifdef atomic
+    rule rl_sc_fail_response_to_core(!wr_is_mshr_resp_to_core && rg_sc_fail && !rg_fence && rg_cache_busy);
+			wr_resp_to_core<= Resp_to_core {data: ?,
+																			prf_index: tpl_2(rg_access_fault_response),
+																			exception: defaultValue };
+      rg_sc_fail<= False;
+      rg_cache_busy<= False;
+    endrule
+  `endif
 
 		//In case we cannot enqueue into ff_second_stage, the second stage would stall. After some clock
 		//cycles when the we can enqueue into ff_second_stage, the correct values of tag will not be 
@@ -734,8 +784,8 @@ package nb_dcache;
 			ff_second_stage.deq;
 			let flush= rg_flush[1];
 
-					//If no flush, or when flush is happening, "req" is after flush in program order
-					//OR if fence && a store request
+			//If no flush, or when flush is happening, "req" is after flush in program order
+			//OR if fence && a store request
 			if( (!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob))
 				  || (rg_fence && req.origin==Store_buffer) ) begin  
 				let mshr_resp<- mshr.allocate(req);
@@ -759,8 +809,27 @@ package nb_dcache;
 
 		//This rule resets the valid bit of rg_flush after a flush request is initiated.
 		//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
+    (*no_implicit_conditions, fire_when_enabled*)
 		rule rl_reset_rg_flush(rg_flush[0].valid);
-			if(!ff_second_stage.notEmpty) begin
+    //`ifdef atomic
+    //  if(tpl_1(rg_lr_info)) begin
+    //    if(should_flush(rg_flush[0].head, rg_flush[0].flush_rob, tpl_3(rg_lr_info))) begin
+    //      rg_lr_info<= {False, ?, ?};
+    //    end
+    //  end
+		//	else
+    //`endif
+
+      if(!ff_second_stage.notEmpty) begin
+      //`ifdef atomic
+      //  if(rg_sc_fail) begin  //If SC has failed
+      //    let first_stage_info= ff_first_stage.first;
+      //    if(should_flush(rg_flush[0].head, rg_flush[0].flush_rob, first_stage_info.rob_index)) begin
+      //      rg_sc_fail<= False;
+      //    end
+      //  end
+      //`endif
+
 				rg_flush[0].valid<= False;
 				`logLevel( dcache, 2, $format("DCACHE : ff_second_stage empty. Finishing flush"))
 			end
@@ -814,12 +883,13 @@ package nb_dcache;
 			if(fill_buffer_resp matches tagged Valid .fb_data) begin
 				`logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
 				mshr.ack_from_fb;
-				Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW);
+				Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW
+                         `ifdef atomic || req_from_mshr.is_atomic `endif );
 				if(send_resp) begin
 					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
 					wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
-																					 prf_index: truncate(req_from_mshr.payload),
-																					 exception: No_exception };
+																					      prf_index: req_from_mshr.prf_index,
+																					      exception: No_exception };
 					wr_is_mshr_resp_to_core<= True;
 				end
 				//else do nothing
@@ -1003,8 +1073,17 @@ package nb_dcache;
 			rg_cache_busy<= False;
 			rg_fence<= False;
 			rg_prev_fence_set_index<= 0;
+      `ifdef atomic
+        rg_lr_info<= tuple3(False, ?, ?);
+        rg_sc_fail<= False;
+      `endif
 			`logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
 		endrule
+
+    rule send_io_request(!rg_io_req_sent);
+      ff_io_req.enq
+      rg_io_req_sent<= True;
+    endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
 
