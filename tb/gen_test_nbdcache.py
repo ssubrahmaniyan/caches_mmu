@@ -1266,7 +1266,22 @@ def test30():
     entrycount=entrycount+1
     gold_file.write(miss)
 
-test0() #1548
+#Atomic AMOOR.D
+def test31():
+    global entrycount
+    address=4096
+    rob_index=0
+    write_to_file(address,write,dword,unsigned,nodelay,nofence,rob_index) #0
+    entrycount=entrycount+1
+    gold_file.write(miss)
+
+    rob_index=rob_index+1
+    address= address+8
+    write_to_file(address,read,word,unsigned,nodelay,nofence,rob_index) #3
+    entrycount=entrycount+1
+    gold_file.write(hit)
+
+#test0() #1548
 #test1() #1658
 #test02() #1698
 #test03() #1788
@@ -1303,6 +1318,7 @@ test0() #1548
 #test28() #no_end 1868
 #test29() #no_end 1808
 #test30()
+test31()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
