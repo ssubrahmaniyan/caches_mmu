@@ -81,15 +81,15 @@ package nb_dcache;
 													numeric type mshrfifo_depth,	//depth of FIFO corresponding to each MSHR
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
-		interface Put#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_from_core;
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	 subifc_resp_to_core;
-		interface Get#(Req_from_core#(xlen, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_to_ptw;
-		interface Ifc_ptw_meta#(xlen)                                                  subifc_ptw_meta;
-    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) 					 subifc_response_frm_ptw;
-		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 	 subifc_read_req_to_mem;
-		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	 subifc_read_resp_from_mem;
-		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	 subifc_write_req_to_mem;
-		interface Put#(Bool)                                        								 	 subifc_write_resp_from_mem;
+		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_from_core;
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	  subifc_resp_to_core;
+		interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_to_ptw;
+		interface Ifc_ptw_meta#(vaddr)                                                  subifc_ptw_meta;
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) 					  subifc_response_frm_ptw;
+		interface Get#(Read_req_to_mem#(paddr, id_bits))            								 	  subifc_read_req_to_mem;
+		interface Put#(Read_resp_from_mem#(buswidth, id_bits))      								 	  subifc_read_resp_from_mem;
+		interface Get#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) 	  subifc_write_req_to_mem;
+		interface Put#(Bool)                                        								 	  subifc_write_resp_from_mem;
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 		method Bool cache_busy;
 	endinterface
