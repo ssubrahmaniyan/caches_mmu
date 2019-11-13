@@ -143,7 +143,7 @@ package nb_dcache_tb;
 			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: %h Rob:%d Delay:%h Request:%h", req, rob, delay, request);
 
 			if(fence==1) begin
-				Req_from_core#(`XLEN, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= defaultValue;
+				Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= defaultValue;
 				temp_req.sfence=True;
         dcache.subifc_req_from_core.put(temp_req);
 			end
@@ -154,8 +154,8 @@ package nb_dcache_tb;
 					//CBToken#(TExp#(`Prf_index)) new_token= unpack(0);
 					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_commit;
 					Bit#(`Paddr) p_addr= request[`Paddr-1:0];
-					Bit#(`XLEN) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
-					Req_from_core#(`XLEN, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= Req_from_core{ addr: lv_addr,
+					Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
+					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= Req_from_core{ addr: lv_addr,
 																																									 access_size: truncate(size),
 																																									 data: writedata,
 																																									 origin: req_origin,
