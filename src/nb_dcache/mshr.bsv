@@ -45,9 +45,10 @@ package mshr;
 											numeric type data,
 											numeric type mshrsize,
 											numeric type mshrfifo_depth,
-											numeric type rob_index);
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req);
-		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+											numeric type rob_index,
+                      numeric type prf_index );
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
@@ -58,10 +59,10 @@ package mshr;
 	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
 	//(*preempts= "cff_valid.initialize, (cff_valid.incCtr, cff_valid.decCtr, cff_valid.both) "*)
   //(*execution_order="rl_deq_ff, ack_from_fb"*)
-	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index))
+	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index, prf_index))
 				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr),
-				 						Add#(mshrfifo_depth, 0, `Mshrfifo_depth)
-										//Add#(a__, addr_in_mshr, linewidthbits)		
+				 						Add#(mshrfifo_depth, 0, `Mshrfifo_depth),
+                    Add#(a__, prf_index, data)
 			 						 );
 		let paddr_val= valueOf(paddr);
 		let linewidthbits_val= valueOf(linewidthbits);
@@ -87,7 +88,7 @@ package mshr;
 
 		Reg#(Bit#(addr_in_mshr)) rg_mshr_line_addr [mshrsize_val];
     `ifdef atomic
-      Reg#(Bit#(5)) rg_atomic_fn <- mkConfigReg(0);
+      Reg#(Tuple2#(Bit#(5), Bit#(prf_index))) rg_atomic_info <- mkConfigReg(tuple2(0,0)); //TODO reset on fence and flush
     `endif
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
@@ -165,7 +166,7 @@ package mshr;
 			rg_wait_state<= False;
 		endrule
 
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index) req)
+		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req)
 												if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
@@ -188,7 +189,7 @@ package mshr;
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
         `ifdef atomic
-          rg_atomic_fn<= req.atomic_fn;
+          rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
         `endif
 				wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
@@ -223,8 +224,8 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Maybe#(MSHR_Req#(paddr, data))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
-			Maybe#(MSHR_Req#(paddr, data)) req= tagged Invalid;
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+			Maybe#(MSHR_Req#(paddr, data, prf_index)) req= tagged Invalid;
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
@@ -237,13 +238,15 @@ package mshr;
 					//set, or if it is a fence instruction as this store got committed before the flush or fence 
 					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
+            Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
-																					origin: fifo_top.origin
+																					origin: fifo_top.origin,
+                                          prf_index: prf_id
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
-                                          , atomic_fn: rg_atomic_fn 
+                                          , atomic_fn: tpl_1(rg_atomic_info) 
                                           `endif });
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
@@ -262,13 +265,15 @@ package mshr;
 					let cfifo_valid= cff_valid[curr_rid].first;
 
 					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
+            Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
-																					origin: fifo_top.origin
+																					origin: fifo_top.origin,
+                                          prf_index: prf_id
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
-                                          , atomic_fn: rg_atomic_fn 
+                                          , atomic_fn: tpl_1(rg_atomic_info)
                                           `endif });
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
@@ -338,7 +343,7 @@ package mshr;
 	endmodule
 
   (*synthesize*)
-	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 4, 3, 7));
+	module mkmshr_instance (Ifc_mshr#(32, 9, 64, 4, 3, 7, 6));
     let ifc();
     mkmshr _temp(ifc);
     return (ifc);
