@@ -165,15 +165,13 @@ package fill_buffer;
 		//a value in the first response, and wr_req does not hold anything.
 		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
 		//should be set as True.
-		rule rl_update_rg_first_resp;
-			//`logLevel( dcache, 2, $format("FB : rg_first_resp: %b rlast: %b wr_req: %h", rg_first_resp, tpl_2(wr_data_from_mem), wr_req))
-			if(rg_first_resp) begin
-				rg_fb_addr<= wr_req.addr[paddr_val-1:lineoffset_val];
-				rg_first_resp<= False;
-			end
-			else if(tpl_2(wr_data_from_mem)) begin
-				rg_first_resp<= True;
-			end
+		rule rl_set_rg_first_resp(rg_first_resp && !all_valid);
+			rg_fb_addr<= wr_req.addr[paddr_val-1:lineoffset_val];
+			rg_first_resp<= False;
+    endrule
+
+    rule rl_reset_rg_first_resp(!rg_first_resp && tpl_2(wr_data_from_mem));
+			rg_first_resp<= True;
 		endrule
 
 		//This rule fires when the fill buffer is not full, and the response from mem is valid (which

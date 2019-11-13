@@ -93,18 +93,15 @@ package mshr;
 		Reg#(Bool) rg_mshr_valid [mshrsize_val];
 		//TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
 		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
-		Reg#(Bool) rg_fence <- mkReg(False);
+		Reg#(Bool) rg_fence <- mkConfigReg(False);
 		Reg#(Bool) rg_wait_state <- mkReg(False);
+		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
 
 		FIFOF#(MSHR_FIFO#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
-		Wire#(Bit#(TLog#(mshrsize))) wr_deq_ff_id <- mkWire();
-
-		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
-
-		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
+		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -114,10 +111,11 @@ package mshr;
 		//function returns True, and otherwise leave the entry unchanged. Also, whenever any corresponding
 		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, cff_valid is also dequeued.
 		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) cff_valid [mshrsize_val];
+		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
 			//(*preempts= "flush, (cff_valid[i].incCtr, cff_valid[i].decCtr, cff_valid[i].both) "*)
-			cff_rob[i] <- mkSEMF_FIFO(0);
 			cff_valid[i] <- mkSESFMI_inst;
+			cff_rob[i] <- mkSEMF_FIFO(0);
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -148,8 +146,8 @@ package mshr;
 			end
 		endrule
 
-		rule rl_deq_ff;
-			let id= wr_deq_ff_id;
+		rule rl_deq_ff(wr_deq_ff_id matches tagged Valid .deq_ff_id);
+			let id= deq_ff_id;
 			let lv_req_prf= ff_mshr[id].first.payload;
 			`logLevel( dcache, 2, $format("MSHR[%d]: Flushed request for prf_index: %d being dequeued from FIFOs", id, lv_req_prf))
 			ff_mshr[id].deq;
@@ -161,7 +159,7 @@ package mshr;
 			rg_wait_state<= True;
 		endrule
 
-		rule rl_reset_fence(rg_wait_state && !mshr_not_empty);
+		rule rl_reset_fence(rg_wait_state && !mshr_not_empty && rg_fence);
 			rg_fence<= False;
 			rg_wait_state<= False;
 		endrule
@@ -251,7 +249,7 @@ package mshr;
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
-						wr_deq_ff_id<= req_rid;
+						wr_deq_ff_id<= tagged Valid req_rid;
 					end
 				end
 				//Else no pending req of current MSHR are pending, hence wait for the fill buffer to get filled
@@ -278,7 +276,7 @@ package mshr;
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
-						wr_deq_ff_id<= curr_rid;
+						wr_deq_ff_id<= tagged Valid curr_rid;
 					end
 				end
 				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
@@ -300,7 +298,7 @@ package mshr;
 			return ff_mshr[id].first.addr;
 		endmethod
 
-		method Action ack_from_fb if(mshr_not_empty);
+		method Action ack_from_fb if(mshr_not_empty && !isValid(wr_deq_ff_id));
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
       	`logLevel( nb_dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
@@ -333,7 +331,7 @@ package mshr;
 			end
 		endmethod
 
-		method Action fence;
+		method Action fence if(!rg_fence);
 			rg_fence<= True;
 		endmethod
 

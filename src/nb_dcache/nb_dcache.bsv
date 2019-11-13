@@ -158,7 +158,6 @@ package nb_dcache;
 	(*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
 
-
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
 		(Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
@@ -1080,7 +1079,7 @@ package nb_dcache;
 			end
 		endrule
 
-		rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[1] && !mshr.not_empty);
+		rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty);
 			rg_cache_busy<= False;
 			rg_fence<= False;
 			rg_prev_fence_set_index<= 0;
