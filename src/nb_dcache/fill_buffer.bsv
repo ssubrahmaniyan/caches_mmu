@@ -165,7 +165,7 @@ package fill_buffer;
 		//a value in the first response, and wr_req does not hold anything.
 		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
 		//should be set as True.
-		rule rl_set_rg_first_resp(rg_first_resp && !all_valid);
+		rule rl_set_rg_first_resp(rg_first_resp && !all_valid && !tpl_2(wr_data_from_mem));
 			rg_fb_addr<= wr_req.addr[paddr_val-1:lineoffset_val];
 			rg_first_resp<= False;
     endrule
@@ -178,7 +178,7 @@ package fill_buffer;
 		//is an implicit confition as wr_data_from_mem is a mkWire, whose value is read in this rule)
 		rule rl_operation(!all_valid);
 			let req= wr_req;
-			`logLevel( dcache, 2, $format("FB : rl_operation firing. data_from_mem: %h req_from_mshr: ", tpl_1(wr_data_from_mem), fshow(req)))
+			`logLevel( dcache, 2, $format("FB : rl_operation firing. data_from_mem: %h rg_first_resp: %b req_from_mshr: ", tpl_1(wr_data_from_mem), rg_first_resp, fshow(req)))
 			Bit#(TLog#(num_chunks)) lv_index;
 			//For the first response from memory, since the critical data arrives first, the index to be written
 			//in the FB is computed. In the first cycle, the MSHR will definitely send a request with the
@@ -267,7 +267,7 @@ package fill_buffer;
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data, prf_index) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
 			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
-			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d index_valid: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid[valid_index] ))
+			`logLevel( dcache, 2, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d valid_bits: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid ))
 			wr_req<= req;
 			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:lineoffset_val]==rg_fb_addr) begin
 				wr_can_perform_store<= True;
