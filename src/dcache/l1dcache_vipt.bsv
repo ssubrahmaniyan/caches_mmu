@@ -66,10 +66,13 @@ package l1dcache_vipt;
                            numeric type fbsize,
                            numeric type sbsize,
                            numeric type esize,
-`ifdef ECC
+                        `ifdef dtim
+                           numeric type dtim_banks,
+                        `endif
+                        `ifdef ECC
                            numeric type ecc_wordsize,
                            numeric type ebanks,
-`endif
+                        `endif
                            numeric type dbanks,
                            numeric type tbanks
                            );
@@ -98,6 +101,10 @@ package l1dcache_vipt;
     method Bool cache_available;
     method Bool storebuffer_empty;
     interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) hold_req;
+  `ifdef dtim
+    /*doc:method: */
+    method Action ma_dtim_memory_map (Bit#(paddr) dtim_base, Bit#(paddr) dtim_bound);
+  `endif
   endinterface
 
   (*conflict_free="request_to_memory, update_fb_with_memory_response"*)
@@ -116,7 +123,8 @@ package l1dcache_vipt;
   (*conflict_free="perform_store,fence_operation"*)
   module mkl1dcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
     (Ifc_l1dcache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,sbsize,esize,
-                              `ifdef ECC ecc_wordsize,ebanks, `endif dbanks,tbanks)) 
+                    `ifdef dtim dtim_banks, `endif 
+                   `ifdef ECC ecc_wordsize,ebanks, `endif dbanks,tbanks)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth, linewidth),// linewidth is the total bits in a cache line
@@ -157,7 +165,9 @@ package l1dcache_vipt;
           Mul#(16, m__, respwidth),
           Add#(n__, TLog#(fbsize), TLog#(TAdd#(1, fbsize))),
           Add#(n__, TLog#(sbsize), TLog#(TAdd#(1, sbsize)))
-
+        `ifdef dtim
+          ,Add#(ae__, TLog#(dtim_banks), tagbits)
+        `endif
 `ifdef ECC
           ,
 	  Add#(ab__, ecc_wordsize, respwidth),
@@ -198,6 +208,9 @@ package l1dcache_vipt;
     let v_fbsize = valueOf(fbsize);
     let v_respwidth = valueOf(respwidth);
     let v_sbsize = valueOf(sbsize);
+  `ifdef dtim
+    let v_dtim_banks = valueOf(dtim_banks);
+  `endif
 
     String dcache=""; // defined for Logger
 
@@ -278,6 +291,13 @@ package l1dcache_vipt;
     // The following wire holds the physical address from TLB
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
 
+  `ifdef dtim
+    /*doc:wire: */
+    Wire#(Bit#(paddr)) wr_dtim_base <- mkWire();
+    /*doc:wire: */
+    Wire#(Bit#(paddr)) wr_dtim_bound <- mkWire();
+  `endif
+
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Wire#(Bool) wr_cache_enable <- mkWire();
     Wire#(Bit#(respwidth)) wr_resp_word <- mkUnsafeDWire(?);
@@ -317,11 +337,24 @@ package l1dcache_vipt;
       ecc_arr[i]<-mkmem_config1rw(False, "single");
 `endif
     end
+  `ifdef dtim
+    Ifc_mem_config1rw#(sets, linewidth, dbanks) dtim_arr [v_dtim_banks]; // data array
+    Vector#(sets, Reg#(Bit#(dtim_banks))) rg_dtim_valid <- replicateM(mkRegA('1));
+    `ifdef ECC
+    Ifc_mem_config1rw#(sets, (TMul#(blocksize,ecc_encoded_parity_wordsize)), ebanks) dtim_ecc_arr [v_dtim_banks]; // ecc array
+    `endif
+    for (Integer i = 0; i<v_dtim_banks; i = i + 1) begin
+      dtim_arr[i] <- mkmem_config1rw(False, "single");
+      `ifdef ECC
+      dtim_ecc_arr[i] <- mkmem_config1rw(False, "single");
+      `endif
+    end
+  `endif
     Ifc_replace#(sets, ways) repl <- mkreplace(alg);
-    Vector#(sets, Reg#(Bit#(ways))) rg_valid <- replicateM(mkReg(0));
+    Vector#(sets, Reg#(Bit#(ways))) rg_valid <- replicateM(mkRegA(0));
     Reg#(Bit#(ways)) rg_dirty[v_sets];
     for(Integer i = 0;i<v_sets;i = i+1)begin
-      rg_dirty[i] <- mkReg(0);
+      rg_dirty[i] <- mkRegA(0);
     end
     Wire#(RespState) wr_cache_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_cache_hitword <- mkDWire(0);
@@ -331,10 +364,10 @@ package l1dcache_vipt;
     Wire#(Bit#(respwidth)) wr_nc_word <- mkDWire(0);
     Wire#(Bool) wr_nc_err <- mkDWire(False);
     Wire#(Bit#(linewidth)) wr_hitline <- mkDWire(0);
-    Reg#(Bool) rg_miss_ongoing <- mkReg(False);
-    Reg#(Bool) rg_fence_stall <- mkReg(False);
-    Reg#(Bit#(TLog#(sets))) rg_latest_index <- mkReg(0);
-    Reg#(Bool) rg_replaylatest <- mkReg(False);
+    Reg#(Bool) rg_miss_ongoing <- mkRegA(False);
+    Reg#(Bool) rg_fence_stall <- mkRegA(False);
+    Reg#(Bit#(TLog#(sets))) rg_latest_index <- mkRegA(0);
+    Reg#(Bool) rg_replaylatest <- mkRegA(False);
 
 
     // ------------------------------------------------------------------------------------------//
@@ -345,21 +378,20 @@ package l1dcache_vipt;
     Reg#(Bit#(paddr)) fb_addr [v_fbsize];
     Reg#(Bit#(blocksize)) fb_enables [v_fbsize];
     Reg#(Bit#(1)) fb_dirty [v_fbsize] ;
-    Vector#(fbsize, Reg#(Bool)) fb_valid <- replicateM(mkReg(False));
+    Vector#(fbsize, Reg#(Bool)) fb_valid <- replicateM(mkRegA(False));
+  `ifdef dtim
+    /*doc:reg: False: release to RAM. True: release to DTIM*/
+    Reg#(Bool) fb_type [v_fbsize];
+  `endif
     for(Integer i = 0;i<v_fbsize;i = i+1)begin
-`ifdef ECC
-      fb_addr[i]<-mkConfigReg(0);
-      fb_enables[i]<-mkConfigReg(0);
-      fb_dataline[i]<-mkConfigReg(0);
-      fb_dirty[i]<-mkConfigReg(0);
-      fb_err[i]<-mkConfigReg(0);
-`else
-      fb_addr[i] <- mkReg(0);
-      fb_enables[i] <- mkReg(0);
-      fb_dataline[i] <- mkReg(0);
-      fb_dirty[i] <- mkReg(0);
-      fb_err[i] <- mkReg(0);
-`endif
+      fb_addr[i]<-mkConfigRegA(0);
+      fb_enables[i]<-mkConfigRegA(0);
+      fb_dataline[i]<-mkConfigRegA(0);
+      fb_dirty[i]<-mkConfigRegA(0);
+      fb_err[i]<-mkConfigRegA(0);
+    `ifdef dtim
+      fb_type[i] <- mkConfigRegA(False);
+    `endif
     end
     Wire#(RespState) wr_fb_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_fb_word <- mkDWire(0);
@@ -367,14 +399,14 @@ package l1dcache_vipt;
     Wire#(Bit#(1)) wr_fb_err <- mkDWire(0);
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
-    Reg#(Bool) rg_polling <- mkReg(False);
+    Reg#(Bool) rg_polling <- mkRegA(False);
     `ifdef pysimulate
       Wire#(Bool) wrpolling <- mkDWire(False);
     `endif
 
     // This register indicates which entry in the FB should be allocated when there is miss in the
     // FB and the cache for a given request.
-    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <- mkConfigReg(0);
+    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <- mkConfigRegA(0);
 
     // This register follows the rg_fbmissallocate register but is updated when the last word of a
     // line is filled in the FB on a miss.
@@ -383,8 +415,8 @@ package l1dcache_vipt;
 
     // This register points to the entry in the FB which needs to be written back to the cache
     // whenever possible.
-    Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <- mkReg(0);
-    Reg#(Bit#(blocksize))     rg_fbfillenable <- mkReg(0);
+    Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <- mkRegA(0);
+    Reg#(Bit#(blocksize))     rg_fbfillenable <- mkRegA(0);
     Reg#(Bool) rg_readdone <- mkDReg(False);
 
     Bit#(tagbits) writetag = fb_addr[rg_fbwriteback][v_paddr - 1:v_paddr - v_tagbits];
@@ -397,11 +429,11 @@ package l1dcache_vipt;
     // ------------------------------------------------------------------------------------------//
 
     // ----------------------------- structures for fence operation -----------------------------//
-    Reg#(Bit#(ways)) rg_way_select <- mkReg(1);
-    Reg#(Bit#(TLog#(sets))) rg_set_select <- mkReg(0);
-    Reg#(Bool) rg_fence_pending <- mkReg(False);
-    Reg#(Bool) rg_globaldirty <- mkReg(False);
-    Reg#(Bool) rg_fenceinit <- mkReg(True);
+    Reg#(Bit#(ways)) rg_way_select <- mkRegA(1);
+    Reg#(Bit#(TLog#(sets))) rg_set_select <- mkRegA(0);
+    Reg#(Bool) rg_fence_pending <- mkRegA(False);
+    Reg#(Bool) rg_globaldirty <- mkRegA(False);
+    Reg#(Bool) rg_fenceinit <- mkRegA(True);
     // ------------------------------------------------------------------------------------------//
 
     // -------------------------- Structures for store - buffer -----------------------------------//
@@ -409,21 +441,21 @@ package l1dcache_vipt;
     Reg#(Bit#(paddr)) store_addr [v_sbsize];
     Reg#(Bit#(respwidth)) store_data [v_sbsize];
     Reg#(Bit#(2)) store_size [v_sbsize];
-    Vector#(sbsize, Reg#(Bool)) store_valid <- replicateM(mkReg(False));
+    Vector#(sbsize, Reg#(Bool)) store_valid <- replicateM(mkRegA(False));
     Reg#(Bit#(TLog#(fbsize))) store_fbindex [v_sbsize];
     Reg#(Bit#(esize)) store_epoch [v_sbsize];
     Reg#(Bit#(1)) store_io [v_sbsize];
     for (Integer i = 0;i<v_sbsize;i = i+1)begin
-      store_data[i] <- mkReg(0);
-      store_valid[i] <- mkReg(False);
-      store_size[i] <- mkReg(0);
-      store_addr[i] <- mkReg(0);
-      store_fbindex[i] <- mkReg(0);
-      store_epoch[i] <- mkReg(0);
-      store_io[i] <- mkReg(0);
+      store_data[i] <- mkRegA(0);
+      store_valid[i] <- mkRegA(False);
+      store_size[i] <- mkRegA(0);
+      store_addr[i] <- mkRegA(0);
+      store_fbindex[i] <- mkRegA(0);
+      store_epoch[i] <- mkRegA(0);
+      store_io[i] <- mkRegA(0);
     end
-    Reg#(Bit#(TLog#(sbsize))) rg_storehead <- mkReg(0);
-    Reg#(Bit#(TLog#(sbsize))) rg_storetail <- mkReg(0);
+    Reg#(Bit#(TLog#(sbsize))) rg_storehead <- mkRegA(0);
+    Reg#(Bit#(TLog#(sbsize))) rg_storetail <- mkRegA(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingdata <- mkDWire(0);
     Wire#(Bit#(linewidth)) wr_upd_fillingmask <- mkDWire(0);
     Wire#(Bool) wr_store_response <- mkDWire(False);
@@ -446,12 +478,12 @@ package l1dcache_vipt;
     Reg#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line_full [v_fbsize][2];
     //Reg#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line [v_fbsize] [2];
     //Wire#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line_full [v_fbsize];
-    //Reg#(Bit#(TAdd#(1,blockbits))) rg_j  <- mkConfigReg(0);
+    //Reg#(Bit#(TAdd#(1,blockbits))) rg_j  <- mkConfigRegA(0);
     Reg#(Bit#(TAdd#(1,blockbits))) rg_j[2]  <- mkCReg(2,0);
     for(Integer i=0;i<v_fbsize;i=i+1)begin
-      fb_ecc_encoded_parity_line[i]<-mkConfigReg(0);
+      fb_ecc_encoded_parity_line[i]<-mkConfigRegA(0);
       //fb_ecc_encoded_parity_line_creg[i]<-mkCReg(2,0);
-      //fb_ecc_encoded_parity_line_full[i]<-mkConfigReg(0);
+      //fb_ecc_encoded_parity_line_full[i]<-mkConfigRegA(0);
       fb_ecc_encoded_parity_line_full[i]<-mkCReg(2,0);
       //fb_ecc_encoded_parity_line[i]<-mkDWire(0);
       //fb_ecc_encoded_parity_line_full[i]<-mkDWire(0);
@@ -462,10 +494,10 @@ package l1dcache_vipt;
     Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) junkecc=0; // bug fix
 
 
-    Reg#(Bit#(ecc_encoded_parity_linewidth)) wr_upd_fillingmask_ecc <-mkConfigReg(0);
-    Reg#(Bit#(ecc_encoded_parity_linewidth)) wr_upd_fillingdata_ecc <-mkConfigReg(0);
-    Reg#(Bit#(ecc_encoded_parity_linewidth)) rg_upd_fillingmask_ecc <-mkReg(0);
-    Reg#(Bit#(ecc_encoded_parity_linewidth)) rg_upd_fillingdata_ecc <-mkReg(0);
+    Reg#(Bit#(ecc_encoded_parity_linewidth)) wr_upd_fillingmask_ecc <-mkConfigRegA(0);
+    Reg#(Bit#(ecc_encoded_parity_linewidth)) wr_upd_fillingdata_ecc <-mkConfigRegA(0);
+    Reg#(Bit#(ecc_encoded_parity_linewidth)) rg_upd_fillingmask_ecc <-mkRegA(0);
+    Reg#(Bit#(ecc_encoded_parity_linewidth)) rg_upd_fillingdata_ecc <-mkRegA(0);
 
     Wire#(Bit#(ecc_encoded_parity_linewidth)) wr_hitline_ecc <-mkDWire(0);
 
@@ -475,7 +507,7 @@ package l1dcache_vipt;
     // ------------------------------------------------------------------------------------------//
   `ifdef ecc_test
     LFSR#(Bit#(5)) lfsr <- mkFeedLFSR('h12);
-    Reg#(Bool) rg_init <- mkReg(True);
+    Reg#(Bool) rg_init <- mkRegA(True);
     Wire#(Bit#(respwidth)) wr_err_mask <- mkWire();
     rule rl_initialize(rg_init);
       rg_init <= False;
@@ -498,6 +530,9 @@ package l1dcache_vipt;
 fbvalid:%b", fb_full, fb_empty, rg_fbwriteback, rg_fbmissallocate, readVReg(fb_valid)))
       `logLevel( dcache, 2, $format("DCACHE : sb_empty:%b sb_full:%b store_valid:%b storetail:%d \
 storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehead))
+    `ifdef dtim
+      `logLevel( dcache, 0, $format("DCACHE: DTIMBASE:%h DTIMBOUND:%h", wr_dtim_base, wr_dtim_bound))
+    `endif
 
     endrule
 
@@ -526,12 +561,12 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
         dataline[i] <- data_arr[i].read_response();
         tag[i] <- tag_arr[i].read_response();
       end
-`ifdef ECC
-	rg_upd_fillingmask_ecc <= 0;
-	rg_upd_fillingdata_ecc <= 0;
-	wr_upd_fillingmask_ecc <= 0;
-	wr_upd_fillingdata_ecc <= 0;
-`endif
+    `ifdef ECC
+    	rg_upd_fillingmask_ecc <= 0;
+    	rg_upd_fillingdata_ecc <= 0;
+    	wr_upd_fillingmask_ecc <= 0;
+    	wr_upd_fillingdata_ecc <= 0;
+    `endif
 
       for(Integer i = 0;i<v_ways;i = i+1)begin
         temp[i] = duplicate( dirty_and_valid & rg_way_select[i]) & dataline[i] ;
@@ -569,6 +604,9 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
         for(Integer j = 0;j<v_fbsize;j = j+1)begin
           fb_enables[j] <= 0;
           fb_valid[j] <= False;
+        `ifdef dtim
+          fb_type [j] <= False;
+        `endif
         end
         rg_fenceinit <= True;
         rg_fence_stall <= False;
@@ -609,50 +647,65 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       Bit#(tagbits) request_tag = pa.address[v_paddr - 1:v_paddr - v_tagbits];
       Bit#(TAdd#(3, TAdd#(wordbits, blockbits)))block_offset=
                                          {request.address[v_blockbits + v_wordbits - 1:0], 3'b0};
-`ifdef ECC
+    `ifdef ECC
       Bit#(TAdd#(TLog#(ecc_encoded_parity_wordsize),blockbits)) block_offset_ecc=(request.address[v_blockbits+v_wordbits-1:v_wordbits]); //ported bug fix
-`endif
+      Bit#(ecc_encoded_parity_linewidth) dataline_ecc[v_ways];
+    `endif
       Bit#(blockbits) word_index = request.address[v_blockbits + v_wordbits - 1:v_wordbits];
       Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                         v_blockbits + v_wordbits];
 
       Bit#(linewidth) dataline[v_ways];
-`ifdef ECC
-      Bit#(ecc_encoded_parity_linewidth) dataline_ecc[v_ways];
-`endif
       Bit#(tagbits) tag[v_ways];
       for(Integer i = 0;i<v_ways;i = i+1)begin
         tag[i] <- tag_arr[i].read_response;
         dataline[i] <- data_arr[i].read_response;
-`ifdef ECC
+    `ifdef ECC
         dataline_ecc[i]<- ecc_arr[i].read_response;
-`endif
+    `endif
       end
-      Bit#(linewidth) hitline = 0;
-`ifdef ECC
-      Bit#(ecc_encoded_parity_linewidth) hitline_ecc=0;
-`endif
-      Bit#(ways) hit = 0;
 
-/*
-      Bit#(linewidth) temp[v_ways]; // mask for each way dataline.
-      // Find the line that was hit
-      for(Integer i = 0;i<v_ways;i = i+1)begin
-        hit[i] = pack(tag[i] == request_tag && rg_valid[set_index][i] == 1);
-        temp[i] = duplicate(hit[i]) & dataline[i];
+    `ifdef dtim
+      Bit#(linewidth) dtim_line[v_dtim_banks];
+      `ifdef ECC
+      Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) dtim_line_ecc[v_dtim_banks];
+      `endif
+      for (Integer i = 0; i<v_dtim_banks; i = i + 1) begin
+        dtim_line[i] <- dtim_arr[i].read_response;
+        `ifdef ECC
+          dtim_line_ecc[i] <- dtim_ecc_arr[i].read_response;
+        `endif
       end
-      for(Integer i = 0;i<v_ways;i = i+1)
-        hitline = hitline|temp[i];
-*/
+    `endif
+
+      Bit#(linewidth) hitline = 0;
+    `ifdef ECC
+      Bit#(ecc_encoded_parity_linewidth) hitline_ecc=0;
+    `endif
+      Bit#(ways) hit = 0;
       for(Integer i = 0;i<v_ways;i = i+1)begin
         if(rg_valid[set_index][i] == 1 && request_tag == tag[i])begin
           hit[i] = 1'b1;
           hitline = dataline[i];
-`ifdef ECC
+        `ifdef ECC
           hitline_ecc=dataline_ecc[i];
-`endif
+        `endif
         end
       end
+
+    `ifdef dtim
+      Bool dtim_hit = False;
+      Bit#(TLog#(dtim_banks)) bank = (v_dtim_banks >1)?truncate(request_tag): 0; 
+      `logLevel( dcache, 0, $format("DCACHE: dtim_valid:%b paddr:%h",rg_dtim_valid[set_index][bank],pa.address))
+      if (pa.address >= wr_dtim_base && pa.address < wr_dtim_bound &&
+                                            rg_dtim_valid[set_index][bank] == 1) begin
+        dtim_hit = True;
+        hitline = dtim_line[bank];
+        `ifdef ECC
+        hitline_ecc = dtim_line_ecc[bank];
+        `endif
+      end
+    `endif
       Bool cache_hit = unpack(|(hit));
       wr_hitway <= truncate(pack(countZerosLSB(hit)));
       wr_hitline <= hitline;
@@ -691,7 +744,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       if(pa.trap || pa.tlbmiss)begin
         wr_trap_from_tlb <= True;
       end
-      else if(cache_hit)begin
+      else if(cache_hit `ifdef dtim || dtim_hit `endif )begin
         wr_cache_response <= Hit;
 `ifdef ECC
         wr_cache_hitword<=response_word_correct;
@@ -702,10 +755,14 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       else begin
         wr_cache_response <= Miss;
       end
-
+      
       `logLevel( dcache, 0, $format("DCACHE : TAGCMP for Req: ",fshow(request)))
       `logLevel( dcache, 0, $format("DCACHE : ",fshow(pa)))
       `logLevel( dcache, 1, $format("DCACHE : TAGCMP Result. Hit:%b Hitline:%h",hit, hitline))
+    `ifdef dtim
+      `logLevel( dcache, 1, $format("DCACHE: Hit in DTIM:%d set_index:%d bank:%d",dtim_hit,
+      set_index, bank))
+    `endif
       `ifdef ASSERT
         dynamicAssert(countOnes(hit) <= 1,"More than one way is a hit in the cache");
       `endif
@@ -916,6 +973,7 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
       Bit#(setbits) set_index = request.address[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                           v_blockbits + v_wordbits];
       let offset = (v_respwidth == 64) ? 2:1;
+      Bit#(tagbits) request_tag = pa.address[v_paddr - 1:v_paddr - v_tagbits];
       Bit#(TLog#(respwidth)) loadoffset = {request.address[v_wordbits - 1:0], 3'b0};// TODO parameterize for XLEN
       if(wr_cache_response == Hit)begin
         word = wr_cache_hitword;
@@ -973,14 +1031,28 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
         fb_err[rg_fbmissallocate] <= 0;
         fb_enables[rg_fbmissallocate] <= '1;
         fb_dataline[rg_fbmissallocate] <= wr_hitline;
-`ifdef ECC
-	fb_ecc_encoded_parity_line[rg_fbmissallocate]<= wr_hitline_ecc; // bug fix
-`endif
+      `ifdef ECC
+      	fb_ecc_encoded_parity_line[rg_fbmissallocate]<= wr_hitline_ecc; // bug fix
+      `endif
         fb_dirty[rg_fbmissallocate] <= rg_dirty[set_index][wr_hitway];
+      `ifdef dtim
+        Bit#(TLog#(dtim_banks)) bank = (v_dtim_banks >1)?truncate(request_tag): 0; 
+        if(pa.address >= wr_dtim_base && pa.address < wr_dtim_bound)
+          fb_type[rg_fbmissallocate] <= True;
+        else
+          fb_type[rg_fbmissallocate] <= False;
+        if(pa.address >= wr_dtim_base && pa.address < wr_dtim_bound)
+          rg_dtim_valid[set_index][bank] <= 1'b0;
+        else begin
+          rg_valid[set_index][wr_hitway] <= 1'b0;
+          rg_dirty[set_index][wr_hitway] <= 1'b0;
+        end
+      `else
         rg_valid[set_index][wr_hitway] <= 1'b0;
         rg_dirty[set_index][wr_hitway] <= 1'b0;
-        `ifdef ASSERT
-          dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill - buffer on \
+      `endif
+      `ifdef ASSERT
+        dynamicAssert(!fb_valid[rg_fbmissallocate],"Allocating valid entry in fill - buffer on \
 Cache Hit");
         `endif
       end
@@ -1076,9 +1148,9 @@ pack(wr_fb_response), pack(wr_nc_response)))
         fb_err[rg_fbmissallocate] <= 0;
         fb_enables[rg_fbmissallocate] <= 0;
         fb_dirty[rg_fbmissallocate] <= 0;
-`ifdef ECC
-	fb_ecc_encoded_parity_line[rg_fbmissallocate] <= 0; //bug fix
-`endif
+      `ifdef ECC
+      	fb_ecc_encoded_parity_line[rg_fbmissallocate] <= 0; //bug fix
+      `endif
         ff_fb_fillindex.enq(rg_fbmissallocate);
         `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", pa.address))
         `logLevel( dcache, 1, $format("DCACHE : Allocating FBindex:", rg_fbmissallocate))
@@ -1207,7 +1279,6 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         dynamicAssert(response.last,"Why is IO response a burst");
       `endif
     endrule
-
     // This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
     // Multiple conditions under which this rule can fire:
     // 1. when the FB is full
@@ -1236,22 +1307,38 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       let waynum <- repl.line_replace(set_index, rg_valid[set_index], rg_dirty[set_index]);
       // the line being replaced is dirty then evict it.
       if(fb_err[rg_fbwriteback] == 0)begin
+      `ifdef dtim
+        Bit#(TLog#(dtim_banks)) bank = (v_dtim_banks >1)?truncate(tag): 0; 
+        if( fb_type[rg_fbwriteback] ) begin // release to dtim
+          dtim_arr[bank].request(1,set_index,writedata);
+          `ifdef ECC
+          dtim_ecc_arr[bank].request(1,set_index, writeecc);
+          `endif
+          rg_fbwriteback <= rg_fbwriteback + 1;
+          fb_valid[rg_fbwriteback] <= False;
+          fb_type[rg_fbwriteback] <= False;
+          rg_dtim_valid[set_index][bank] <= 1'b1;
+          `logLevel( dcache, 1, $format("DCACHE: FBRelease to DTIM. Set_index:%d bank:%d Line:%h",
+                                          set_index, bank, writedata))
+        end
+        else
+      `endif
         if((rg_valid[set_index][waynum] & rg_dirty[set_index][waynum]) == 1 && !rg_readdone)begin
           `logLevel( dcache, 1, $format("DCACHE : FBRelease. ReadPhase. index:%d",set_index))
           tag_arr[waynum].request(0, set_index, writetag);
           data_arr[waynum].request(0, set_index, writedata);
-`ifdef ECC
+      `ifdef ECC
           ecc_arr[waynum].request(0,set_index,writeecc);
-`endif
+      `endif
           rg_readdone <= True;
         end
         else if((rg_valid[set_index][waynum] & rg_dirty[set_index][waynum]) != 1 || rg_readdone)begin
           Bit#(TSub#(paddr, TAdd#(tagbits, setbits))) zeros = 'd0;
           let dirtytag <- tag_arr[waynum].read_response;
           let dirtydata <- data_arr[waynum].read_response;
-`ifdef ECC
+        `ifdef ECC
           let dirtyecc<-ecc_arr[waynum].read_response;
-`endif
+        `endif
           Bit#(paddr) final_address={dirtytag, set_index, zeros};
           if(rg_readdone)begin
             `logLevel( dcache, 1, $format("DCACHE : FBRelease. Evict Addr:%h Data:%h",
@@ -1266,11 +1353,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
           end
           rg_valid[set_index][waynum] <= 1'b1;
           rg_dirty[set_index][waynum] <= fb_dirty[rg_fbwriteback];
-`ifdef ECC
+        `ifdef ECC
           ecc_arr[waynum].request(1,set_index,writeecc);
-	  //fb_ecc_encoded_parity_line[rg_fbwriteback][1] <= 0; //bug fix
-	  //fb_ecc_encoded_parity_line[rg_fbwriteback] <= 0; //bug fix
-`endif
+        `endif
           tag_arr[waynum].request(1, set_index, writetag);
           data_arr[waynum].request(1, set_index, writedata);
           rg_fbwriteback <= rg_fbwriteback + 1;
@@ -1306,9 +1391,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       for(Integer i = 0;i<v_ways;i = i+1)begin
         data_arr[i].request(0, rg_latest_index, writedata);
         tag_arr[i].request(0, rg_latest_index, writetag);
-`ifdef ECC
-	ecc_arr[i].request(0,rg_latest_index,writeecc);
-`endif
+      `ifdef ECC
+      	ecc_arr[i].request(0,rg_latest_index,writeecc);
+      `endif
       end
       `logLevel( dcache, 1, $format("DCACHE : Replaying last request for index:%d", rg_latest_index))
     endrule
@@ -1338,6 +1423,14 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
           //ecc_arr[i].request(0,set_index,writeecc); //bug fix
 `endif
         end
+        `ifdef dtim
+        for (Integer i = 0; i<v_dtim_banks; i = i + 1) begin
+          `ifdef ECC
+          dtim_ecc_arr[i].request(1'b0, set_index, ?);
+          `endif
+          dtim_arr[i].request(1'b0, set_index, ?);
+        end
+        `endif
         wr_takingrequest <= True;
         `logLevel( dcache, 0, $format("DCACHE : Receiving request: ",fshow(req)))
         rg_latest_index <= set_index;
@@ -1479,6 +1572,13 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                   !rg_replaylatest &&  !rg_fence_stall && !fb_full && !sb_full;
     method storebuffer_empty = sb_empty;
     interface hold_req = toGet(ff_hold_request);
+  `ifdef dtim
+    /*doc:method: */
+    method Action ma_dtim_memory_map (Bit#(paddr) dtim_base, Bit#(paddr) dtim_bound);
+      wr_dtim_base <= dtim_base;
+      wr_dtim_bound <= dtim_bound;
+    endmethod
+  `endif
   endmodule
 
 //  function Bool isIO(Bit#(32) addr, Bool cacheable);

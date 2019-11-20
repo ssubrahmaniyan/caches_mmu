@@ -66,10 +66,13 @@ package l1icache_vipt;
                            numeric type vaddr,
                            numeric type fbsize,
                            numeric type esize, 
-`ifdef ECC
-			   numeric type ecc_wordsize,
+                        `ifdef ECC
+                        	 numeric type ecc_wordsize,
                            numeric type ebanks,
-`endif
+                        `endif
+                        `ifdef itim
+                           numeric type itim_banks,
+                        `endif
                            numeric type dbanks,
                            numeric type tbanks,
                            numeric type buswidth
@@ -82,6 +85,13 @@ package l1icache_vipt;
     interface Get#(ICache_mem_request#(paddr)) nc_read_req;
     interface Put#(ICache_mem_response#(TMul#(wordsize,8))) nc_read_resp;
     interface Put#(ITLB_core_response#(paddr)) pa_from_tlb;
+  `ifdef itim
+    interface Put#(ITIM_mem_req#(paddr,TMul#(wordsize,8))) mem_itim_req;
+    interface Get#(ITIM_mem_resp#(TMul#(wordsize,8))) mem_read_itim_resp;
+    interface Get#(Bool) mem_write_itim_resp;
+    /*doc:method: */
+    method Action ma_itim_memory_map (Bit#(paddr) base, Bit#(paddr) bound);
+  `endif
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
@@ -96,8 +106,13 @@ package l1icache_vipt;
   (*conflict_free="request_to_memory,fence_operation"*)
   (*conflict_free="request_to_memory,release_from_FB"*)
   (*conflict_free="respond_to_core,release_from_FB"*)
+`ifdef itim
+  (*preempts="core_req_put,rl_itim_access_initiate"*)
+`endif
   module mkl1icache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), parameter String alg)
-    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,`ifdef ECC ecc_wordsize, ebanks, `endif dbanks,tbanks,buswidth)) 
+    (Ifc_l1icache#(wordsize,blocksize,sets,ways,paddr,vaddr,fbsize,esize,
+    `ifdef ECC ecc_wordsize, ebanks, `endif 
+    `ifdef itim itim_banks, `endif dbanks,tbanks,buswidth)) 
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -137,6 +152,10 @@ package l1icache_vipt;
           Mul#(TDiv#(linewidth, 8), 8, linewidth),
           Add#(j__, TDiv#(linewidth, 8), linewidth),
           Add#(k__, TLog#(ways), TLog#(TAdd#(1, ways)))
+
+          `ifdef itim
+          , Add#(ah__, TLog#(itim_banks), tagbits)
+          `endif
 `ifdef ECC 
 	  ,
 
@@ -183,6 +202,9 @@ package l1icache_vipt;
     let v_tagbits=valueOf(tagbits);
     let v_paddr=valueOf(paddr);
     let v_ways=valueOf(ways);
+  `ifdef itim
+    let v_itim_banks = valueOf(itim_banks);
+  `endif
     let v_wordsize=valueOf(wordsize);
     let v_blocksize=valueOf(blocksize);
     let v_fbsize=valueOf(fbsize);
@@ -232,6 +254,16 @@ package l1icache_vipt;
     // This fifo stores the response from the next level memory.
     FIFOF#(ICache_mem_response#(respwidth)) ff_nc_read_response  <- mkBypassFIFOF();
 
+  `ifdef itim
+    FIFOF#(ITIM_mem_req#(paddr, respwidth)) ff_itim_req <- mkSizedFIFOF(2);
+    FIFOF#(ITIM_mem_resp#(respwidth)) ff_read_itim_resp <- mkBypassFIFOF();
+    /*doc:fifo: */
+    FIFOF#(Bool) ff_write_itim_resp <- mkBypassFIFOF();
+    /*doc:reg: */
+    Reg#(Bool) rg_itim_in_progress <- mkRegA(False);
+  `endif
+    
+
     // The following wire holds the physical address from TLB
     //Wire#(Tuple3#(Bit#(paddr),Bool,Bit#(6))) wr_from_tlb <- mkWire();
     FIFOF#(ITLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
@@ -252,22 +284,47 @@ package l1icache_vipt;
 
    
     // ------------------------ Structures required for cache RAMS ------------------------------//
-`ifdef ECC
+  `ifdef ECC
     Ifc_mem_config1rw#(sets, (TMul#(blocksize,ecc_encoded_parity_wordsize)), ebanks) ecc_arr [v_ways]; // ecc array
-`endif
+  `endif
     Ifc_mem_config1rw#(sets, linewidth, dbanks) data_arr [v_ways]; // data array
     Ifc_mem_config1rw#(sets, tagbits, tbanks) tag_arr [v_ways];// one extra valid bit
+
+  `ifdef itim
+    Ifc_mem_config1rw#(sets, linewidth, dbanks) itim_arr [v_itim_banks];
+    `ifdef ECC
+    Ifc_mem_config1rw#(sets, (TMul#(blocksize,ecc_encoded_parity_wordsize)), ebanks) itim_ecc_arr [v_itim_banks]; // ecc array
+    `endif
+  `endif
+
     for(Integer i=0;i<v_ways;i=i+1)begin
       data_arr[i]<-mkmem_config1rw(False, "single"); 
       tag_arr[i]<-mkmem_config1rw(False, "single");
-`ifdef ECC
+    `ifdef ECC
       ecc_arr[i]<-mkmem_config1rw(False, "single");
-`endif
+    `endif
     end
+    
+    `ifdef itim
+    for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+      itim_arr[i] <- mkmem_config1rw(False, "single");
+      `ifdef ECC
+      itim_ecc_arr[i] <- mkmem_config1rw(False, "single");
+      `endif
+    end
+    `endif
+
+    `ifdef itim
+    /*doc:wire: */
+    Wire#(Bit#(paddr)) wr_itim_base <- mkWire();
+    /*doc:wire: */
+    Wire#(Bit#(paddr)) wr_itim_bound <- mkWire();
+    `endif
+
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
     Reg#(Bit#(ways)) rg_valid[v_sets];
     for(Integer i=0;i<v_sets;i=i+1)begin
-      rg_valid[i]<-mkReg(0);
+      rg_valid[i]<-mkRegA(0);
     end
     Wire#(RespState) wr_ram_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_ram_hitword <-mkDWire(0);
@@ -276,10 +333,10 @@ package l1icache_vipt;
     // ------------------------------------------------------------------------------------------//
 
     // -------------------------- Common State control structures -------------------------------//
-    Reg#(Bool) rg_miss_ongoing <- mkReg(False);
-    Reg#(Bool) rg_fence_stall <- mkReg(False);
-    Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkReg(0);
-    Reg#(Bool) rg_replaylatest<-mkReg(False);
+    Reg#(Bool) rg_miss_ongoing <- mkRegA(False);
+    Reg#(Bool) rg_fence_stall <- mkRegA(False);
+    Reg#(Bit#(TLog#(sets))) rg_latest_index<- mkRegA(0);
+    Reg#(Bool) rg_replaylatest<-mkRegA(False);
     Wire#(Bool) wr_access_fault <- mkDWire(False);
     // ----------------------------------------------------------------------------------------- //
 
@@ -295,19 +352,19 @@ package l1icache_vipt;
     Reg#(Bit#(paddr)) fb_addr [v_fbsize];
     Reg#(Bit#(blocksize)) fb_enables [v_fbsize];
     Reg#(Bit#(1)) fb_err [v_fbsize];
-    Vector#(fbsize,Reg#(Bool)) fb_valid<-replicateM(mkReg(False));
+    Vector#(fbsize,Reg#(Bool)) fb_valid<-replicateM(mkRegA(False));
     for(Integer i=0;i<v_fbsize;i=i+1)begin
-`ifdef ECC
-      fb_addr[i]<-mkConfigReg(0);
-      fb_enables[i]<-mkConfigReg(0);
-      fb_dataline[i]<-mkConfigReg(0);
-      fb_err[i]<-mkConfigReg(0);
-`else
-      fb_addr[i]<-mkReg(0);
-      fb_enables[i]<-mkReg(0);
-      fb_dataline[i]<-mkReg(0);
-      fb_err[i]<-mkReg(0);
-`endif
+    `ifdef ECC
+      fb_addr[i]<-mkConfigRegA(0);
+      fb_enables[i]<-mkConfigRegA(0);
+      fb_dataline[i]<-mkConfigRegA(0);
+      fb_err[i]<-mkConfigRegA(0);
+    `else
+      fb_addr[i]<-mkRegA(0);
+      fb_enables[i]<-mkRegA(0);
+      fb_dataline[i]<-mkRegA(0);
+      fb_err[i]<-mkRegA(0);
+    `endif
     end
     Wire#(RespState) wr_fb_response <- mkDWire(None);
     Wire#(Bit#(respwidth)) wr_fb_word <-mkDWire(0);
@@ -315,24 +372,24 @@ package l1icache_vipt;
     Reg#(Bool) rg_fb_err <-mkDReg(False);
     // this register is used to ensure that the cache does not do a tag match when FB is polling on
     // a line for the requested word.
-    Reg#(Bool) rg_polling <-mkReg(False);
+    Reg#(Bool) rg_polling <-mkRegA(False);
     `ifdef pysimulate
       Wire#(Bool) wrpolling<-mkDWire(False);
     `endif
 
     // This register indicates which entry in the FB should be allocated when there is miss in the
     // FB and the cache for a given request.
-    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <-mkReg(0);
+    Reg#(Bit#(TLog#(fbsize))) rg_fbmissallocate <-mkRegA(0);
 
     // This register follows the rg_fbmissallocate register but is updated when the last word of a
     // line is filled in the FB on a miss.
-    // Reg#(Bit#(TLog#(fbsize))) rg_fbbeingfilled <-mkReg(0);
+    // Reg#(Bit#(TLog#(fbsize))) rg_fbbeingfilled <-mkRegA(0);
     FIFOF#(Bit#(TLog#(fbsize))) ff_fb_fillindex<-mkSizedFIFOF(2);
 
     // This register points to the entry in the FB which needs to be written back to the cache
     // whenever possible.
-    Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <-mkReg(0);
-    Reg#(Bit#(blocksize))     rg_fbfillenable <- mkReg(0);
+    Reg#(Bit#(TLog#(fbsize))) rg_fbwriteback <-mkRegA(0);
+    Reg#(Bit#(blocksize))     rg_fbfillenable <- mkRegA(0);
 
     Bool fb_full= (all(isTrue,readVReg(fb_valid)));
     Bool fb_empty=!(any(isTrue,readVReg(fb_valid)));
@@ -346,7 +403,12 @@ package l1icache_vipt;
     // ----------------------------- Structures for MMU support ---------------------------------//
     Wire#(Bool) wr_trap_from_tlb <- mkDWire(False);
     // ------------------------------------------------------------------------------------------//
-
+  `ifdef itim
+    Bit#(linewidth) itim_writedata=0;
+    `ifdef ECC
+    Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) itim_writeecc=0;
+    `endif
+  `endif
 
     /**************************************ECC Hamming Encoded Parity structures******************/
 
@@ -355,12 +417,13 @@ package l1icache_vipt;
     Reg#(Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize))) fb_ecc_encoded_parity_line_full [v_fbsize];
     Reg#(Bit#(TAdd#(1,blockbits))) rg_j[2]  <- mkCReg(2,0);
     for(Integer i=0;i<v_fbsize;i=i+1)begin
-      fb_ecc_encoded_parity_line[i]<-mkConfigReg(0);
-      fb_ecc_encoded_parity_line_full[i]<-mkConfigReg(0);
+      fb_ecc_encoded_parity_line[i]<-mkConfigRegA(0);
+      fb_ecc_encoded_parity_line_full[i]<-mkConfigRegA(0);
     end
     
     Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) writeecc=fb_ecc_encoded_parity_line[rg_fbwriteback];
     Bit#(TMul#(blocksize,ecc_encoded_parity_wordsize)) junkecc=0;   
+    
 
     Wire#(Bit#(ecc_encoded_parity_linewidth)) wr_hitline_ecc <-mkDWire(0);
 
@@ -467,32 +530,46 @@ package l1icache_vipt;
           !ff_core_request.first.fence);
       let req =ff_core_request.first();
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={req.address[v_blockbits+v_wordbits-1:0],3'b0};
-`ifdef ECC
+    `ifdef ECC
       Bit#(TAdd#(TLog#(ecc_encoded_parity_wordsize),blockbits)) block_offset_ecc=(req.address[v_blockbits+v_wordbits-1:v_wordbits]); //ported bug fix
-`endif
+    `endif
       Bit#(blockbits) word_index= req.address[v_blockbits+v_wordbits-1:v_wordbits];
       let pa = ff_from_tlb.first;
       Bit#(tagbits) request_tag = pa.address[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       Bit#(linewidth) dataline[v_ways];
-`ifdef ECC
+    `ifdef ECC
       //Bit#(ecc_encoded_parity_linewidth) dataline_ecc[v_ways];
       Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) dataline_ecc[v_ways];
-`endif
+    `endif
       Bit#(tagbits) tag[v_ways];
       for(Integer i=0;i<v_ways;i=i+1)begin
         tag[i]<- tag_arr[i].read_response;
         dataline[i]<- data_arr[i].read_response;
-`ifdef ECC
+      `ifdef ECC
         dataline_ecc[i]<- ecc_arr[i].read_response;
-`endif
+      `endif
       end
+
+    `ifdef itim
+      Bit#(linewidth) itim_line[v_itim_banks];
+      `ifdef ECC
+      Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) itim_line_ecc[v_itim_banks];
+      `endif
+      for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+        itim_line[i] <- itim_arr[i].read_response;
+        `ifdef ECC
+          itim_line_ecc[i] <- itim_ecc_arr[i].read_response;
+        `endif
+      end
+    `endif
+
       Bit#(linewidth) hitline=0;
-`ifdef ECC
+    `ifdef ECC
       //Bit#(ecc_encoded_parity_linewidth) hitline_ecc=0;
       Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) hitline_ecc=0;
-`endif
+    `endif
       Bit#(ways) hit=0;
 
 /*
@@ -509,17 +586,30 @@ package l1icache_vipt;
         if(rg_valid[set_index][i]==1 && request_tag==tag[i])begin
           hit[i]=1'b1;
           hitline=dataline[i];
-`ifdef ECC
+        `ifdef ECC
           hitline_ecc=dataline_ecc[i];
-`endif
+        `endif
         end
       end
+
+    `ifdef itim
+      Bool itim_hit = False;
+      Bit#(TLog#(itim_banks)) bank = (v_itim_banks >1)?truncate(request_tag): 0; 
+      if (pa.address >= wr_itim_base && pa.address < wr_itim_bound) begin
+        itim_hit = True;
+        hitline = itim_line[bank];
+        `ifdef ECC
+        hitline_ecc = itim_line_ecc[bank];
+        `endif
+      end
+    `endif
+
       Bool cache_hit=unpack(|(hit));
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit)));
 
       Bit#(respwidth) response_word=truncate(hitline>>block_offset) `ifdef ecc_test ^ wr_err_mask `endif ;
 
-`ifdef ECC
+    `ifdef ECC
       let m= valueOf(TDiv#(buswidth,respwidth));
       Bit#(ecc_encoded_parity_wordsize) response_word_ecc = 0;
       Bit#(TAdd#(1, TLog#(ecc_wordsize))) decoded_parity = 0;
@@ -546,18 +636,18 @@ package l1icache_vipt;
         end
       end
       wr_resp_ecc_fault <= resp_ecc_fault;
-`endif
+    `endif
 
       if(pa.trap) begin
         wr_trap_from_tlb<=True;
       end
-      else if(cache_hit)begin
+      else if(cache_hit `ifdef itim || itim_hit `endif )begin
         wr_ram_response<=Hit;
-`ifdef ECC
+      `ifdef ECC
         wr_ram_hitword<=response_word_correct;
-`else
+      `else
         wr_ram_hitword<=response_word;
-`endif
+      `endif
       end
       else begin
         wr_ram_response<=Miss;
@@ -870,21 +960,94 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       fb_valid[rg_fbwriteback]<=False;
     endrule
 
-    rule replay_latest_request(rg_replaylatest);
+    rule replay_latest_request(rg_replaylatest `ifdef itim && !rg_itim_in_progress `endif );
       rg_replaylatest<=False;
       for(Integer i=0;i<v_ways;i=i+1)begin
-`ifdef ECC
+      `ifdef ECC
         ecc_arr[i].request(1'b0,rg_latest_index,writeecc);
-`endif
+      `endif
         data_arr[i].request(1'b0,rg_latest_index,writedata);
         tag_arr[i].request(1'b0,rg_latest_index,writetag);
       end
+
+    `ifdef itim
+      for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+        `ifdef ECC
+        itim_ecc_arr[i].request(1'b0, rg_latest_index, itim_writeecc);
+        `endif
+        itim_arr[i].request(1'b0, rg_latest_index, itim_writedata);
+      end
+    `endif
       `logLevel( icache, 1, $format("ICACHE : Replaying last request for index:%d", rg_latest_index))
     endrule
 
+  `ifdef itim
+    /*doc:rule: */
+    rule rl_itim_access_initiate(!rg_replaylatest && !ff_core_request.notEmpty &&
+                                                                            !rg_itim_in_progress);
+      `logLevel( icache, 0, $format("ICACHE: ITIM Req:",fshow(ff_itim_req.first)))
+      let req = ff_itim_req.first;
+      Bit#(setbits) set_index=req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+        `ifdef ECC
+        itim_ecc_arr[i].request(1'b0, set_index, itim_writeecc);
+        `endif
+        itim_arr[i].request(1'b0, set_index, ?);
+      end
+      rg_itim_in_progress <= True;
+    endrule
+
+    /*doc:rule: */
+    rule rl_itim_access_response(rg_itim_in_progress);
+      rg_itim_in_progress <= False;
+      let req = ff_itim_req.first;
+      Bit#(setbits) set_index=req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      Bit#(tagbits) request_tag = req.address[v_paddr-1:v_paddr-v_tagbits];
+      ff_itim_req.deq;
+
+      Bit#(linewidth) itim_line[v_itim_banks];
+      `ifdef ECC
+      Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) itim_line_ecc[v_itim_banks];
+      `endif
+      for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+        itim_line[i] <- itim_arr[i].read_response;
+        `ifdef ECC
+          itim_line_ecc[i] <- itim_ecc_arr[i].read_response;
+        `endif
+      end
+      Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={req.address[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(linewidth) hitline=0;
+    `ifdef ECC
+      Bit#(TMul#(blocksize, ecc_encoded_parity_wordsize)) hitline_ecc=0;
+    `endif
+      Bit#(TLog#(itim_banks)) bank = (v_itim_banks >1)?truncate(request_tag): 0; 
+      hitline = itim_line[bank];
+      `ifdef ECC
+      hitline_ecc = itim_line_ecc[bank];
+      `endif
+      Bit#(respwidth) response_word = truncate(hitline>>block_offset);
+      if(req.access == 0)
+        ff_read_itim_resp.enq(ITIM_mem_resp{data: response_word, err: False});
+      else
+        ff_write_itim_resp.enq(False);
+      if(req.access == 1) begin
+        Bit#(respwidth) temp = req.size[1 : 0] == 0?'hFF :
+                               req.size[1 : 0] == 1?'hFFFF :
+                               req.size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+        Bit#(linewidth) mask = zeroExtend(temp);
+        mask = mask<<block_offset;
+        Bit#(linewidth) masked_data = (duplicate(req.data) & mask) | (~mask&hitline); // bug fix
+        itim_arr[bank].request(1'b1,set_index,masked_data);
+      end
+
+      `logLevel( icache, 0, $format("ICACHE: ITIM Resp:%h",response_word))
+    endrule
+  `endif
     interface core_req=interface Put
       method Action put(ICache_request#(vaddr,esize) req)if( ff_core_response.notFull &&
-                                !rg_replaylatest &&  !rg_fence_stall && !fb_full);
+               !rg_replaylatest &&  !rg_fence_stall && !fb_full 
+               `ifdef itim && !rg_itim_in_progress `endif );
         `ifdef perfmonitors
           wr_total_access<=1;
         `endif
@@ -892,12 +1055,20 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin
-`ifdef ECC
+        `ifdef ECC
           ecc_arr[i].request(1'b0,set_index,writeecc);
-`endif
+        `endif
           data_arr[i].request(1'b0,set_index,writedata);
           tag_arr[i].request(1'b0,set_index,writetag);
         end
+        `ifdef itim
+        for (Integer i = 0; i<v_itim_banks; i = i + 1) begin
+          `ifdef ECC
+          itim_ecc_arr[i].request(1'b0, set_index, itim_writeecc);
+          `endif
+          itim_arr[i].request(1'b0, set_index, itim_writedata);
+        end
+        `endif
         wr_takingrequest<=True;
         `logLevel( icache, 0, $format("ICACHE : Receiving request: ",fshow(req)))
         rg_latest_index<=set_index;
@@ -953,6 +1124,16 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       method Bit#(5) perf_counters;
         return {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_misses,wr_total_access};
       endmethod
+    `endif
+    `ifdef itim
+      /*doc:method: */
+      method Action ma_itim_memory_map (Bit#(paddr) base, Bit#(paddr) bound);
+        wr_itim_base <= base;
+        wr_itim_bound <= base;
+      endmethod
+      interface mem_itim_req = toPut(ff_itim_req);
+      interface mem_read_itim_resp = toGet(ff_read_itim_resp);
+      interface mem_write_itim_resp = toGet(ff_write_itim_resp);
     `endif
   endmodule
  
