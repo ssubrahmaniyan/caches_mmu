@@ -450,6 +450,9 @@ package l1icache_vipt;
     rule display_stuff;
       `logLevel( icache, 2, $format("ICACHE: fbfull:%b fbempty:%b rgfbwb:%d rgfbmiss:%d", fb_full,
                                                       fb_empty, rg_fbwriteback, rg_fbmissallocate))
+    `ifdef itim
+      `logLevel( icache, 0, $format("ICACHE: ITIMBASE:%h ITIMBOUND:%h",wr_itim_base, wr_itim_bound))
+    `endif
     endrule
 
     // This rull fires when the fence operation is signalled by the core. For the i-cache this rule
@@ -655,6 +658,10 @@ package l1icache_vipt;
       `logLevel( icache, 0, $format("ICACHE : TAGCMP for Req: ",fshow(req)))
       `logLevel( icache, 0, $format("ICACHE : ",fshow(pa)))
       `logLevel( icache, 1, $format("ICACHE : TAGCMP Result. Hit:%b Hitline:%h",hit, hitline))
+
+      `ifdef itim
+        `logLevel( icache, 0, $format("ICACHE: ITIM_HIT:%b", itim_hit))
+      `endif
 
       `ifdef ASSERT
         dynamicAssert(countOnes(hit)<=1,"More than one way is a hit in the cache");
@@ -1129,7 +1136,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
       /*doc:method: */
       method Action ma_itim_memory_map (Bit#(paddr) base, Bit#(paddr) bound);
         wr_itim_base <= base;
-        wr_itim_bound <= base;
+        wr_itim_bound <= bound;
       endmethod
       interface mem_itim_req = toPut(ff_itim_req);
       interface mem_read_itim_resp = toGet(ff_read_itim_resp);
