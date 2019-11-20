@@ -8,6 +8,12 @@ BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(DIR)
 BSVOUTDIR:=./bin
 
 define_macros += -D Addr_space=25
+ifeq ($(ITIM), enable)
+	override define_macros += -D itim
+endif
+ifeq ($(DTIM), enable)
+	override define_macros += -D dtim
+endif
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
@@ -40,7 +46,7 @@ override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCK
 								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) -D dsbsize=$(DSBSIZE)\
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
-								-D dbuswidth=$(XLEN)
+								-D dbuswidth=$(XLEN) -D dtim_ways=$(DTIMWAYS)
 
 ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
     VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout \
@@ -56,7 +62,7 @@ verilate_fast := OPT_SLOW="-O3" OPT_FAST="-O3"
 VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x-initial fast \
 --noassert --cc $(TOP_MODULE).v sim_main.cpp --bbox-sys -Wno-STMTDLY -Wno-UNOPTFLAT -Wno-WIDTH \
 -Wno-lint -Wno-COMBDLY -Wno-INITIALDLY --autoflush $(coverage) $(trace) --threads $(THREADS) \
--DBSV_RESET_FIFO_HEAD -DBSV_RESET_FIFO_ARRAY --output-split 20000 --output-split-ctrace 10000
+-DBSV_RESET_FIFO_HEAD -DBSV_RESET_FIFO_ARRAY --output-split 20000 --output-split-ctrace 10000 -DVERBOSE
 
 BSC_CMD:= bsc -u -verilog -elab
 BSVCOMPILEOPTS:= +RTS -K40000M -RTS -check-assert  -keep-fires -opt-undetermined-vals \

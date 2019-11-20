@@ -59,6 +59,7 @@ package imem;
   module mkicache(Ifc_l1icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr, 
                                          `ifbsize, `iesize, 
                                      `ifdef ECC 32, 1, `endif 
+                                     `ifdef itim `itim_banks, `endif
                                         `idbanks, `itbanks, `ibuswidth));
     let ifc();
   `ifdef icache
@@ -114,6 +115,13 @@ package imem;
     method Bit#(1) mv_itlb_perf_counters;
   `endif
 `endif
+  `ifdef itim
+    interface Put#(ITIM_mem_req#(`paddr,TMul#(`iwords,8))) mem_itim_req;
+    interface Get#(ITIM_mem_resp#(TMul#(`iwords,8))) mem_read_itim_resp;
+    interface Get#(Bool) mem_write_itim_resp;
+    /*doc:method: */
+    method Action ma_itim_memory_map (Bit#(`paddr) base, Bit#(`paddr) bound);
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -167,6 +175,13 @@ package imem;
     method mv_itlb_perf_counters = itlb.mv_perf_counters;
   `endif
 `endif
+  `ifdef itim
+    interface mem_itim_req = icache.mem_itim_req;
+    interface mem_read_itim_resp = icache.mem_read_itim_resp;
+    interface mem_write_itim_resp = icache.mem_write_itim_resp;
+    /*doc:method: */
+    method ma_itim_memory_map = icache.ma_itim_memory_map;
+  `endif
   endmodule
 endpackage
 

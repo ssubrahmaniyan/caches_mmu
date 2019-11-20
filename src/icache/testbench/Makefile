@@ -8,6 +8,9 @@ BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(DIR)
 BSVOUTDIR:=./bin
 
 define_macros += -D Addr_space=25
+ifeq ($(ITIM), enable)
+	override define_macros += -D itim
+endif
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
@@ -40,7 +43,7 @@ override define_macros += -D ASSERT=True -D iwords=$(IWORDS) -D iblocks=$(IBLOCK
 								-D iesize=$(IESIZE) -D idbanks=$(IDBANKS) -D itbanks=$(ITBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D itlbsize=$(ITLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(XLEN)
+								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(XLEN) -D itim_banks=$(ITIM_BANKS)
 
 ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
   VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout

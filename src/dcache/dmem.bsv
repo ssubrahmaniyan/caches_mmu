@@ -58,6 +58,7 @@ package dmem;
   (*synthesize*)
   module mkdcache(Ifc_l1dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,`dfbsize,
                                                       `dsbsize, `desize, 
+                                `ifdef dtim `dtim_banks, `endif
                                 `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks ));
     let ifc();
   `ifdef dcache
@@ -118,6 +119,10 @@ package dmem;
     method Bit#(1) mv_dtlb_perf_counters ;
   `endif
 `endif
+  `ifdef dtim
+    /*doc:method: */
+    method Action ma_dtim_memory_map (Bit#(`paddr) dtim_base, Bit#(`paddr) dtim_bound);
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -209,6 +214,10 @@ package dmem;
     method mv_dtlb_perf_counters = dtlb.mv_perf_counters;
   `endif
 `endif
+  `ifdef dtim
+    /*doc:method: */
+    method ma_dtim_memory_map = dcache.ma_dtim_memory_map;
+  `endif
   endmodule
 endpackage
 

@@ -104,6 +104,19 @@ package dmem_tb;
     dmem.ma_mstatus_from_csr('h0);
   endrule
 `endif
+
+`ifdef dtim
+  /*doc:rule: */
+  rule rl_send_dtim_address;
+    dmem.ma_dtim_memory_map('h8000,'h9000);
+  endrule
+`endif
+`ifdef itim
+  /*doc:rule: */
+  rule rl_send_itim_address;
+    dmem.ma_itim_memory_map(0,0);
+  endrule
+`endif
   
   Wire#(Bool) wr_cache_avail <- mkWire();
 
@@ -184,7 +197,7 @@ package dmem_tb;
       Bool metafail=False;
       Bool datafail=False;
   
-      if(expected_data!=resp.word)begin
+      if(expected_data!=resp.word `ifdef dtim && readwrite == 0 `endif )begin
           `logLevel( tb, 0, $format("TB: Output from cache is wrong for Req: %h",req))
           `logLevel( tb, 0, $format("TB: Expected: %h, Received: %h",expected_data,resp.word))
           datafail=True;

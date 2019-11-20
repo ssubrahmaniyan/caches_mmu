@@ -30,6 +30,20 @@ Details:
 */
 package cache_types;
 
+  `ifdef itim
+  typedef struct{
+    Bit#(addr) address;
+    Bit#(3) size;
+    Bit#(2) access;
+    Bit#(data) data;
+  } ITIM_mem_req#(numeric type addr, numeric type data) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(data) data;
+    Bool err;
+  } ITIM_mem_resp#(numeric type data) deriving(Bits, Eq, FShow);
+  `endif
+
   // ---------------------- Instruction Cache types ---------------------------------------------//
   typedef struct{
     Bit#(addr)  address;
