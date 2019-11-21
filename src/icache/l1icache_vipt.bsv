@@ -450,6 +450,7 @@ package l1icache_vipt;
     rule display_stuff;
       `logLevel( icache, 2, $format("ICACHE: fbfull:%b fbempty:%b rgfbwb:%d rgfbmiss:%d", fb_full,
                                                       fb_empty, rg_fbwriteback, rg_fbmissallocate))
+      `logLevel( icache, 2, $format("ICACHE: Enable:",wr_cache_enable))
     `ifdef itim
       `logLevel( icache, 0, $format("ICACHE: ITIMBASE:%h ITIMBOUND:%h",wr_itim_base, wr_itim_bound))
     `endif
@@ -644,7 +645,7 @@ package l1icache_vipt;
       if(pa.trap) begin
         wr_trap_from_tlb<=True;
       end
-      else if(cache_hit `ifdef itim || itim_hit `endif )begin
+      else if(cache_hit && wr_cache_enable `ifdef itim || itim_hit `endif )begin
         wr_ram_response<=Hit;
       `ifdef ECC
         wr_ram_hitword<=response_word_correct;
@@ -724,7 +725,9 @@ package l1icache_vipt;
       end
       
       Bool linehit=unpack(|fbhit);
-      if(wordhit)
+      if(!wr_cache_enable)
+        wr_fb_response <= Miss;
+      else if(wordhit)
         wr_fb_response<=Hit;
       else if(!linehit) // generate a miss only if the line is missing.
         wr_fb_response<=Miss;

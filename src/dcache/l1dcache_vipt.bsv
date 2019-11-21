@@ -530,6 +530,7 @@ package l1dcache_vipt;
 fbvalid:%b", fb_full, fb_empty, rg_fbwriteback, rg_fbmissallocate, readVReg(fb_valid)))
       `logLevel( dcache, 2, $format("DCACHE : sb_empty:%b sb_full:%b store_valid:%b storetail:%d \
 storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehead))
+      `logLevel( dcache, 2, $format("DCACHE: Enable:%b",wr_cache_enable))
     `ifdef dtim
       `logLevel( dcache, 0, $format("DCACHE: DTIMBASE:%h DTIMBOUND:%h", wr_dtim_base, wr_dtim_bound))
     `endif
@@ -744,7 +745,7 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       if(pa.trap || pa.tlbmiss)begin
         wr_trap_from_tlb <= True;
       end
-      else if(cache_hit `ifdef dtim || dtim_hit `endif )begin
+      else if(cache_hit && wr_cache_enable `ifdef dtim || dtim_hit `endif )begin
         wr_cache_response <= Hit;
 `ifdef ECC
         wr_cache_hitword<=response_word_correct;
@@ -831,7 +832,9 @@ storehd:%d", sb_empty, sb_full, readVReg(store_valid), rg_storetail, rg_storehea
       end
 
       Bool linehit = unpack(|fbhit);
-      if(wordhit)
+      if(!wr_cache_enable)
+        wr_fb_response <= Miss;
+      else if(wordhit)
         wr_fb_response <= Hit;
       else if(!linehit) // generate a miss only if the line is missing.
         wr_fb_response <= Miss;
@@ -1015,8 +1018,6 @@ fbindex:%d", sbindex, request.data, pa.address, fbindex))
       `ifdef perfmonitors
         if(request.access == 0)
           wr_total_io_reads <= 1;
-        if(request.access == 1)
-          wr_total_io_writes <= 1;
       `endif
       end
       if(request.access != 0 && (wr_fb_response == Hit || wr_cache_response == Hit))begin
@@ -1507,6 +1508,7 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                                                       burst_len   : 0,
                                                       burst_size  : zeroExtend(size),
                                                       data        : data});
+          wr_total_io_writes <= 1;
         end
         else begin
           if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex == fbi)begin
