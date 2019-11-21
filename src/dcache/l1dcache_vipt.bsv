@@ -1508,7 +1508,9 @@ fbenable:%h", fbindex, fb_addr[fbindex], fb_dataline[fbindex], fb_enables[fbinde
                                                       burst_len   : 0,
                                                       burst_size  : zeroExtend(size),
                                                       data        : data});
+        `ifdef perfmonitors
           wr_total_io_writes <= 1;
+        `endif
         end
         else begin
           if(wr_fbbeingfilled matches tagged Valid .fbi &&& fbindex == fbi)begin
