@@ -259,7 +259,7 @@ package nb_dcache;
 
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
-		FIFO#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFO;
+		FIFOF#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFOF;
 		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
@@ -298,6 +298,7 @@ package nb_dcache;
 		Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
 		Reg#(Tuple2#(DCache_exception, Bit#(prf_index))) rg_access_fault_response <- mkReg(tuple2(defaultValue, ?));
     Reg#(Bool) rg_io_req_sent <- mkReg(False);
+    Reg#(Tuple2#(Bool, Bit#(TSub#(vaddr,wordbits)))) rg_prev_req_info <- mkReg(tuple2(False, ?));
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -319,6 +320,7 @@ package nb_dcache;
 		Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
 		Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
 		Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
+    Wire#(Bool) wr_stall_req_from_core_as_prev_was_store <- mkDWire(False);
 
 		
 		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(2) size);
@@ -448,10 +450,22 @@ package nb_dcache;
     One possible solution is to give this more priority than mshr_resp to core. But that would result
     in much complex conditions for rest of the rules.
     */
-    rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif );
+
+    rule rl_stall_for_load_after_store_to_same_word;
+			let core_req= ff_req_from_core.first;
+      //if prev req was store, and current req is load (or from PTW), and the word address matches, then stall
+      if(tpl_1(rg_prev_req_info) && (core_req.origin==Load_buffer || core_req.origin==PTW)
+      && tpl_2(rg_prev_req_info)==truncateLSB(core_req.addr)) begin
+        wr_stall_req_from_core_as_prev_was_store<= True;
+      end
+    endrule
+
+    rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
+                                 && !wr_stall_req_from_core_as_prev_was_store);
 			let core_req= ff_req_from_core.first;
 			ff_req_from_core.deq;
 			Bool is_actual_store= (core_req.origin == Store_commit);
+      rg_prev_req_info<= tuple2(is_actual_store, truncateLSB(core_req.addr));
 			Bit#(setbits) set_index;
 			//For a fence instruction, start from cache index 0.
 			if(core_req.sfence) begin
@@ -1157,7 +1171,7 @@ package nb_dcache;
 		//Cache is busy if a PTW is ongoing, or, (if a flush is ongoing and entries in ff_second_stage
 		//have not been resolved yet.
 		method Bool cache_busy;
-			return rg_cache_busy;
+			return (rg_cache_busy || !ff_req_from_core.notFull);
 		endmethod
 
 		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
