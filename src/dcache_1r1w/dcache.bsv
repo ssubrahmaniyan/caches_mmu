@@ -39,7 +39,7 @@ package dcache;
   import Assert  :: * ;
   import OInt :: * ;
   import BUtils :: * ;
-  import Memory :: * ;
+  import Memory :: * ; // only for the updateDataWithMask function
   import DReg :: * ;
 
 
@@ -48,6 +48,7 @@ package dcache;
   import globals :: * ;
   import replacement_dcache :: * ;
   import mem_config :: * ;
+  import storebuffer :: * ;
 
   typedef struct{
     Bit#(addr)  phyaddr;
@@ -96,8 +97,8 @@ package dcache;
   (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
   module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
                     parameter String alg)
-                  (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, esize, dbanks, tbanks,
-                            buswidth))
+                  (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, esize, dbanks, 
+                              tbanks, buswidth))
     provisos(
           Mul#(wordsize, 8, respwidth),        // respwidth is the total bits in a word
           Mul#(blocksize, respwidth,linewidth),// linewidth is the total bits in a cache line
@@ -108,7 +109,7 @@ package dcache;
           Add#(_a, setbits, _b),        // _b total bits for index+offset,
           Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
           Div#(buswidth,respwidth,o__),
-          Add#(o__, p__, 2),            // ensure that the buswidth is no more than twice the size of respwidth
+          Add#(o__, p__, 2),            // ensure that the buswidth is no more than 2 x respwidth
 
           // required by bsc
           Mul#(TDiv#(linewidth, TDiv#(linewidth, 8)), TDiv#(linewidth, 8),linewidth),
@@ -131,7 +132,8 @@ package dcache;
           Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
           Add#(h__, TDiv#(tagbits, tbanks), tagbits),
           Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
-          Add#(i__, TDiv#(linewidth, dbanks), linewidth)
+          Add#(i__, TDiv#(linewidth, dbanks), linewidth),
+          Add#(q__, TDiv#(linewidth, buswidth), paddr)
     );
 
     String dcache = "";
@@ -160,7 +162,7 @@ package dcache;
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
-      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*fromInteger(lv_offset));
+      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
     
@@ -240,9 +242,9 @@ package dcache;
     
     // ----------------------------- structures for fence operation -----------------------------//
     /*doc:reg: this register selects the way for performing a fence operation */
-    Reg#(Bit#(ways)) rg_way_select <- mkRegA(1);
+    Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkRegA(0);
     /*doc:reg: this register selects the set for performing a fence operation */
-    Reg#(Bit#(TLog#(sets))) rg_set_select <- mkRegA(0);
+    Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkRegA(0);
     /*doc:reg: this register when true indicates that a fence operation has caused a writeback to
      * the memory and the response has not been received yet.*/
     Reg#(Bool) rg_fence_pending <- mkRegA(False);
@@ -310,18 +312,60 @@ package dcache;
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
+    Ifc_storebuffer#(paddr, respwidth, esize, sbsize, 1) storebuffer <- mk_storebuffer;
+
     // --------------------------- Rule operations ------------------------------------- //
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && !ff_pending_req.notEmpty ) ;
       `logLevel( dcache, 0, $format("DCACHE : Fence operation in progress"))
-      for (Integer i = 0; i< v_sets ; i = i + 1) begin
-        v_reg_valid[i] <= 0;
-      end
-      rg_fence_stall <= False;
-      ff_core_request.deq;
-      replacement.reset_repl;
-      ff_core_response.enq(DMem_core_response{word:?, trap: False,
+
+      let lv_curr_way = rg_fence_way;
+      let lv_curr_set = rg_fence_set;
+      
+      let lv_next_way = rg_fence_way;
+      let lv_next_set = rg_fence_set;
+
+      // done to avoid additional provisos for this combination
+      Bit#(TSub#(paddr, TAdd#(tagbits, setbits))) zeros = 'd0;
+
+      Bit#(tagbits) tag = bram_tag[rg_fence_way].read_response;
+      Bit#(linewidth) dataline = bram_data[rg_fence_way].read_response;
+      Bit#(paddr) final_address={tag, rg_fence_set, zeros};
+      Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
+      Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
+      if(!rg_globaldirty)
+        `logLevel( dcache, 0, $format("DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b Dirty:%b \
+ Addr:%h Data:%h", lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address, dataline ))
+      if( lv_dirty == 1 && lv_valid == 1)
+        ff_write_mem_request.enq(DCache_mem_writereq{address   : final_address,
+                                                burst_len  : fromInteger(valueOf(blocksize) - 1),
+                                                burst_size : fromInteger(valueOf(TLog#(wordsize))),
+                                                data       : dataline});
+      
+      if(lv_curr_way == fromInteger(v_ways-1))
+        lv_next_set = lv_curr_set + 1;
+
+      if(v_ways > 1)
+        lv_next_way = lv_curr_way + 1;
+
+      bram_data[lv_next_way].read(lv_next_set);
+      bram_tag[lv_next_way].read(lv_next_set);
+
+      rg_fence_way <= lv_next_way;
+      rg_fence_set <= lv_next_set;
+      if((lv_curr_way == fromInteger(v_ways - 1) && lv_curr_set == fromInteger(v_sets - 1))
+              || !rg_globaldirty) begin
+        for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
+          v_reg_valid[i] <= 0 ;
+          v_reg_dirty[i] <= 0 ;
+        end
+        rg_globaldirty <= False;
+        rg_fence_stall <= False;
+        ff_core_request.deq;
+        replacement.reset_repl;
+        ff_core_response.enq(DMem_core_response{word:?, trap: False,
                               cause: ?, epochs: ff_core_request.first.epochs});
+      end
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
@@ -338,6 +382,7 @@ package dcache;
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
     `endif
+
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -472,9 +517,9 @@ package dcache;
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
       Bit#(paddr) phyaddr = truncate(req.address);
-      let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8)));
-      let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth)));
-      Bit#(TDiv#(linewidth,buswidth)) word_index= phyaddr[lv_busblocks+lv_busbits-1:lv_busbits];
+      let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8))); // 4
+      let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth))); //0
+      Bit#(TDiv#(linewidth,buswidth)) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
       `logLevel( dcache, 0, $format("DCACHE: word_index:%d",word_index))
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
@@ -529,7 +574,9 @@ package dcache;
                                                                     rg_fb_enable_temp;
       Bit#(linewidth) lv_new_word = duplicate(response.data);
       Bit#(tagbits) lv_write_tag = truncateLSB(pending_req.phyaddr);
-      let rotate_amount = valueOf(TDiv#(buswidth,8));
+      Bit#(TAdd#(TLog#(TDiv#(linewidth,8)),1)) rotate_amount =
+                                                (fromInteger(valueOf(TDiv#(buswidth,8))));
+
       let lv_fb_linedata = updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
       if(response.last) begin
         let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index],
@@ -544,7 +591,7 @@ package dcache;
         `logLevel( dcache, 0, $format("DCACHE: Writing data:%h",lv_fb_linedata))
       end
       else begin
-        rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount));
+        rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
         rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
       rg_fb_linedata <=  lv_fb_linedata;
@@ -592,7 +639,7 @@ package dcache;
         `endif
       `endif
         Bit#(paddr) phyaddr = truncate(req.address);
-        Bit#(setbits) set_index=phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+        Bit#(setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin

@@ -46,7 +46,8 @@ package dmem_tb;
 
 
   (*synthesize*)
-  module mktest(Ifc_test_caches#(`dwords , `dblocks , `dsets , `dways ,32,`paddr, `dbuswidth ));
+  module mktest(Ifc_test_caches#(`dwords , `dblocks , `dsets , `dways, 
+                                      TMul#(`dwords,8) ,`paddr, `dbuswidth ));
     let ifc();
     mktest_caches _temp(ifc);
     return (ifc);

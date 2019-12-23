@@ -54,7 +54,7 @@ package dmem;
   (*synthesize*)
   module mkinstance(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
                                                       `dsbsize, `desize ,
-                              `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `vaddr ));
+                              `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `dbuswidth ));
     let ifc();
   `ifdef dcache
     mkdcache#(isIO,"RROBIN") _temp(ifc);
@@ -77,7 +77,7 @@ package dmem;
     method Action write_mem_req_deq;
     method Action cache_enable(Bool c);
     interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
-    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) read_mem_resp;
+    interface Put#(DCache_mem_readresp#(`dbuswidth)) read_mem_resp;
     method Bool cacheable_store;
     method Bool cache_available;
 `ifdef dcache
