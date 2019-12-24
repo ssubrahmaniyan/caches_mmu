@@ -79,7 +79,7 @@ package dmem_tb;
   Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
   
   rule performance_counters;
-    Bit#(5) incr = dmem.perf_counters;
+    Bit#(9) incr = dmem.mv_dcache_perf_counters;
     for(Integer i=0;i<5;i=i+1)
       rg_counters[i]<=rg_counters[i]+zeroExtend(incr[i]);
   endrule

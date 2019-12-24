@@ -35,67 +35,103 @@ package storebuffer;
   import SpecialFIFOs :: * ;
   import Vector :: * ; 
 
-  interface Ifc_storebuffer#(numeric type addr, numeric type data, numeric type esize,
-                              numeric type sbsize, numeric type fbsize);
+  interface Ifc_storebuffer#( numeric type addr, 
+                              numeric type wordsize, 
+                              numeric type esize,
+                              numeric type sbsize, 
+                              numeric type fbsize);
 
+    method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
+                                                            mav_check_sb_hit (Bit#(addr) phyaddr);
   endinterface
 
   function Bool isTrue(Bool a);
     return a;
   endfunction
 
-  module mk_storebuffer(Ifc_storebuffer#(addr, data, esize, sbsize, fbsize));
-    Vector#(sbsize, Reg#(Bit#(addr))) sb_addr <- replicateM(mkReg(0));
-    Vector#(sbsize, Reg#(Bit#(esize))) sb_epoch <- replicateM(mkReg(0));
-    Vector#(sbsize, Reg#(Bit#(data))) sb_data <- replicateM(mkReg(0));
-    Vector#(sbsize, Reg#(Bit#(2))) sb_size <- replicateM(mkReg(0));
-    Vector#(sbsize, Reg#(Bool)) sb_valid <- replicateM(mkReg(False));
-    Vector#(sbsize, Reg#(Bool)) sb_io <- replicateM(mkReg(False));
-    Vector#(sbsize, Reg#(Bit#(TLog#(fbsize)))) sb_fbindex <- replicateM(mkReg(0));
+  function Bit#(data) fn_OR(Bit#(data) x, Bit#(data) y);
+    return x | y;
+  endfunction
 
+  /*doc:struct: this structure holds all the information that the store buffer holds.
+  addr: address as requested by the core
+  data: as presented by the core to the cache
+  epoch: the epoch bits as presented by the core to the cache
+  fbindex: the index of the fillbuffer that this store is to be effected on
+  size: access size (byte, halfword, word, etc) as requested by the core to the cache
+  io: boolean value indicating if the store is to the cache or an MMIO
+  */
+  typedef struct{
+    Bit#(a) addr;
+    Bit#(d) data;
+    Bit#(e) epoch;
+    Bit#(f) fbindex;
+    Bit#(2) size;
+    Bool    io;
+  } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
+    deriving(Bits, FShow, Eq);
+
+  module mk_storebuffer(Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
+    provisos( Log#(wordsize,wordbits),
+              Mul#(wordsize,8,dataword),
+              Add#(b__, wordbits, TMul#(wordbits, 2)),
+              Add#(1, c__, sbsize)
+            );
+
+    let v_wordbits = valueOf(wordbits);
+    
+    /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
+     not*/
+    Vector#(sbsize, Reg#(Bool)) v_sb_valid <- replicateM(mkReg(False));
+    /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
+     * to the cache*/
+    Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
+                                                                    <- replicateM(mkReg(unpack(0)));
+
+    /*doc:reg: Register to point to the head of the store buffers. Points to the entry that needs to
+     * be allotted to a new store request*/
     Reg#(Bit#(TLog#(sbsize))) rg_head <- mkReg(0);
+    /*doc:reg: Register to point to the oldest entry that was allotted in the storebuffer and that
+     * needs to the be committed first*/
     Reg#(Bit#(TLog#(sbsize))) rg_tail <- mkReg(0);
 
-    Bool sb_full = (all(isTrue, readVReg(sb_valid)));
-    Bool sb_empty=!(any(isTrue, readVReg(sb_valid)));
+    /*doc:var: variable to indicate that the storebuffer is full*/
+    Bool sb_full = (all(isTrue, readVReg(v_sb_valid)));
+    /*dov:var: variable to indicate that the storebuffer is empty*/
+    Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
 
-    function Bit#(data) fn_storemask(Bit#(addr) phyaddr, );
-      Bit#(TLog#(data)) shiftamt = 
+    function Bit#(data) fn_storemask(Bit#(data) mask1, Bit#(data) maskold);
+      return mask1 & (~maskold);
     endfunction
 
-    method ActionValue#(Tuple2#(Bit#(data),Bit#(data))) mav_check_sb_hit (Bit#(addr) phyaddr);
+    method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
-      Vector#(sbsize, Bit#(data)) storemask;
+      Bit#(wordbits) zeros = 0;
+      Vector#(sbsize, Bit#(dataword)) storemask;
+      Vector#(sbsize, Bit#(dataword)) data_values;
       Bit#(TSub#(addr, wordbits)) wordaddr = truncateLSB(phyaddr);
       for (Integer i = 0; i< valueOf(sbsize); i = i + 1) begin
-        
-        Bit#(TLog#(respwidth)) shiftamt = {store_addr[i][v_wordbits - 1:0], 3'b0};//TODO parameterize for XLEN
-        Bit#(TSub#(paddr, wordbits)) compareaddr = truncateLSB(store_addr[i]);
+        data_values[i] = v_sb_meta[i].data;
+        Bit#(TMul#(wordbits,2)) shiftamt = {v_sb_meta[i].addr[v_wordbits - 1:0], zeros};
+        Bit#(TSub#(addr, wordbits)) compareaddr = truncateLSB(v_sb_meta[i].addr);
         storemask[i]=0;
         if(compareaddr == wordaddr)begin
-          Bit#(respwidth) temp = store_size[i] == 0?'hff:
-                                 store_size[i] == 1?'hffff:
-                                 store_size[i] == 2?'hffffffff : '1;
-          temp = temp << shiftamt;
-          storemask[i] = temp;
+          Bit#(dataword) temp =  v_sb_meta[i].size == 0?'hff:
+                                 v_sb_meta[i].size == 1?'hffff:
+                                 v_sb_meta[i].size == 2?'hffffffff : '1;
+          storemask[i] = temp << shiftamt;
         end
       end
 
-      Bit#(TLog#(respwidth)) shiftamt2 = {store_addr[rg_storetail][v_wordbits - 1:0], 3'b0}; //TODO parameterize for XLEN
-      Bit#(respwidth) storemask2 = 0;
-      Bit#(TSub#(paddr, wordbits)) compareaddr2 = truncateLSB(store_addr[rg_storetail]);
-      if(compareaddr2 == wordaddr)begin
-        Bit#(respwidth) temp = store_size[rg_storetail] == 0?'hff:
-                          store_size[rg_storetail] == 1?'hffff:
-                          store_size[rg_storetail] == 2?'hffffffff : '1;
-        temp = temp << shiftamt2;
-        storemask2 = temp & (~storemask1); // 'h00_00_00_FF
+      // See if the following can also be written as a vector function
+      storemask[rg_tail] = ~storemask[rg_tail-1] & storemask[rg_tail];
+
+      for (Integer i = 0; i<valueOf(sbsize); i = i + 1) begin
+        data_values[i] = storemask[i] & data_values[i];
       end
 
-      let data1 = storemask1 & store_data[rg_storetail - 1];
-      let data2 = storemask2 & store_data[rg_storetail];
-      wr_sb_hitword <= data1|data2;
-      wr_sb_mask <= storemask1|storemask2;
+      return tuple2(fold(fn_OR,storemask),fold(fn_OR,data_values));
+    endmethod
   endmodule
 endpackage
 

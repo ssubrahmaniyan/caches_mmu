@@ -387,10 +387,13 @@ package icache;
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
+    `ifdef supervisor
+      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+    `else
       Bit#(paddr) phyaddr = truncate(req.address);
+    `endif
       let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8)));
-      let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth)));
-      Bit#(TDiv#(linewidth,buswidth)) word_index= phyaddr[lv_busblocks+lv_busbits-1:lv_busbits];
+      Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
       `logLevel( icache, 0, $format("ICACHE: word_index:%d",word_index))
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 

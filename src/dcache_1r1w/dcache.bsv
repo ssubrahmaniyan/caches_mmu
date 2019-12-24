@@ -78,13 +78,14 @@ package dcache;
     interface Put#(DCache_mem_readresp#(buswidth)) read_mem_resp;
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
-    interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
+    interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
+    interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) hold_req;
   `endif
     method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) write_mem_req;
     method Action write_mem_req_deq;
     interface Put#(DCache_mem_writeresp) write_mem_resp;
   `ifdef perfmonitors
-    method Bit#(5) perf_counters;
+    method Bit#(9) perf_counters;
   `endif
     method Action ma_cache_enable(Bool c);
     method Bool mv_storebuffer_empty;
@@ -115,15 +116,17 @@ package dcache;
           Mul#(TDiv#(linewidth, TDiv#(linewidth, 8)), TDiv#(linewidth, 8),linewidth),
           Add#(a__, paddr, vaddr),
           Add#(b__, respwidth, linewidth),
-          Mul#(buswidth, c__, linewidth),
           Add#(TAdd#(wordbits, blockbits), d__, paddr),
           Add#(e__, TLog#(ways), 4),
           Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
           Add#(g__, respwidth, buswidth),
+          Mul#(buswidth, c__, linewidth),
           Add#(j__, 8, respwidth),
           Add#(k__, 16, respwidth),
           Add#(l__, 32, respwidth),
           Add#(m__, respwidth, vaddr),
+          Add#(1, r__, respwidth),
+          Add#(u__, TLog#(TDiv#(linewidth, buswidth)), paddr),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
@@ -133,7 +136,12 @@ package dcache;
           Add#(h__, TDiv#(tagbits, tbanks), tagbits),
           Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
           Add#(i__, TDiv#(linewidth, dbanks), linewidth),
-          Add#(q__, TDiv#(linewidth, buswidth), paddr)
+          Add#(q__, TDiv#(linewidth, buswidth), paddr),
+
+          // for using storebuffer
+          Add#(s__, wordbits, TMul#(wordbits, 2)),
+          Add#(1, t__, sbsize)
+
     );
 
     String dcache = "";
@@ -168,7 +176,7 @@ package dcache;
     
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
-    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TDiv#(linewidth,buswidth)) word_index);
+    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
       Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
         32: 'hF;
         64:'hFF;
@@ -200,7 +208,7 @@ package dcache;
 
   `ifdef supervisor 
     /*doc:fifo: this fifo receives the physical address from the TLB */
-    FIFOF#(ITLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
+    FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
   `endif
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
@@ -312,7 +320,7 @@ package dcache;
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
-    Ifc_storebuffer#(paddr, respwidth, esize, sbsize, 1) storebuffer <- mk_storebuffer;
+    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, 1) storebuffer <- mk_storebuffer;
 
     // --------------------------- Rule operations ------------------------------------- //
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
@@ -387,17 +395,17 @@ package dcache;
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
-      Vector#(v_ways, Bit#(linewidth)) datalines;
+      Vector#(v_ways, Bit#(respwidth)) dataword;
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        datalines[i] = bram_data[i].read_response;
+        dataword[i] = truncate(bram_data[i].read_response >> block_offset);
       end
       for (Integer i = 0; i< v_ways; i = i + 1) begin
         hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
       end
 
-      let hit_dataline = select(datalines, unpack(hit_tag));
-      Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
+      let hit_dataline = select(dataword, unpack(hit_tag));
+      Bit#(respwidth) response_word=hit_dataline;
     `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the cache");
     `endif
@@ -412,8 +420,8 @@ package dcache;
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
       end
-      `logLevel( dcache, 0, $format("DCACHE: Hit:%b For Req:",(hit_tag),fshow(req)," Response:", 
-                                      fshow(lv_response)))
+      `logLevel( dcache, 0, $format("DCACHE: Hit:%b For Req:",(hit_tag),fshow(req)))
+      `logLevel( dcache, 0, $format("DCACHE:  Response:", fshow(lv_response)))
     endrule
 
     /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
@@ -467,30 +475,51 @@ package dcache;
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       DMem_core_response#(respwidth,esize) lv_response;
+
+      Bit#(3) onehot_hit = {pack(wr_ram_state==Hit), pack(wr_fb_state==Hit), pack(wr_nc_state==Hit)};
+      Vector#(3, DMem_core_response#(respwidth,esize)) lv_responses;
+      lv_responses[0] = wr_nc_response;
+      lv_responses[1] = wr_fb_response;
+      lv_responses[2] = wr_ram_response;
+
+      lv_response = select(lv_responses,unpack(onehot_hit));
+
       if(wr_ram_state == Hit) begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from SRAM"))
-        lv_response = wr_ram_response;
         if(alg == "PLRU")
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
       else if(wr_fb_state == Hit) begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from Fillbuffer"))
-        lv_response = wr_fb_response;
       end
       else begin
         `logLevel( dcache, 0, $format("DCACHE: Hit from NC"))
-        lv_response = wr_nc_response;
       end
-      lv_response.word= lv_response.trap?truncate(req.address):
-        case (req.size)
-          'b000 : signExtend(lv_response.word[7 : 0]);
-          'b001 : signExtend(lv_response.word[15 : 0]);
-          'b010 : signExtend(lv_response.word[31 : 0]);
-          'b100 : zeroExtend(lv_response.word[7 : 0]);
-          'b101 : zeroExtend(lv_response.word[15 : 0]);
-          'b110 : zeroExtend(lv_response.word[31 : 0]);
-          default : lv_response.word;
+
+      // capture the sign bit of the response to the core
+      Bit#(1) lv_sign =case(req.size[1:0])
+          'b00: lv_response.word[7];
+          'b01: lv_response.word[15];
+          'b10: lv_response.word[31];
+          default: truncateLSB(lv_response.word);
         endcase;
+      // manipulate the sign based on the request of the core
+      lv_sign = lv_sign & ~req.size[2];
+
+      // generate a mask based on the request of the core.
+      Bit#(respwidth) mask = case(req.size[1:0])
+        'b00: 'hFF;
+        'b01: 'hFFFF;
+        'b10: 'hFFFFFFFF;
+        default: '1;
+      endcase;
+
+      // signmask basically has all bits which are zeros in the mask duplicated with the required
+      // sign bit. Theese need to be set in the final response to the core and will thus be ORed
+      Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
+      lv_response.word = lv_response.trap?truncateLSB(req.address):
+                                          (lv_response.word & mask) | signmask;
+
       ff_core_request.deq;
     `ifdef supervisor
       if(pa_response.tlbmiss)
@@ -516,10 +545,14 @@ package dcache;
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
+    `ifdef supervisor
+      let pa_response = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = pa_response.address;
+    `else
       Bit#(paddr) phyaddr = truncate(req.address);
+    `endif
       let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8))); // 4
-      let lv_busblocks = valueOf(TLog#(TDiv#(linewidth,buswidth))); //0
-      Bit#(TDiv#(linewidth,buswidth)) word_index= truncate(phyaddr>>lv_busbits);
+      Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
       `logLevel( dcache, 0, $format("DCACHE: word_index:%d",word_index))
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
@@ -531,20 +564,20 @@ package dcache;
                                                   burst_size : fromInteger(v_wordbits)});
         `logLevel( dcache, 0, $format("DCACHE: Sending IO Request for Addr:%h",phyaddr))
       `ifdef perfmonitors
-        if(request.access == 0)
+        if(req.access == 0)
           wr_total_io_reads <= 1;
-        if(request.access == 1)
+        if(req.access == 1)
           wr_total_io_writes <= 1;
       `endif
       end
       else begin
       `ifdef perfmonitors
-        if(request.access == 0)
+        if(req.access == 0)
           wr_total_read_miss <= 1;
-        if(request.access == 1)
+        if(req.access == 1)
           wr_total_write_miss <= 1;
         `ifdef atomic
-          if(request.access == 2)
+          if(req.access == 2)
             wr_total_atomic_miss <= 1;
         `endif
       `endif
@@ -568,6 +601,7 @@ package dcache;
                                                                   !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
+      `logLevel( dcache, 0, $format("DCACHE: Processing:",fshow(pending_req)))
       ff_read_mem_response.deq;
       Bit#(setbits) set_index=pending_req.phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TDiv#(linewidth,8)) lv_current_enable = rg_fb_enable == 0? pending_req.init_enable:
@@ -661,11 +695,12 @@ package dcache;
   `ifdef supervisor
     interface ptw_resp = toGet(ff_ptw_response);
     interface mav_pa_from_tlb = toPut(ff_from_tlb);
+    interface hold_req = toGet(ff_hold_request);
   `endif
     `ifdef perfmonitors
-      method Bit#(5) perf_counters;
-        return {1'b0,wr_total_nc,1'b0,wr_total_cache_misses,wr_total_access};
-      endmethod
+      method perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access 
+                            , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss , 
+                              wr_total_write_miss , wr_total_atomic_miss , wr_total_evictions };
     `endif
     //TODO
     method mv_storebuffer_empty = True;

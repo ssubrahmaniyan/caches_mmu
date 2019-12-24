@@ -101,14 +101,17 @@ package dmem;
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(`vaddr) m);
     `ifdef pmp
-      method Action pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      method Action pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr )) pmpadr);
+      /*doc:method: */
+      method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
+      /*doc:method: */
+      method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
     `endif
     interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) hold_req;
   `endif
+
 `ifdef perfmonitors
   `ifdef dcache
-    method Bit#(13) mv_dcache_perf_counters;
+    method Bit#(9) mv_dcache_perf_counters;
   `endif
   `ifdef supervisor
     method Bit#(1) mv_dtlb_perf_counters ;
@@ -150,7 +153,7 @@ package dmem;
     let dcache <- mkinstance;
   `ifdef supervisor
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(0);
-    mkConnection(dtlb.core_response, dcache.pa_from_tlb);
+    mkConnection(dtlb.core_response, dcache.mav_pa_from_tlb);
   `endif
     interface core_req = interface Put
       method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
