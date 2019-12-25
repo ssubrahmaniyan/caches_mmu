@@ -127,6 +127,7 @@ package dcache;
           Add#(m__, respwidth, vaddr),
           Add#(1, r__, respwidth),
           Add#(u__, TLog#(TDiv#(linewidth, buswidth)), paddr),
+          Add#(x__, blockbits, paddr),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
@@ -140,7 +141,9 @@ package dcache;
 
           // for using storebuffer
           Add#(s__, wordbits, TMul#(wordbits, 2)),
-          Add#(1, t__, sbsize)
+          Add#(1, t__, sbsize),
+          Mul#(16, v__, respwidth),
+          Mul#(32, w__, respwidth)
 
     );
 
@@ -433,7 +436,7 @@ package dcache;
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
-      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      Bit#(blockbits) word_index= truncate(phyaddr>>v_wordbits);
       Bit#(respwidth) response_word=truncate(rg_fb_linedata >> block_offset);
       let required_enable = fn_enable(word_index);
       Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
@@ -531,11 +534,7 @@ package dcache;
       ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
     `ifdef ASSERT
-      Bit#(3) __t ;
-      __t[0]= pack(wr_ram_state == Hit);
-      __t[1]= pack(wr_fb_state == Hit);
-      __t[2] =pack(wr_nc_state == Hit);
-      dynamicAssert(countOnes(__t) == 1, "More than one data structure shows a hit");
+      dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
     `endif
 
     endrule
@@ -554,14 +553,17 @@ package dcache;
       let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8))); // 4
       Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
-      `logLevel( dcache, 0, $format("DCACHE: word_index:%d",word_index))
+      let burst_len = lv_io_req?0:(v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
+      let burst_size = lv_io_req?v_wordbits:valueOf(TLog#(TDiv#(buswidth,8)));
+      let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req};
+      phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
       ff_pending_req.enq(pend_req);
+      ff_read_mem_request.enq(DCache_mem_readreq{  address   : phyaddr,
+                                                  burst_len  : fromInteger(burst_len),
+                                                  burst_size : fromInteger(burst_size)});
       if(lv_io_req) begin
-        ff_read_mem_request.enq(DCache_mem_readreq{  address    : phyaddr,
-                                                  burst_len  : 0,
-                                                  burst_size : fromInteger(v_wordbits)});
         `logLevel( dcache, 0, $format("DCACHE: Sending IO Request for Addr:%h",phyaddr))
       `ifdef perfmonitors
         if(req.access == 0)
@@ -582,14 +584,6 @@ package dcache;
         `endif
       `endif
         `logLevel( dcache, 0, $format("DCACHE : Sending Line Request for Addr:%h", phyaddr))
-        let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
-        phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
-        let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
-        let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
-        ff_read_mem_request.enq(DCache_mem_readreq{ address    : phyaddr,
-                                                  burst_len  : fromInteger(burst_len),
-                                                  burst_size : fromInteger(burst_size)});
-
       end
       rg_handling_miss <= True;
     endrule
@@ -626,8 +620,8 @@ package dcache;
       end
       else begin
         rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
-        rg_fb_enable <= rg_fb_enable | lv_current_enable;
       end
+      rg_fb_enable <= rg_fb_enable | lv_current_enable;
       rg_fb_linedata <=  lv_fb_linedata;
       rg_fb_err <= response.err;
       `logLevel( dcache, 0, $format("DCACHE: current_enable:%h",lv_current_enable))
@@ -703,8 +697,8 @@ package dcache;
                               wr_total_write_miss , wr_total_atomic_miss , wr_total_evictions };
     `endif
     //TODO
-    method mv_storebuffer_empty = True;
-    method mv_cacheable_store = True;
+    method mv_storebuffer_empty = storebuffer.mv_sb_empty;
+    method mv_cacheable_store = storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull;
   endmodule
 endpackage

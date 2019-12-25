@@ -34,6 +34,7 @@ package storebuffer;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;
   import Vector :: * ; 
+  import BUtils :: * ;
 
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
@@ -43,6 +44,13 @@ package storebuffer;
 
     method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
+    method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data, 
+            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io);
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+                                                                            mav_store_to_commit;
+    method Bool mv_sb_full;
+    method Bool mv_sb_empty;
+    method Bool mv_cacheable_store;
   endinterface
 
   function Bool isTrue(Bool a);
@@ -58,7 +66,8 @@ package storebuffer;
   data: as presented by the core to the cache
   epoch: the epoch bits as presented by the core to the cache
   fbindex: the index of the fillbuffer that this store is to be effected on
-  size: access size (byte, halfword, word, etc) as requested by the core to the cache
+  mask: all bits one in this field indicate the bits that will be affected by the corresponding
+  store
   io: boolean value indicating if the store is to the cache or an MMIO
   */
   typedef struct{
@@ -66,7 +75,7 @@ package storebuffer;
     Bit#(d) data;
     Bit#(e) epoch;
     Bit#(f) fbindex;
-    Bit#(2) size;
+    Bit#(d) mask;
     Bool    io;
   } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
     deriving(Bits, FShow, Eq);
@@ -75,7 +84,9 @@ package storebuffer;
     provisos( Log#(wordsize,wordbits),
               Mul#(wordsize,8,dataword),
               Add#(b__, wordbits, TMul#(wordbits, 2)),
-              Add#(1, c__, sbsize)
+              Add#(1, c__, sbsize),
+              Mul#(16, a__, dataword),
+              Mul#(32, d__, dataword)
             );
 
     let v_wordbits = valueOf(wordbits);
@@ -100,27 +111,16 @@ package storebuffer;
     /*dov:var: variable to indicate that the storebuffer is empty*/
     Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
 
-    function Bit#(data) fn_storemask(Bit#(data) mask1, Bit#(data) maskold);
-      return mask1 & (~maskold);
-    endfunction
-
     method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
-      Bit#(wordbits) zeros = 0;
       Vector#(sbsize, Bit#(dataword)) storemask;
       Vector#(sbsize, Bit#(dataword)) data_values;
+
       Bit#(TSub#(addr, wordbits)) wordaddr = truncateLSB(phyaddr);
       for (Integer i = 0; i< valueOf(sbsize); i = i + 1) begin
         data_values[i] = v_sb_meta[i].data;
-        Bit#(TMul#(wordbits,2)) shiftamt = {v_sb_meta[i].addr[v_wordbits - 1:0], zeros};
         Bit#(TSub#(addr, wordbits)) compareaddr = truncateLSB(v_sb_meta[i].addr);
-        storemask[i]=0;
-        if(compareaddr == wordaddr)begin
-          Bit#(dataword) temp =  v_sb_meta[i].size == 0?'hff:
-                                 v_sb_meta[i].size == 1?'hffff:
-                                 v_sb_meta[i].size == 2?'hffffffff : '1;
-          storemask[i] = temp << shiftamt;
-        end
+        storemask[i] = v_sb_meta[i].mask & duplicate(pack(compareaddr == wordaddr));
       end
 
       // See if the following can also be written as a vector function
@@ -132,6 +132,43 @@ package storebuffer;
 
       return tuple2(fold(fn_OR,storemask),fold(fn_OR,data_values));
     endmethod
+
+    method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
+            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io) if(!sb_full);
+
+      data = case (size[1 : 0])
+        'b00 : duplicate(data[7 : 0]);
+        'b01 : duplicate(data[15 : 0]);
+        'b10 : duplicate(data[31 : 0]);
+        default : data;
+      endcase;
+      Bit#(wordbits) zeros = 0;
+      Bit#(TMul#(wordbits,2)) shiftamt = {address[v_wordbits - 1:0], zeros};
+      Bit#(dataword) temp =  size == 0?'hff:
+                             size == 1?'hffff:
+                             size == 2?'hffffffff : '1;
+
+      Bit#(dataword) storemask = temp << shiftamt;
+      v_sb_valid[rg_tail] <= True;
+      v_sb_meta[rg_tail] <= Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
+                                      io: io, mask: storemask};
+      rg_tail <= rg_tail + 1;
+    endmethod
+    method mv_sb_full = sb_full;
+    method mv_sb_empty = sb_empty;
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+        mav_store_to_commit if(!sb_empty);
+      rg_head <= rg_head + 1;
+      return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
+    endmethod
+    method mv_cacheable_store = v_sb_meta[rg_head].io;
+  endmodule
+
+  (*synthesize*)
+  module mksb_instance(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, 1));
+    let ifc();
+    mk_storebuffer _temp(ifc);
+    return ifc;
   endmodule
 endpackage
 

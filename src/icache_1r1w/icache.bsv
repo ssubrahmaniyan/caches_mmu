@@ -110,6 +110,9 @@ package icache;
           Add#(e__, TLog#(ways), 4),
           Add#(f__, TLog#(ways), TLog#(TAdd#(1, ways))),
           Add#(g__, respwidth, buswidth),
+          Add#(respwidth, k__, vaddr),
+          Add#(l__, TLog#(TDiv#(linewidth, buswidth)), paddr),
+          Add#(m__, blockbits, paddr),          
         `ifdef ASSERT
           Add#(1, j__, TLog#(TAdd#(1, ways))),
         `endif
@@ -147,13 +150,13 @@ package icache;
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
-      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({2'b0,word_index}*fromInteger(lv_offset));
+      Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
     
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
-    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TDiv#(linewidth,buswidth)) word_index);
+    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
       Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
         32: 'hF;
         64:'hFF;
@@ -190,6 +193,7 @@ package icache;
     /*doc:reg: When tru indicates that a miss is being catered to*/
     Reg#(Bool) rg_handling_miss <- mkRegA(False);
 
+    //------------------------- Fill buffer data structures -------------------------------------//
     /*doc:reg: this register holds the incoming line from the memory on a miss request*/
     Reg#(Bit#(linewidth)) rg_fb_linedata <- mkRegA(0);
 
@@ -280,17 +284,17 @@ package icache;
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
-      Vector#(v_ways, Bit#(linewidth)) datalines;
+      Vector#(v_ways, Bit#(respwidth)) dataword;
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        datalines[i] = bram_data[i].read_response;
+        dataword[i] = truncate(bram_data[i].read_response >> block_offset);
       end
       for (Integer i = 0; i< v_ways; i = i + 1) begin
         hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
       end
 
-      let hit_dataline = select(datalines, unpack(hit_tag));
-      Bit#(respwidth) response_word=truncate(hit_dataline >> block_offset);
+      let hit_dataline = select(dataword, unpack(hit_tag));
+      Bit#(respwidth) response_word=hit_dataline;
     `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
@@ -318,7 +322,7 @@ package icache;
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
-      Bit#(blockbits) word_index= phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      Bit#(blockbits) word_index= truncate(phyaddr>>v_wordbits);
       Bit#(respwidth) response_word=truncate(rg_fb_linedata >> block_offset);
       let required_enable = fn_enable(word_index);
       let lv_response = FetchResponse{instr:response_word, trap: rg_fb_err,
@@ -351,27 +355,37 @@ package icache;
                                 wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+      let pa_response = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = pa_response.address;
       ff_from_tlb.deq;
     `else
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      FetchResponse#(respwidth,esize) lv_response;
+
+      Bit#(3) onehot_hit = {pack(wr_ram_state==Hit), pack(wr_fb_state==Hit), pack(wr_nc_state==Hit)};
+      Vector#(3, FetchResponse#(respwidth,esize)) lv_responses;
+      lv_responses[0] = wr_nc_response;
+      lv_responses[1] = wr_fb_response;
+      lv_responses[2] = wr_ram_response;
+
+      lv_response = select(lv_responses,unpack(onehot_hit));
+
       if(wr_ram_state == Hit) begin
         `logLevel( icache, 0, $format("ICACHE: Hit from SRAM"))
-        ff_core_response.enq(wr_ram_response);
         if(alg == "PLRU")
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
       end
       else if(wr_fb_state == Hit) begin
         `logLevel( icache, 0, $format("ICACHE: Hit from Fillbuffer"))
-        ff_core_response.enq(wr_fb_response);
       end
       else begin
         `logLevel( icache, 0, $format("ICACHE: Hit from NC"))
-        ff_core_response.enq(wr_nc_response);
       end
+      lv_response.instr= lv_response.trap?truncateLSB(req.address): lv_response.instr ;
       ff_core_request.deq;
+      ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
     `ifdef ASSERT
       Bit#(3) __t ;
@@ -388,21 +402,25 @@ package icache;
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && ff_pending_req.notFull);
       let req = ff_core_request.first;
     `ifdef supervisor
-      Bit#(paddr) phyaddr = ff_from_tlb.first.address;
+      let pa_response = ff_from_tlb.first;
+      Bit#(paddr) phyaddr = pa_response.address;
     `else
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
-      let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8)));
+      let lv_busbits = valueOf(TLog#(TDiv#(buswidth,8))); // 4
       Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
-      `logLevel( icache, 0, $format("ICACHE: word_index:%d",word_index))
+      let burst_len = lv_io_req?0:(v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
+      let burst_size = lv_io_req?v_wordbits:valueOf(TLog#(TDiv#(buswidth,8)));
+      let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req};
+      phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
       ff_pending_req.enq(pend_req);
+      ff_read_mem_request.enq(ICache_mem_request{  address   : phyaddr,
+                                                  burst_len  : fromInteger(burst_len),
+                                                  burst_size : fromInteger(burst_size)});
       if(lv_io_req) begin
-        ff_read_mem_request.enq(ICache_mem_request{  address    : phyaddr,
-                                                  burst_len  : 0,
-                                                  burst_size : fromInteger(v_wordbits)});
         `logLevel( icache, 0, $format("ICACHE: Sending IO Request for Addr:%h",phyaddr))
       `ifdef perfmonitors
         wr_total_nc <= 1;
@@ -412,16 +430,7 @@ package icache;
       `ifdef perfmonitors
         wr_total_cache_misses <= 1;
       `endif
-        // TODO allocate new line in FB
         `logLevel( icache, 0, $format("ICACHE : Sending Line Request for Addr:%h", phyaddr))
-        let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
-        phyaddr= (phyaddr>>shift_amount)<<shift_amount; // align the address to be one word aligned.
-        let burst_len = (v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
-        let burst_size = valueOf(TLog#(TDiv#(buswidth,8)));
-        ff_read_mem_request.enq(ICache_mem_request{ address    : phyaddr,
-                                                  burst_len  : fromInteger(burst_len),
-                                                  burst_size : fromInteger(burst_size)});
-
       end
       rg_handling_miss <= True;
     endrule
@@ -439,7 +448,9 @@ package icache;
                                                                     rg_fb_enable_temp;
       Bit#(linewidth) lv_new_word = duplicate(response.data);
       Bit#(tagbits) lv_write_tag = truncateLSB(pending_req.phyaddr);
-      let rotate_amount = valueOf(TDiv#(buswidth,8));
+      Bit#(TAdd#(TLog#(TDiv#(linewidth,8)),1)) rotate_amount =
+                                                (fromInteger(valueOf(TDiv#(buswidth,8))));
+
       let lv_fb_linedata = updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
       if(response.last) begin
         let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index]);
@@ -453,9 +464,9 @@ package icache;
         `logLevel( icache, 0, $format("ICACHE: Writing data:%h",lv_fb_linedata))
       end
       else begin
-        rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,fromInteger(rotate_amount));
-        rg_fb_enable <= rg_fb_enable | lv_current_enable;
+        rg_fb_enable_temp <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
       end
+      rg_fb_enable <= rg_fb_enable | lv_current_enable;
       rg_fb_linedata <=  lv_fb_linedata;
       rg_fb_err <= response.err;
       `logLevel( icache, 0, $format("ICACHE: current_enable:%h",lv_current_enable))
@@ -493,7 +504,7 @@ package icache;
         wr_total_access<=1;
       `endif
         Bit#(paddr) phyaddr = truncate(req.address);
-        Bit#(setbits) set_index=phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+        Bit#(setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         for(Integer i=0;i<v_ways;i=i+1)begin

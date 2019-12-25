@@ -52,7 +52,7 @@ package dmem;
 `endif
 
   (*synthesize*)
-  module mkinstance(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
+  module mkdcache_inst(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
                                                       `dsbsize, `desize ,
                               `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `dbuswidth ));
     let ifc();
@@ -150,7 +150,7 @@ package dmem;
 
   (*synthesize*)
   module mkdmem(Ifc_dmem);
-    let dcache <- mkinstance;
+    let dcache <- mkdcache_inst;
   `ifdef supervisor
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(0);
     mkConnection(dtlb.core_response, dcache.mav_pa_from_tlb);
