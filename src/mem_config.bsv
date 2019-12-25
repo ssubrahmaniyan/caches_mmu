@@ -71,7 +71,7 @@ package mem_config;
   
   interface Ifc_mem_config1rw#( numeric type n_entries, numeric type datawidth, numeric type banks);
     method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
-    method ActionValue#(Bit#(datawidth)) read_response;
+    method Bit#(datawidth) read_response;
   endinterface
   
   module mkmem_config1rw#(parameter Bool ramreg, parameter String porttype)
@@ -106,7 +106,7 @@ package mem_config;
         ram_single[i].request(we, index, data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
       end
     endmethod
-    method ActionValue#(Bit#(datawidth)) read_response;
+    method Bit#(datawidth) read_response;
       Bit#(datawidth) data_resp=0;
       for(Integer i=0;i<valueOf(banks);i=i+1)begin
         data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
