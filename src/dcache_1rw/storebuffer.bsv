@@ -77,6 +77,7 @@ package storebuffer;
     Bit#(f) fbindex;
     Bit#(d) mask;
     Bool    io;
+    Bit#(2) size;
   } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
     deriving(Bits, FShow, Eq);
 
@@ -151,7 +152,7 @@ package storebuffer;
       Bit#(dataword) storemask = temp << shiftamt;
       v_sb_valid[rg_tail] <= True;
       v_sb_meta[rg_tail] <= Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
-                                      io: io, mask: storemask};
+                                      io: io, mask: storemask, size:truncate(size)};
       rg_tail <= rg_tail + 1;
     endmethod
     method mv_sb_full = sb_full;
@@ -159,6 +160,7 @@ package storebuffer;
     method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
+      v_sb_valid[rg_head] <= False;
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = v_sb_meta[rg_head].io;

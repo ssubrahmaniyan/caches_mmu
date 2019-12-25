@@ -103,6 +103,15 @@ package dcache;
   (*conflict_free="rl_send_memory_request, rl_fill_from_memory"*) 
   // both update fb buffer entries, however both can never fire simultaneously
   (*conflict_free="rl_send_memory_request, rl_release_from_fillbuffer"*)
+  //both of these update fillbuffer entries but can never fire simultaneously
+  (*conflict_free="rl_response_to_core,rl_fill_from_memory"*)
+  (*conflict_free="rl_response_to_core,rl_release_from_fillbuffer"*)
+  // the following affect fb and sb. however, store cannot be performed on a line being allotted
+  // and similarly a store entry cannot be committed which is just being allotted.
+  (*conflict_free="rl_response_to_core,ma_perform_store"*)
+  // the following update fb simultaneously. However, if the fb entry updated by the store is the
+  // same as the one being ffilled then that is taken care of by using masks during fill
+  (*conflict_free="rl_fill_from_memory,ma_perform_store"*)
   module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
                   parameter String alg, parameter Bit#(32) id)
                   (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, fbsize,
@@ -136,6 +145,9 @@ package dcache;
           Add#(u__, TLog#(TDiv#(linewidth, buswidth)), paddr),
           Add#(x__, blockbits, paddr),
           Add#(TAdd#(tagbits, setbits), y__, paddr),
+          Mul#(TMul#(wordsize, 8), z__, linewidth),
+          Mul#(aa__, 8, linewidth),
+           Div#(linewidth, 8, aa__),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
@@ -343,7 +355,10 @@ package dcache;
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
-    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, 1) storebuffer <- mk_storebuffer;
+    // --------------------- Store buffer related structures ----------------------------------//
+    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, fbsize) storebuffer <- mk_storebuffer;
+    Wire#(Bit#(TDiv#(linewidth,8))) wr_store_be <- mkDWire(0);
+    Wire#(Bit#(linewidth)) wr_store_data <- mkDWire(0);
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
 
@@ -427,6 +442,7 @@ dataline ))
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss);
       let req = ff_core_request.first;
+      // select the physical address and check for any faults
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
       Bit#(paddr) phyaddr = pa_response.address;
@@ -599,7 +615,7 @@ dataline ))
       dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
     `endif
 
-      // -- allocate store-buffer
+      // -- allocate store-buffer for stores/atomic ops
       if(req.access != 0 && onehot_hit[2]==1) begin
         if(rg_fbhead == fromInteger(v_fbsize-1))
           rg_fbhead <=0;
@@ -613,8 +629,9 @@ dataline ))
         v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
         v_fb_data[rg_fbhead] <=  wr_ram_hitline;
+        storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, rg_fbhead, truncate(req.size),
+          False);
       end
-
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
@@ -706,6 +723,7 @@ dataline ))
   
       // using a special function here from Memory library of Bluespec to update data
       let lv_fb_linedata = updateDataWithMask(v_fb_data[fbindex], lv_new_word, lv_current_enable);
+      lv_fb_linedata = updateDataWithMask(lv_fb_linedata, wr_store_data, wr_store_be);
       rg_temp_enable <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
       v_fb_enables[fbindex] <= lv_fb_enable | lv_current_enable;
       v_fb_data[fbindex] <=  lv_fb_linedata;
@@ -852,6 +870,39 @@ dataline ))
     method mv_storebuffer_empty = storebuffer.mv_sb_empty;
     method mv_cacheable_store = storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull;
+    method Action ma_perform_store(Bit#(esize) currepoch);
+      let {sb_valid, sb_entry} <- storebuffer.mav_store_to_commit; 
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Commit Store entry:",id,fshow(sb_entry)))
+      if(sb_entry.epoch == currepoch) begin
+        if(sb_entry.io) begin
+          `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to IO Addr:%h",id,sb_entry.addr))
+          ff_write_mem_request.enq(DCache_mem_writereq{address   : sb_entry.addr,
+                                                      burst_len  : 0,
+                                                      burst_size : zeroExtend(sb_entry.size),
+                                                      data       : duplicate(sb_entry.data)});
+        end
+        else begin
+          if(ff_pending_req.notEmpty && ff_pending_req.first.fbindex == sb_entry.fbindex)begin
+            `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to Pending line",id))
+            wr_store_be<= ?;
+            wr_store_data <= duplicate(sb_entry.data);
+          end
+          else begin
+            `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to Available line",id))
+            v_fb_data[sb_entry.fbindex] <= updateDataWithMask(v_fb_data[sb_entry.fbindex],
+                                                              duplicate(sb_entry.data), 0);
+          end
+        end
+      end
+      else begin
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: Store is being dropped- epoch mismatch",id)) 
+      end
+
+    endmethod
+    method write_mem_req = ff_write_mem_request.first;
+    method Action write_mem_req_deq;
+      ff_write_mem_request.deq;
+    endmethod
   endmodule
 endpackage
 
