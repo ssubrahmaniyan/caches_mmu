@@ -136,7 +136,6 @@ package dcache;
           Add#(u__, TLog#(TDiv#(linewidth, buswidth)), paddr),
           Add#(x__, blockbits, paddr),
           Add#(TAdd#(tagbits, setbits), y__, paddr),
-          Log#(TDiv#(linewidth, 8), z__),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
@@ -344,7 +343,7 @@ package dcache;
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
-    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, fbsize) storebuffer <- mk_storebuffer;
+    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, 1) storebuffer <- mk_storebuffer;
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
 
@@ -465,7 +464,7 @@ dataline ))
                                           cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
-      wr_ram_hitline <= select(lines,unpack(hit_tag));
+      wr_ram_hitline<=select(lines,unpack(hit_tag));
       if(lv_access_fault || |(hit_tag) == 1 ) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
@@ -601,22 +600,20 @@ dataline ))
     `endif
 
       // -- allocate store-buffer
-      //if(req.access != 0 && onehot_hit[2]==1) begin
-      //  if(rg_fbhead == fromInteger(v_fbsize-1))
-      //    rg_fbhead <=0;
-      //  else
-      //    rg_fbhead <= rg_fbhead + 1;
-      //  v_fb_valid[rg_fbhead] <= True;
-      //  v_fb_addr[rg_fbhead] <= phyaddr;
-      //  v_fb_dirty[rg_fbhead] <= v_reg_dirty[set_index][wr_ram_hitway];
-      //  v_fb_enables[rg_fbhead] <= '1;
-      //  v_fb_err[rg_fbhead] <= 0;
-      //  v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
-      //  v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
-      //  v_fb_dirty[rg_fbhead] <=  wr_ram_hitline;
-      ////  storebuffer.ma_allocate_entry(phyaddr, req.data, req.epochs, rg_fbhead,
-      ////                                                    truncate(req.size), False);
-      //end
+      if(req.access != 0 && onehot_hit[2]==1) begin
+        if(rg_fbhead == fromInteger(v_fbsize-1))
+          rg_fbhead <=0;
+        else
+          rg_fbhead <= rg_fbhead + 1;
+        v_fb_valid[rg_fbhead] <= True;
+        v_fb_addr[rg_fbhead] <= phyaddr;
+        v_fb_dirty[rg_fbhead] <= v_reg_dirty[set_index][wr_ram_hitway];
+        v_fb_enables[rg_fbhead] <= '1;
+        v_fb_err[rg_fbhead] <= 0;
+        v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
+        v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
+        v_fb_data[rg_fbhead] <=  wr_ram_hitline;
+      end
 
     endrule
 
