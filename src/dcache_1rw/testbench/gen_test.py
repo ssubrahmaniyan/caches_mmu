@@ -833,32 +833,34 @@ def random_read():
     entrycount=entrycount+1
 
     for i in range(256000):
-        address = int(random.randrange(0, maxaddr, 4))
+#maxaddr=262143
+        address = int(random.randrange(0, 262143, 4))
         access_size = random.choice([byte,hword,word])
         sign = random.choice([signed,unsigned])
-        write_to_file(address, read, access_size, sign, nodelay, nofence)
+        access = random.choice([read,write])
+        write_to_file(address, access, access_size, sign, nodelay, nofence)
         entrycount = entrycount + 1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
     return 0
 
-test1()
-test2()
-test3()
-test4()
-test5()
-#test6() 
-test7()
-test8()
-test9()
-test10()
-test11()
-test12()
-test13()
-test14a()
-test14b()
-test15()
+#test1()
+#test2()
+#test3()
+#test4()
+#test5()
+##test6() 
+#test7()
+#test8()
+#test9()
+#test10()
+#test11()
+#test12()
+#test13()
+#test14a()
+#test14b()
+#test15()
 #test16()
 #test17()
 #test18()

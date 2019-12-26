@@ -81,7 +81,8 @@ package storebuffer;
   } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
     deriving(Bits, FShow, Eq);
 
-  module mk_storebuffer(Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
+  module mk_storebuffer#(parameter Bit#(32) id)
+    (Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
     provisos( Log#(wordsize,wordbits),
               Mul#(wordsize,8,dataword),
               Add#(b__, wordbits, TMul#(wordbits, 2)),
@@ -130,8 +131,10 @@ package storebuffer;
       for (Integer i = 0; i<valueOf(sbsize); i = i + 1) begin
         data_values[i] = storemask[i] & data_values[i];
       end
+      Bit#(wordbits) zeros = 0;
+      Bit#(TMul#(wordbits,2)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
 
-      return tuple2(fold(fn_OR,storemask),fold(fn_OR,data_values));
+      return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
 
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
@@ -151,9 +154,12 @@ package storebuffer;
 
       Bit#(dataword) storemask = temp << shiftamt;
       v_sb_valid[rg_tail] <= True;
-      v_sb_meta[rg_tail] <= Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
+      let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
                                       io: io, mask: storemask, size:truncate(size)};
+      v_sb_meta[rg_tail] <= _s;
       rg_tail <= rg_tail + 1;
+      `logLevel( storebuffer, 0, $format("SB[%2d]: Allocating sbindex:%d with ",id,rg_tail,
+                                          fshow(_s)))
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
@@ -166,11 +172,11 @@ package storebuffer;
     method mv_cacheable_store = v_sb_meta[rg_head].io;
   endmodule
 
-  (*synthesize*)
-  module mksb_instance(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, 1));
-    let ifc();
-    mk_storebuffer _temp(ifc);
-    return ifc;
-  endmodule
+//  (*synthesize*)
+//  module mksb_instance(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, 1));
+//    let ifc();
+//    mk_storebuffer#(0) _temp(ifc);
+//    return ifc;
+//  endmodule
 endpackage
 

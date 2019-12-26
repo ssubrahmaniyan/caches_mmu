@@ -71,7 +71,7 @@ package dmem_tb;
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
-  Reg#(Bool) rg_do_perform_store <- mkDReg(False);
+  Reg#(Bool) rg_do_perform_store <- mkReg(False);
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
 
@@ -158,7 +158,7 @@ package dmem_tb;
   endrule
 
 
-  rule core_resp(ff_req.first[35:0]!='1);
+  rule core_resp(ff_req.first[35:0]!='1 && !rg_do_perform_store);
     let resp <- dmem.core_resp.get();
     let req = ff_req.first;
     ff_req.deq();
@@ -195,7 +195,9 @@ package dmem_tb;
   endrule
 
   rule rl_perform_store (rg_do_perform_store);
-        let complete<-dmem.perform_store(0);
+    let complete<-dmem.perform_store(0);
+    `logLevel( tb, 0, $format("TB: Performing STORE"))
+    rg_do_perform_store <= False;
   endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid);
@@ -226,6 +228,49 @@ package dmem_tb;
 						   last : (rg_read_burst_count==rd_req.burst_len),
                                                                                         err:False});
     `logLevel( tb, 0, $format("TB: Memory Read index: %d responding with: %h ",index,dat))
+  endrule
+  
+  rule write_mem_request(write_mem_req matches tagged Invalid);
+    let req = dmem.write_mem_req_rd;
+    dmem.write_mem_req_deq;
+    write_mem_req<=tagged Valid req;
+    `logLevel( tb, 0, $format("TB: Memory Write request",fshow(req)))
+  endrule
+
+  rule write_mem_resp(write_mem_req matches tagged Valid .req);
+    //let {addr, burst, size, writedata}=req;
+    let wr_req=req;
+    if(rg_write_burst_count == wr_req.burst_len) begin
+      rg_write_burst_count<=0;
+      write_mem_req<=tagged Invalid;
+      dmem.write_mem_resp.put(False);
+      `logLevel( tb, 0, $format("TB: Sending write response back"))
+      `logLevel( tb, 0, $format("TB: write_mem_req is ",fshow(write_mem_req)))
+    end
+    else begin
+      rg_write_burst_count<=rg_write_burst_count+1;
+      //let nextdata=writedata>>32;
+      let nextdata=wr_req.data>>`vaddr;
+      write_mem_req <= tagged Valid (DCache_mem_writereq{address:(axi4burst_addrgen(wr_req.burst_len,zeroExtend(wr_req.burst_size),2,wr_req.address)),
+							burst_len:wr_req.burst_len,
+							burst_size:wr_req.burst_size,
+							data:nextdata}); // parameterize
+      `logLevel( tb, 0, $format("TB: write_mem_req is ",fshow(write_mem_req)))
+    end
+    
+    let v_wordbits = valueOf(TLog#(`dwords));
+    Bit#(19) index = truncate(wr_req.address>>v_wordbits);
+    let loaded_data=data.sub(index);
+    let size = wr_req.burst_size;
+
+    Bit#(`vaddr) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
+    Bit#(TLog#(`dwords)) shift_amt=wr_req.address[v_wordbits-1:0];
+    mask= mask<<shift_amt;
+
+    Bit#(`vaddr) write_word=~mask&loaded_data|mask&truncate(wr_req.data);
+    data.upd(index,write_word);
+    `logLevel( tb, 0, $format("TB: Updating Memory index: %d with: %h burst_count: %d burst: %d", 
+                                      index,write_word,rg_write_burst_count,wr_req.burst_len))
   endrule
 
 endmodule

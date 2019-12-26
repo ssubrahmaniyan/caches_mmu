@@ -93,9 +93,17 @@ package test_icache;
             'b110: zeroExtend(temp[31:0]);
             default: truncate(temp);
           endcase;
+        
+        Bit#(ibuswidth) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
+        Bit#(TAdd#(3,TLog#(wordsize))) shift_amt={addr[v_wordbits-1:0],3'b0};
+        mask= mask<<shift_amt;
+        Bit#(ibuswidth) write_word=~mask&loaded_data|mask&zeroExtend(data);
 
-        `logLevel( testcache, 0, $format("\tTEST: addr: %h index: %d access: %d size: %b Loadeddata: %h",
-          addr, index, access, size, loaded_data))
+        `logLevel( testcache, 0, $format("\tTEST: addr: %h index: %d access: %d size: %b \
+  Loadeddata: %h write_word:%h mask:%h",
+          addr, index, access, size, loaded_data, write_word, mask))
+        if(access==1)
+          mem.upd(index,write_word);
       return response_word;
     endmethod
   endmodule
