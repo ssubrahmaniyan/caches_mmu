@@ -106,6 +106,18 @@ package dcache;
   `endif
   endinterface
 
+`ifdef coherency
+  /*doc:func: function to return True is ownership permissions fail*/
+  function fn_permission_fail (Bit#(2) access, Cacheline_state curr_state);
+    if (access == 0 && curr_state == Cacheline_state_I)
+      return True;
+    else if(access != 0 && curr_state != Cacheline_state_M)
+      return True;
+    else
+      return False;
+  endfunction
+`endif
+
   /*doc:module: */
   // both update rg_handling_miss but can never fire together
   (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
@@ -398,10 +410,11 @@ package dcache;
     // ----------------------- Coherency related structures -----------------------------------//
   `ifdef coherency
     /*doc:reg: This is an arry of coherency states for each of the lines in the RAMs*/
-    Vector#( sets, Vector#(ways,Reg#(C1))) v_reg_states <- replicateM(replicateM(mkRegA(C1_I)));
+    Vector#( sets, Vector#(ways,Reg#(Cacheline_state))) v_reg_states <- 
+                                            replicateM(replicateM(mkRegA(Cacheline_state_I)));
 
     /*doc:reg: This is an arry of coherency states for each of the lines in the FB*/
-    Vector#(fbsize, Reg#(C1)) v_fb_states <- replicateM(mkReg(C1_I));
+    Vector#(fbsize, Reg#(Cacheline_state)) v_fb_states <- replicateM(mkReg(Cacheline_state_I));
   `endif
 
     // --------------------------- Rule operations ------------------------------------- //
@@ -432,15 +445,27 @@ package dcache;
       Bit#(paddr) final_address={tag, rg_fence_set, zeros};
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
+    `ifdef coherency
+      Cacheline_state lv_cc_state   = v_reg_states[rg_fence_set][rg_fence_way];
+    `endif
       `logLevel( dcache, 0, $format("DCACHE[%2d]: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
 Dirty:%b Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address, 
 dataline ))
-      if( lv_dirty == 1 && lv_valid == 1) begin
+    `ifdef coherency
+      Bool writeback_condition = lv_cc_state != Cacheline_state_I;
+    `else
+      Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
+    `endif
+      if( writeback_condition) begin
         let lv_req = DCache_mem_writereq{address   : final_address,
                                          burst_len  : fromInteger(valueOf(blocksize) - 1),
                                          burst_size : fromInteger(valueOf(TLog#(wordsize))),
                                          data       : dataline,
-                                         io: False};
+                                         io: False
+                                        `ifdef coherency
+                                         ,curr_state: lv_cc_state
+                                        `endif
+                                          };
         ff_write_mem_request.enq(lv_req);
         `logLevel( dcache, 2, $format("DCACHE[%2d]: Fence: Sending to Memory:",id,fshow(lv_req)))
       end
@@ -458,6 +483,11 @@ dataline ))
         for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
           v_reg_valid[i] <= 0 ;
           v_reg_dirty[i] <= 0 ;
+        `ifdef coherency
+          for (Integer j = 0; j<v_ways; j = j + 1) begin
+            v_reg_states[i][j] <= Cacheline_state_I;
+          end
+        `endif
         end
         rg_globaldirty <= False;
         rg_fence_stall <= False;
@@ -507,17 +537,19 @@ dataline ))
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       
-
-
       Vector#(v_ways, Bit#(respwidth)) dataword;
       Vector#(v_ways, Bit#(linewidth)) lines;
+    `ifdef coherency
+      Vector#(v_ways, Cacheline_state) curr_states = readVReg(v_reg_states[set_index]);
+    `endif
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
         dataword[i] = truncate(bram_data[i].read_response >> block_offset);
         lines[i] = bram_data[i].read_response;
       end
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
+        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag
+          `ifdef coherency && !fn_permission_fail(req.access, curr_states[i]) `endif );
       end
 
       Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
@@ -561,13 +593,17 @@ dataline ))
                                                       {phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       
       Vector#(fbsize, Bit#(respwidth)) lv_respwords;
+    `ifdef coherency
+      Vector#(fbsize, Cacheline_state) curr_states = readVReg(v_fb_states);
+    `endif
       Bit#(fbsize) lv_hit = 0;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_respwords[i] = truncate(v_fb_data[i] >> block_offset);
       end
 
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
-        lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
+        lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]
+                    `ifdef coherency && !fn_permission_fail(req.access, curr_states[i]) `endif );
       end
       Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
       Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
@@ -696,6 +732,11 @@ dataline ))
         v_fb_dirty[rg_fbhead] <= v_reg_dirty[set_index][wr_ram_hitway];
         v_fb_enables[rg_fbhead] <= '1;
         v_fb_err[rg_fbhead] <= 0;
+      `ifdef coherency
+        v_fb_states[rg_fbhead] <= v_reg_states[set_index][wr_ram_hitway];
+        v_reg_states[set_index][wr_ram_hitway] <= Cacheline_state_I;
+      `endif
+
 
         // invalidate the entries in the RAM since they not reside inside the FB
         v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
