@@ -29,6 +29,9 @@ Details:
 --------------------------------------------------------------------------------------------------
 */
 package cache_types;
+`ifdef coherency
+  import coherence_types :: * ;
+`endif
 
   // ---------------------- Instruction Cache types ---------------------------------------------//
   typedef struct{
@@ -67,7 +70,7 @@ package cache_types;
     Bit#(3)       burst_size;
     Bool          io;
   `ifdef coherency
-    C1            curr_state;
+    Cacheline_state  curr_state;
   `endif
   } DCache_mem_readreq#( numeric type addr) deriving(Bits, Eq, FShow);
 
@@ -83,6 +86,9 @@ package cache_types;
     Bit#(8)         burst_len;
     Bit#(3)         burst_size;
     Bool            io;
+  `ifdef coherency
+    Cacheline_state  curr_state;
+  `endif
   } DCache_mem_writereq#(numeric type addr, numeric type data) deriving(Bits, Eq, FShow);
 
   typedef Bool DCache_mem_writeresp;

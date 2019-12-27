@@ -30,6 +30,9 @@ else ifeq ($(COVERAGE),all)
 else
   coverage := --coverage-$(COVERAGE)
 endif
+ifeq ($(COHERENCE),enable)
+	override define_macros += -D coherency
+endif
 
 ifeq ($(TRACE), enable)
   trace := --trace
