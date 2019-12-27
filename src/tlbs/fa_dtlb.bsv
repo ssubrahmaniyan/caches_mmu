@@ -146,7 +146,7 @@ package fa_dtlb;
       end
       rg_sfence <= False;
       rg_replace <= 0;
-      `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
+      `logLevel( dtlb, 1, $format("DTLB[%2d]: SFencing Now",hartid))
     endrule
 
     /*doc:rule: */
@@ -156,7 +156,7 @@ package fa_dtlb;
       Bit#(12) page_offset = lookup.va[11 : 0];
       Bit#(`vpnsize) fullvpn = truncate(lookup.va >> 12);
       Bit#(2) priv = mprv == 0?wr_priv : mpp;
-      `logLevel( dtlb, 1, $format("DTLB: LookupResult: ",fshow(lookup)))
+      `logLevel( dtlb, 1, $format("DTLB[%2d]: LookupResult: ",hartid,fshow(lookup)))
       if(lookup.translation_done)begin
         ff_core_response.enq(DTLB_core_response{address: truncate(lookup.va),
                                              trap: lookup.trap,
@@ -180,11 +180,11 @@ package fa_dtlb;
         Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
       `endif
 
-        `logLevel( dtlb, 2, $format("mask:%h",mask))
-        `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
-        `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
-        `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
-        `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+        `logLevel( dtlb, 2, $format("DTLB[%2d]: mask:%h",hartid,mask))
+        `logLevel( dtlb, 2, $format("DTLB[%2d]: lower_ppn:%h",hartid,lower_ppn))
+        `logLevel( dtlb, 2, $format("DTLB[%2d]: lower_vpn:%h",hartid,lower_vpn))
+        `logLevel( dtlb, 2, $format("DTLB[%2d]: lower_pa:%h",hartid,lower_pa))
+        `logLevel( dtlb, 2, $format("DTLB[%2d]: highest_ppn:%h",hartid,highest_ppn))
 
         // check for permission faults
       `ifndef sv32
@@ -219,8 +219,8 @@ package fa_dtlb;
                                                  tlbmiss  : True});
         end
         else begin
-          `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-          `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
+          `logLevel( dtlb, 0, $format("DTLB[%2d]: Sending PA:%h Trap:%b",hartid, physicaladdress, page_fault))
+          `logLevel( dtlb, 0, $format("DTLB[%2d]: Hit in TLB:",hartid,fshow(pte)))
           ff_core_response.enq(DTLB_core_response{address  : truncate(physicaladdress),
                                                trap     : page_fault,
                                                cause    : cause,
@@ -232,7 +232,7 @@ package fa_dtlb;
     interface core_request = interface Put
       method Action put (DTLB_core_request#(`vaddr) req) if(!rg_sfence);
 
-        `logLevel( dtlb, 0, $format("core id:%2d ", hartid,"DTLB: received req: ",fshow(req)))
+        `logLevel( dtlb, 0, $format("DTLB[%2d]: received req: ",hartid,fshow(req)))
 
         Bit#(12) page_offset = req.address[11 : 0];
         Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
@@ -307,7 +307,7 @@ package fa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          `logLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
+          `logLevel( dtlb, 0, $format("DTLB[%2d]: Allocating index:%d for Tag:",hartid, rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
           rg_replace <= rg_replace + 1;
         end
