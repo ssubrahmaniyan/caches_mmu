@@ -72,9 +72,7 @@ package dmem_tb;
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
-  //FIFOF#(Bool) ff_perform_store <- mkSizedFIFOF(2);
-  /*doc:reg: */
-  Reg#(Bool) rg_perform_store <- mkDReg(False);
+  FIFOF#(Bool) ff_perform_store <- mkUGSizedFIFOF(2);
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
 
@@ -173,12 +171,12 @@ package dmem_tb;
     Bit#(TMul#(`dwords, 8)) writedata=truncateLSB(req);
 
     if(fence==0)begin
-      if(readwrite!=0 && !dmem.mv_commit_store_ready)begin
+      if(readwrite!=0 && !ff_perform_store.notFull)begin
         `logLevel( tb, 0, $format("TB: Waiting for Store to be ready"))
       end
       else begin
         if (readwrite==2 || readwrite == 1)
-          rg_perform_store <= True; 
+          ff_perform_store.enq(True); 
         let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,writedata);
         Bool metafail=False;
         Bool datafail=False;
@@ -208,7 +206,8 @@ package dmem_tb;
     end
   endrule
 
-  rule rl_perform_store(rg_perform_store) ;
+  rule rl_perform_store(ff_perform_store.notEmpty && dmem.mv_commit_store_ready) ;
+    ff_perform_store.deq;
     let complete<-dmem.perform_store(0);
     `logLevel( tb, 0, $format("TB: Performing STORE"))
   endrule
