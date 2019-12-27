@@ -23,11 +23,11 @@ ECC=disable
 ECC_TEST=disable
 
 THREADS=1
-COVERAGE=line
+COVERAGE=none
 TRACE=disable
 
 TOP_MODULE:=mkdmem_tb
-DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../:../../tlbs/
+DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
 TOP_DIR:= ./
 TOP_FILE:= dmem_tb.bsv
 

@@ -35,6 +35,7 @@ package storebuffer;
   import SpecialFIFOs :: * ;
   import Vector :: * ; 
   import BUtils :: * ;
+  import ConfigReg :: * ;
 
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
@@ -95,7 +96,7 @@ package storebuffer;
     
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
-    Vector#(sbsize, Reg#(Bool)) v_sb_valid <- replicateM(mkReg(False));
+    Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
     /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
      * to the cache*/
     Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 

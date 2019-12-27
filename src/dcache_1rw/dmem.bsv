@@ -80,6 +80,7 @@ package dmem;
     interface Put#(DCache_mem_readresp#(`dbuswidth)) read_mem_resp;
     method Bool cacheable_store;
     method Bool cache_available;
+    method Bool mv_commit_store_ready;
 `ifdef dcache
 //    interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
 //    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) nc_read_resp;
@@ -185,7 +186,8 @@ package dmem;
       dcache.ma_perform_store(currepoch);
     endmethod
     method cacheable_store    =dcache.mv_cacheable_store;
-      method cache_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
+    method cache_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
+    method mv_commit_store_ready = dcache.mv_commit_store_ready;
     method storebuffer_empty  =dcache.mv_storebuffer_empty;
 `ifdef supervisor
     interface ptw_resp = dcache.ptw_resp;

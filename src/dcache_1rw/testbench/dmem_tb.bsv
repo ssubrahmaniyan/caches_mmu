@@ -43,6 +43,7 @@ package dmem_tb;
   import test_icache::*;
   import globals :: * ;
   `include "Logger.bsv"
+  import io_func :: * ;
 
 
   (*synthesize*)
@@ -71,7 +72,9 @@ package dmem_tb;
   Reg#(Bit#(8)) rg_read_burst_count <- mkReg(0);
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
-  Reg#(Bool) rg_do_perform_store <- mkReg(False);
+  //FIFOF#(Bool) ff_perform_store <- mkSizedFIFOF(2);
+  /*doc:reg: */
+  Reg#(Bool) rg_perform_store <- mkDReg(False);
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
 
@@ -158,7 +161,7 @@ package dmem_tb;
   endrule
 
 
-  rule core_resp(ff_req.first[35:0]!='1 && !rg_do_perform_store);
+  rule core_resp(ff_req.first[35:0]!='1);
     let resp <- dmem.core_resp.get();
     let req = ff_req.first;
     ff_req.deq();
@@ -170,34 +173,44 @@ package dmem_tb;
     Bit#(TMul#(`dwords, 8)) writedata=truncateLSB(req);
 
     if(fence==0)begin
-      if (readwrite==2 || readwrite == 1)
-           rg_do_perform_store <= True; 
-      let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,writedata);
-      Bool metafail=False;
-      Bool datafail=False;
+      if(readwrite!=0 && !dmem.mv_commit_store_ready)begin
+        `logLevel( tb, 0, $format("TB: Waiting for Store to be ready"))
+      end
+      else begin
+        if (readwrite==2 || readwrite == 1)
+          rg_perform_store <= True; 
+        let expected_data<-testcache.memory_operation(truncate(req),readwrite,size,writedata);
+        Bool metafail=False;
+        Bool datafail=False;
+        let lv_req_io = isIO(truncate(req),True);
   
-      if(expected_data!=resp.word)begin
-          `logLevel( tb, 0, $format("TB: Output from cache is wrong for Req: %h",req))
-          `logLevel( tb, 0, $format("TB: Expected: %h, Received: %h",expected_data,resp.word))
-          datafail=True;
-      end
+        if(lv_req_io && readwrite !=0) begin
+          `logLevel( tb, 0, $format("TB: Core received NC Write Response: ",fshow(resp)," For req:  %h",req))
+        end
+        else begin
+          if(expected_data!=resp.word)begin
+              `logLevel( tb, 0, $format("TB: Output from cache is wrong for Req: %h",req))
+              `logLevel( tb, 0, $format("TB: Expected: %h, Received: %h",expected_data,resp.word))
+              datafail=True;
+          end
 
-      if(metafail||datafail)begin
-        $display("\tTB: Test: %d Failed",rg_test_count);
-        $finish(0);
+          if(metafail||datafail)begin
+            $display("\tTB: Test: %d Failed",rg_test_count);
+            $finish(0);
+          end
+          else
+            `logLevel( tb, 0, $format("TB: Core received correct response: ",fshow(resp)," For req:  %h",req))
+        end
       end
-      else
-        `logLevel( tb, 0, $format("TB: Core received correct response: ",fshow(resp)," For req:  %h",req))
     end
     else begin
       `logLevel( tb, 0, $format("TB: Response from Cache: ",fshow(resp)))
     end
   endrule
 
-  rule rl_perform_store (rg_do_perform_store);
+  rule rl_perform_store(rg_perform_store) ;
     let complete<-dmem.perform_store(0);
     `logLevel( tb, 0, $format("TB: Performing STORE"))
-    rg_do_perform_store <= False;
   endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid);
@@ -216,7 +229,8 @@ package dmem_tb;
       rg_read_burst_count<=rg_read_burst_count+1;
       read_mem_req <= tagged Valid (DCache_mem_readreq{address : (axi4burst_addrgen(rd_req.burst_len,rd_req.burst_size,2,rd_req.address)),
 						       burst_len : rd_req.burst_len,
-						       burst_size : rd_req.burst_size}); // parameterize
+						       burst_size : rd_req.burst_size,
+						       io: rd_req.io}); // parameterize
     end
     let v_wordbits = valueOf(TLog#(`dwords));
     Bit#(19) index = truncate(rd_req.address>>v_wordbits);
@@ -264,13 +278,13 @@ package dmem_tb;
     let size = wr_req.burst_size;
 
     Bit#(`vaddr) mask = size[1:0]==0?'hFF:size[1:0]==1?'hFFFF:size[1:0]==2?'hFFFFFFFF:'1;
-    Bit#(TLog#(`dwords)) shift_amt=wr_req.address[v_wordbits-1:0];
+    Bit#(TAdd#(3,TLog#(`dwords))) shift_amt={wr_req.address[v_wordbits-1:0],3'b0};
     mask= mask<<shift_amt;
 
     Bit#(`vaddr) write_word=~mask&loaded_data|mask&truncate(wr_req.data);
     data.upd(index,write_word);
-    `logLevel( tb, 0, $format("TB: Updating Memory index: %d with: %h burst_count: %d burst: %d", 
-                                      index,write_word,rg_write_burst_count,wr_req.burst_len))
+    `logLevel( tb, 0, $format("TB: Updating Memory index: %d with: %h burst_count: %d burst: %d\
+  mask:%h loaddata:%h", index,write_word,rg_write_burst_count,wr_req.burst_len, mask, loaded_data))
   endrule
 
 endmodule
