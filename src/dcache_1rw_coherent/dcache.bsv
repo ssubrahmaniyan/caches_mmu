@@ -81,11 +81,17 @@ package dcache;
                            );
     interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
+  `ifdef coherency
+    interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_request_to_fabric;
+    interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_to_fabric;
+    interface Put#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_from_fabric;
+  `else
     interface Get#(DCache_mem_readreq#(paddr)) read_mem_req;
     interface Put#(DCache_mem_readresp#(buswidth)) read_mem_resp;
     method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) write_mem_req;
     method Action write_mem_req_deq;
     interface Put#(DCache_mem_writeresp) write_mem_resp;
+  `endif
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
@@ -100,28 +106,30 @@ package dcache;
     method Bool mv_cacheable_store;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
-  `ifdef coherency
-    method Action ma_coherence_request;
-//    method ? mv_coherence_response;
-  `endif
   endinterface
 
 `ifdef coherency
-  /*doc:func: function to return True is ownership permissions fail*/
-  function Bool fn_permission_fail (Bit#(2) access, Cacheline_state curr_state);
-    if (access == 0 && curr_state == Cacheline_state_I)
+  function Access fn_genAccess(Bit#(2) access);
+    case (access)
+      'd0: return Load;
+      'd1,'d2: return Store;
+      default: return None;
+    endcase
+  endfunction
+
+  function Bool fn_permissions_avail(Bit#(2) a, Access p);
+    let access = fn_genAccess(a);
+    if( p == Store)
       return True;
-    else if(access != 0 && curr_state != Cacheline_state_M)
+    else if( (p == Load || p==Store) && (access == Load))
       return True;
     else
       return False;
   endfunction
 
-  function Bool fn_permission_upgrade (Bit#(2) access, Cacheline_state curr_state);
-    if(access !=0 && curr_state == Cacheline_state_S)
-      return True;
-    else
-      return False;
+  function Bool fn_upgrade_required(Bit#(2) a, Cacheline_state s, Access p);
+    let access = fn_genAccess(a);
+    return (access == Store && access !=p && s == Cacheline_state_S);
   endfunction
 
   function Bool fn_is_stable (Cacheline_state curr_state);
@@ -130,6 +138,24 @@ package dcache;
       default: return False;
     endcase
   endfunction
+
+  /*doc:func: function to return True is ownership permissions fail*/
+  //function Bool fn_permission_fail (Bit#(2) access, Cacheline_state curr_state);
+  //  if (access == 0 && curr_state == Cacheline_state_I)
+  //    return True;
+  //  else if(access != 0 && curr_state != Cacheline_state_M)
+  //    return True;
+  //  else
+  //    return False;
+  //endfunction
+
+  //function Bool fn_permission_upgrade (Bit#(2) access, Cacheline_state curr_state);
+  //  if(access !=0 && curr_state == Cacheline_state_S)
+  //    return True;
+  //  else
+  //    return False;
+  //endfunction
+
 `endif
 
   /*doc:module: */
@@ -260,6 +286,11 @@ package dcache;
     /*doc:fifo: This fifo stores the response that needs to be sent back to the ptw.*/
     FIFOF#(DMem_core_response#(respwidth,esize))ff_ptw_response <- mkBypassFIFOF();
   `endif
+  `ifdef coherency
+    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_req_to_fabric <- mkSizedFIFOF(2);
+    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_to_fabric <- mkSizedFIFOF(2);
+    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_from_fabric <- mkSizedFIFOF(2);
+  `else
     /*doc:fifo: this fifo stores the read request that needs to be sent to the next memory level.*/
     FIFOF#(DCache_mem_readreq#(paddr)) ff_read_mem_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
@@ -268,17 +299,17 @@ package dcache;
     FIFOF#(DCache_mem_writereq#(paddr, linewidth)) ff_write_mem_request <- mkSizedFIFOF(1);
     /*doc:fifo: this fifo stores the write response from an eviction or a io write req*/
     FIFOF#(DCache_mem_writeresp) ff_write_mem_response  <- mkBypassFIFOF();
-    /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
-    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_hold_request <- mkBypassFIFOF();
-
+  `endif
   `ifdef supervisor 
     /*doc:fifo: this fifo receives the physical address from the TLB */
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
+    /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
+    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_hold_request <- mkBypassFIFOF();
   `endif
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
     /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
-    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8),fbsize)) ff_pending_req <- mkUGSizedFIFOF(2);
+    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8),fbsize)) ff_pending_req <- mkUGSizedFIFOF(2);    //TODO
 
     // -------------------- Register declarations ----------------------------------------------//
 
@@ -298,7 +329,9 @@ package dcache;
     Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_err      <- replicateM(mkReg(0));
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkReg(0));
+  `ifndef coherency
     Vector#(fbsize,Reg#(Bit#(TDiv#(linewidth,8))))  v_fb_enables  <- replicateM(mkReg(0));
+  `endif
     Vector#(fbsize,Reg#(Bit#(paddr)))               v_fb_addr     <- replicateM(mkReg(0));
 
     /*doc:reg: register pointing to next entry being allotted on the filbuffer*/
@@ -426,8 +459,24 @@ package dcache;
     Vector#( sets, Vector#(ways,Reg#(Cacheline_state))) v_reg_states <- 
                                             replicateM(replicateM(mkRegA(Cacheline_state_I)));
 
+    /*doc:reg: This is an arry of permitted ops for each of the lines in the RAMs*/
+    Vector#( sets, Vector#(ways,Reg#(Access))) v_reg_perm <- replicateM(replicateM(mkRegA(None)));
+
+    Vector#( sets, Vector#(ways, Reg#(Bit#(TLog#(`NrCaches))))) v_reg_acksR 
+                      <- replicateM(replicateM(mkReg(0)));
+
+    Vector#( sets, Vector#(ways, Reg#(Bit#(TLog#(`NrCaches))))) v_reg_acksE
+                      <- replicateM(replicateM(mkReg(0)));
+
     /*doc:reg: This is an arry of coherency states for each of the lines in the FB*/
     Vector#(fbsize, Reg#(Cacheline_state)) v_fb_states <- replicateM(mkReg(Cacheline_state_I));
+    
+    /*doc:reg: This is an arry of permitted ops for each of the lines in the FB*/
+    Vector#(fbsize, Reg#(Access)) v_fb_perm <- replicateM(mkReg(None));
+
+    Vector#(fbsize,Reg#(Bit#(TLog#(`NrCaches))))    v_fb_acksR    <- replicateM(mkReg(0));
+
+    Vector#(fbsize,Reg#(Bit#(TLog#(`NrCaches))))    v_fb_acksE    <- replicateM(mkReg(0));
 
     /*doc:wire: when true indicates that the requested line exists in the RAM but does not hold the
     * required permissions*/
@@ -438,14 +487,16 @@ package dcache;
     Wire#(Bool) wr_fb_permission_upgrade <- mkDWire(False);
 
     Bool fb_stable = fn_is_stable(v_fb_states[rg_fbtail]);
+    /*doc:reg: */
+    Reg#(Bool) rg_ram_cc_update <- mkReg(False);
   `endif
 
     // --------------------------- Rule operations ------------------------------------- //
 
     /*doc:rule: */
     rule rl_print_stats;
-      `logLevel( dcache, 2, $format("DCACHE[%2d]: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d FEB:%b",
-      id, fb_full, fb_empty, rg_fbhead, rg_fbtail, &(v_fb_enables[rg_fbtail])))
+      `logLevel( dcache, 2, $format("DCACHE[%2d]: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d",
+      id, fb_full, fb_empty, rg_fbhead, rg_fbtail))
       `logLevel( dcache, 2, $format("DCACHE[%2d]: sb_full:%b sb_empty:%b ",
                                     id,sb_full, sb_empty))
     endrule
@@ -474,22 +525,29 @@ dataline ))
     `ifdef coherency
       Cacheline_state lv_cc_state   = v_reg_states[rg_fence_set][rg_fence_way];
       Bool writeback_condition = lv_cc_state != Cacheline_state_I;
+      if( writeback_condition) begin
+        let _t = ENTRY_Cacheline_state{state:lv_cc_state, perm:?, cl:dataline, acksReceived:0, acksExpected:0, 
+                            id: tagged Caches truncate(id)};
+
+        let {cacheline, message} = func_frm_core(_t, final_address, Evict);
+        if(message matches tagged Valid .m)
+          ff_req_to_fabric.enq(m);
+        rg_fence_pending <= True;
+      end
     `else
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
-    `endif
       if( writeback_condition) begin
         let lv_req = DCache_mem_writereq{address   : final_address,
                                          burst_len  : fromInteger(valueOf(blocksize) - 1),
                                          burst_size : fromInteger(valueOf(TLog#(wordsize))),
                                          data       : dataline,
                                          io: False
-                                        `ifdef coherency
-                                         ,curr_state: lv_cc_state
-                                        `endif
-                                          };
+                                        };
         ff_write_mem_request.enq(lv_req);
+        rg_fence_pending <= True;
         `logLevel( dcache, 2, $format("DCACHE[%2d]: Fence: Sending to Memory:",id,fshow(lv_req)))
       end
+    `endif
       if(lv_curr_way == fromInteger(v_ways-1))
         lv_next_set = zeroExtend(lv_curr_set) + 1;
 
@@ -525,6 +583,8 @@ dataline ))
       end
     endrule
 
+  `ifdef coherency
+  `else
     /*doc:rule: */
     rule rl_deq_write_resp(rg_fence_pending && ff_core_request.first.fence);
       rg_fence_pending <= False;
@@ -536,7 +596,7 @@ dataline ))
     rule rl_deq_write_response;
       ff_write_mem_response.deq;
     endrule
-
+  `endif
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
                       && !rg_polling_mode && !fb_full);
@@ -578,14 +638,26 @@ dataline ))
 
     `ifdef coherency
       Vector#(ways, Cacheline_state) curr_states = readVReg(v_reg_states[set_index]);
+      Vector#(ways, Access) curr_perms = readVReg(v_reg_perm[set_index]);
       Cacheline_state lv_word_state = select(curr_states,unpack(hit_tag));
-      wr_ram_permission_upgrade <= (|hit_tag == 1) &&
-                                            fn_permission_upgrade(req.access,lv_word_state);
+      Access lv_word_perm = select(curr_perms,unpack(hit_tag));
+      Bool lv_upgrade_required = fn_upgrade_required(req.access, lv_word_state, lv_word_perm);
+      Bool lv_permitted = fn_permissions_avail(req.access, lv_word_perm);
+      wr_ram_permission_upgrade <= lv_upgrade_required;
     `endif
 
-      if(lv_access_fault || (|(hit_tag) == 1 
-            `ifdef coherency && !fn_permission_fail(req.access,lv_word_state) `endif )) begin// trap or hit in RAMs
+      if(lv_access_fault) begin
         wr_ram_state <= Hit;
+      end
+      else if(|(hit_tag) == 1)begin
+      `ifdef coherency 
+        if (lv_permitted)
+          wr_ram_state <= Hit;
+        else if(lv_upgrade_required)
+          wr_ram_state <= Miss;
+      `else
+        wr_ram_state <= Hit;
+      `endif
       end
       else begin // in case of miss from cache
         wr_ram_state <= Miss;
@@ -622,35 +694,44 @@ dataline ))
     `ifdef coherency
       Vector#(fbsize, Cacheline_state) curr_states = readVReg(v_fb_states);
     `endif
-      Bit#(fbsize) lv_hit = 0;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_respwords[i] = truncate(v_fb_data[i] >> block_offset);
       end
 
+      Bit#(fbsize) lv_hit = 0;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
       end
       Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
       Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
-      Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
       wr_fb_hitindex <= truncate(pack(countZerosLSB(lv_hit))); 
       let lv_response = DMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
+      wr_fb_response <= lv_response;
     `ifdef coherency
       Cacheline_state lv_curr_state = select(readVReg(v_fb_states),unpack(lv_hit));
-      Bool lv_permission = !fn_permission_fail(req.access,lv_curr_state);
-      Bool lv_permission_upgrade = fn_permission_upgrade(req.access, lv_curr_state);
+      Access lv_curr_perm = select(readVReg(v_fb_perm),unpack(lv_hit));
+      Bool lv_upgrade_required = fn_upgrade_required(req.access, lv_curr_state, lv_curr_perm);
+      Bool lv_permitted = fn_permissions_avail(req.access, lv_curr_perm);
+      wr_fb_permission_upgrade <= lv_upgrade_required;
+    `else
+      Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
     `endif
       `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: processing Req: ",id,fshow(req)))
       if(lv_io_req && req.access != 0) begin
         wr_fb_state <= Hit;
         `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Detected NC Write",id))
       end
-      else if(|lv_hit == 1 `ifdef coherency && lv_permission `endif )begin
+      else if(|lv_hit == 1 )begin
         `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Hit in Line for Addr:%h",id,phyaddr))
+      `ifdef coherency
+        if (lv_permitted)
+          wr_fb_state <= Hit;
+        else if(lv_upgrade_required)
+          wr_fb_state <= Miss;
+      `else
         if((required_enable & lv_fb_enable) !=0)begin
           wr_fb_state <= Hit;
-          wr_fb_response <= lv_response;
           `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Required Word found",id))
           rg_polling_mode <= False;
         end
@@ -659,6 +740,7 @@ dataline ))
           rg_polling_mode <= True;
           `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Required word not available yet",id))
         end
+      `endif
       end
       else begin
         wr_fb_state <= Miss;
@@ -759,11 +841,12 @@ dataline ))
         v_fb_valid[rg_fbhead] <= True;
         v_fb_addr[rg_fbhead] <= phyaddr;
         v_fb_dirty[rg_fbhead] <= v_reg_dirty[set_index][wr_ram_hitway];
-        v_fb_enables[rg_fbhead] <= '1;
         v_fb_err[rg_fbhead] <= 0;
       `ifdef coherency
         v_fb_states[rg_fbhead] <= v_reg_states[set_index][wr_ram_hitway];
         v_reg_states[set_index][wr_ram_hitway] <= Cacheline_state_I;
+      `else
+        v_fb_enables[rg_fbhead] <= '1;
       `endif
 
         // invalidate the entries in the RAM since they not reside inside the FB
@@ -783,8 +866,7 @@ dataline ))
      * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-                                !rg_handling_miss && ! ff_core_request.first.fence && 
-                                ff_pending_req.notFull );
+                                !rg_handling_miss && ff_pending_req.notFull );
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -803,23 +885,35 @@ dataline ))
       // upgrades are demanded
     `ifdef coherency
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      Bit#(tagbits) tag = truncateLSB(phyaddr);
+      Bit#(paddr) lv_line_addr = {tag, set_index, 'd0};
       Cacheline_state lv_curr_state = wr_ram_permission_upgrade?
                                       v_reg_states[set_index][wr_ram_hitway]:
                                       wr_fb_permission_upgrade?v_fb_states[wr_fb_hitindex]:
                                       Cacheline_state_I;
-    `endif
+
+      let _t = ENTRY_Cacheline_state{state:lv_curr_state, perm:None, cl:wr_ram_hitline, 
+                                   acksReceived:0, acksExpected:0, id: tagged Caches truncate(id)};
+
+      let {cacheline, message} = func_frm_core(_t, lv_line_addr, unpack(req.access));
+      if(message matches tagged Valid .m)
+        ff_req_to_fabric.enq(m);
+    `else
        // align the address to be line-address aligned
       phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount;
       ff_read_mem_request.enq(DCache_mem_readreq{  address   : phyaddr,
                                                   burst_len  : fromInteger(burst_len),
                                                   burst_size : fromInteger(burst_size),
                                                   io: lv_io_req
-                                                `ifdef coherency
-                                                  ,curr_state : lv_curr_state 
-                                                `endif
                                               });
+    `endif
       rg_handling_miss <= True;
+    `ifdef coherency
+      Bit#(TLog#(fbsize)) lv_alotted_fb = (!wr_ram_permission_upgrade && wr_fb_permission_upgrade)?
+                      wr_fb_hitindex: rg_fbhead;
+    `else
       Bit#(TLog#(fbsize)) lv_alotted_fb = rg_fbhead;
+    `endif
 
       // -- allocate a new entry in the fillbuffer
       if(!lv_io_req) begin
@@ -829,31 +923,26 @@ dataline ))
         else
           rg_fbhead <= rg_fbhead + 1;
         
+        v_fb_valid[lv_alotted_fb] <= True;
+        v_fb_addr[lv_alotted_fb] <= phyaddr;
+        v_fb_err[lv_alotted_fb] <= 0;
       `ifdef coherency
         if(wr_ram_permission_upgrade) begin
-          v_fb_valid[rg_fbhead] <= True;
-          v_fb_addr[rg_fbhead] <= phyaddr;
-          v_fb_dirty[rg_fbhead] <= v_reg_dirty[set_index][wr_ram_hitway];
-          v_fb_enables[rg_fbhead] <= '1;
-          v_fb_err[rg_fbhead] <= 0;
-          v_fb_states[rg_fbhead] <= v_reg_states[set_index][wr_ram_hitway];
+          v_fb_dirty[lv_alotted_fb] <= v_reg_dirty[set_index][wr_ram_hitway];
+          v_fb_states[lv_alotted_fb] <= cacheline.state;
+          v_fb_data[lv_alotted_fb] <=  wr_ram_hitline;
           v_reg_states[set_index][wr_ram_hitway] <= Cacheline_state_I;
           // invalidate the entries in the RAM since they not reside inside the FB
           v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
           v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
-          v_fb_data[rg_fbhead] <=  wr_ram_hitline;
-        end
-        else if(wr_fb_permission_upgrade) begin
-          lv_alotted_fb = wr_fb_hitindex;
         end
         else 
       `endif
         begin
-          v_fb_valid[rg_fbhead] <= True;
-          v_fb_addr[rg_fbhead] <= phyaddr;
-          v_fb_dirty[rg_fbhead] <= 0;
-          v_fb_enables[rg_fbhead] <= 0;
-          v_fb_err[rg_fbhead] <= 0;
+          v_fb_dirty[lv_alotted_fb] <= 0;
+        `ifndef coherency
+          v_fb_enables[lv_alotted_fb] <= 0;
+        `endif
         end
         `logLevel( dcache, 0, $format("DCACHE[%2d]: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
@@ -884,6 +973,94 @@ dataline ))
       end
     endrule
 
+  `ifdef coherency
+    /*doc:rule: */
+    rule rl_fill_from_memory (!rg_ram_cc_update);
+      let response = ff_resp_from_fabric.first;
+      Bit#(setbits) set_index = response.address[v_setbits + v_blockbits + v_wordbits - 1 :
+                                                                         v_blockbits + v_wordbits];
+
+      Bit#(TAdd#(tagbits,setbits)) inmsg_addr = truncateLSB(response.address);
+      let pending_req = ff_pending_req.first;
+      function Bool _pred(Bit#(paddr) addr);
+        return (inmsg_addr == truncateLSB(addr));
+      endfunction
+
+      let _fbindex = findIndex(_pred,readVReg(v_fb_addr));
+      Bool fbhit = isValid(_fbindex);
+      let fbindex = fromMaybe(?,_fbindex);
+
+      if(fbhit) begin
+        ff_resp_from_fabric.deq;
+        let lv_cle = ENTRY_Cacheline_state{state: v_fb_states[fbindex],
+                                           perm   : None,
+                                           cl: v_fb_data[fbindex],
+                                           acksReceived: v_fb_acksR[fbindex],
+                                           acksExpected: v_fb_acksE[fbindex],
+                                           id: tagged Caches truncate(id)
+                                         };
+        let {new_cle, send_resp, enq_d1, enq_d2, send_defer}  = func_Cacheline_state(response, lv_cle);
+        if(send_resp matches tagged Valid .m)
+          ff_resp_to_fabric.enq(m);
+        v_fb_err[fbindex] <= 0;
+        v_fb_data[fbindex] <=  response.cl;
+        v_fb_acksE[fbindex] <= new_cle.acksExpected;
+        v_fb_acksR[fbindex] <= new_cle.acksReceived;
+        v_fb_perm[fbindex] <= new_cle.perm;
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: Response from Memory:",id,fshow(response)))
+      end
+      else begin // need to access ram structures
+        for(Integer i=0;i<v_ways;i=i+1)begin
+          bram_data[i].request(0,set_index,writedata);
+          bram_tag[i].request(0,set_index,writetag);
+        end
+        rg_ram_cc_update <= True;
+      end
+//      else if(response.address == pending_req.phyaddr && ff_pending_req.notEmpty 
+//                                                      && pending_req.io_request)  begin
+//        // TODO figure out how to handle io error
+//        let lv_response = DMem_core_response{word:truncate(response.cl), trap: False,
+//                                            cause: ?, epochs: ?};
+//        wr_nc_response <= lv_response;
+//        wr_nc_state <= Hit;
+//      end
+      if(response.address == pending_req.phyaddr && ff_pending_req.notEmpty &&
+                                                  !pending_req.io_request)
+        ff_pending_req.deq;
+    endrule
+    rule rl_update_ram(rg_ram_cc_update);
+      let response = ff_resp_from_fabric.first;
+      let phyaddr = response.address;
+      ff_resp_from_fabric.deq;
+      Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
+      Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      Vector#(ways, Bit#(linewidth)) lines;
+      Bit#(ways) hit_tag =0;
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
+        lines[i] = bram_data[i].read_response;
+      end
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
+        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
+      end
+      ENTRY_Cacheline_state#(TMul#(wordsize,blocksize)) lv_cle = ENTRY_Cacheline_state{
+                          state: select(readVReg(v_reg_states[set_index]),unpack(hit_tag)),
+                          perm: select(readVReg(v_reg_perm[set_index]),unpack(hit_tag)),
+                          cl: select(lines,unpack(hit_tag)),
+                          acksReceived: select(readVReg(v_reg_acksR[set_index]),unpack(hit_tag)),
+                          acksExpected: select(readVReg(v_reg_acksE[set_index]),unpack(hit_tag)),
+                          id: tagged Caches truncate(id)
+                        };
+      let {new_cle, send_resp, enq_d1, enq_d2, send_defer}  = func_Cacheline_state(response, lv_cle);
+      if(send_resp matches tagged Valid .m)
+        ff_resp_to_fabric.enq(m);
+      Bit#(TLog#(ways)) lv_ram_hitway =truncate(pack(countZerosLSB(hit_tag)));
+      v_reg_states[set_index][lv_ram_hitway] <= new_cle.state;
+      v_reg_acksE[set_index] [lv_ram_hitway] <= new_cle.acksExpected;
+      v_reg_acksR[set_index] [lv_ram_hitway] <= new_cle.acksReceived;
+      v_reg_perm[set_index]  [lv_ram_hitway] <= new_cle.perm;
+    endrule
+  `else
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
     * has been received the entire line and tag are written in to the BRAM and the fill buffer is
     * released in the next cycle*/
@@ -914,7 +1091,6 @@ dataline ))
       if(response.last)
         ff_pending_req.deq;
     endrule
-
     /*doc:rule: this rule is responsible for capturing the memory response for an IO request.*/
     rule rl_capture_io_response(ff_pending_req.notEmpty && ff_pending_req.first.io_request);
       let response = ff_read_mem_response.first;
@@ -929,6 +1105,7 @@ dataline ))
       `logLevel( dcache, 2, $format("DCACHE[%2d]: NC Response from Memory: ",id,fshow(response)))
     endrule
 
+  `endif
     /*doc:rule: 
     This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
     Multiple conditions under which this rule can fire:
@@ -946,6 +1123,97 @@ dataline ))
     5. If the line being filled in the RAM is not dirty, then the FB line simply ovrwrites the
     line in one = cycle. The latest request from the core is replayed if the replacement was to
     the same index.*/
+  `ifdef coherency
+    rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && sb_empty && !fb_empty
+                                     && !rg_performing_replay `ifdef coherency && fb_stable `endif );
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Release rule firing",id))
+      let addr = v_fb_addr[rg_fbtail];
+      Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
+                                                                         v_blockbits + v_wordbits];
+
+      let waynum <- replacement.line_replace(set_index, v_reg_valid[set_index], 
+                                                                            v_reg_dirty[set_index]);
+      `logLevel( dcache, 2, $format("DCACHE[%2d]: Release: set%d way:%d valid:%b dirty:%b",id,
+                                    set_index, waynum,v_reg_valid[set_index][waynum] , 
+                                    v_reg_dirty[set_index][waynum] ))
+      if(v_fb_err[rg_fbtail] == 0)begin
+        // enter here if the fillbuffer entry is valid and has no errors
+        if((v_reg_valid[set_index][waynum] & v_reg_dirty[set_index][waynum])==1 &&
+                                                                        !rg_release_readphase)begin
+          // enter here if the line to be replaced is valid and dirty. We thus need to first read it
+          // out and then send to the next level
+          bram_tag[waynum].request(0,set_index,writetag);
+          bram_data[waynum].request(0,set_index,writedata);
+          rg_release_readphase <= True;
+          `logLevel( dcache, 0, $format("DCACHE[%2d]: Release: Reading dirty set:%d way:%d",id,
+                                      set_index,waynum))
+        end
+        else if((v_reg_valid[set_index][waynum] & v_reg_dirty[set_index][waynum]) !=1 || 
+                                                                        rg_release_readphase)begin
+          // enter here if either the entry being replaced is not dirty or if its dirty then it has
+          // been read out of the ram in the previous cycle and is ready for eviction
+          Bit#(TSub#(paddr,TAdd#(tagbits,setbits))) zeros = 0;
+          let tag = bram_tag[waynum].read_response;
+          let data = bram_data[waynum].read_response;
+          Bit#(paddr) lv_evict_address = {tag,set_index,zeros};
+          Bit#(paddr) lv_release_address = {writetag,set_index,zeros};
+          if(rg_release_readphase) begin
+          `ifdef ASSERT
+            dynamicAssert(lv_evict_address != lv_release_address,"Eviction and Rlease of the same\
+ line happening");
+          `endif
+            `logLevel( dcache, 0, $format("DCACHE[%2d]: Evicting Addr:%h set_index:%d tag:%h\
+ data:%h", id,lv_evict_address,set_index,tag,data))
+          `ifdef coherency
+            Cacheline_state lv_cc_state   = v_reg_states[set_index][waynum];
+            let _t = ENTRY_Cacheline_state{state:lv_cc_state, perm:?, cl:data, acksReceived:0, acksExpected:0, 
+                                id: tagged Caches truncate(id)};
+
+            let {cacheline, message} = func_frm_core(_t, lv_evict_address, Evict);
+            if(message matches tagged Valid .m)
+              ff_req_to_fabric.enq(m);
+          end
+          // update the valid and dirty bits of the rams. Also release the fillbuffer entry 
+          v_reg_valid[set_index][waynum]<=1;
+          v_reg_dirty[set_index][waynum]<=v_fb_dirty[rg_fbtail];
+          v_reg_states[set_index][waynum] <= v_fb_states[rg_fbtail];
+          v_reg_acksE[set_index][waynum]<=0;
+          v_reg_acksR[set_index][waynum]<=0;
+          v_reg_perm[set_index][waynum]<=v_fb_perm[rg_fbtail];
+          bram_tag[waynum].request(1,set_index,writetag);
+          bram_data[waynum].request(1,set_index,writedata);
+          if(rg_fbtail == fromInteger(v_fbsize-1))
+            rg_fbtail <=0;
+          else
+            rg_fbtail <= rg_fbtail + 1;
+          v_fb_valid[rg_fbtail]<=False;
+          `logLevel( dcache, 0, $format("DCACHE[%2d]: Release: Upd Addr:%h set:%d way:%d tag:%h \
+ data:%h dirty:%b", id,lv_release_address, set_index,waynum,writetag, writedata,
+ v_fb_dirty[rg_fbtail]))
+          if(rg_release_readphase || set_index == rg_recent_req )
+            rg_performing_replay <= True;
+
+          // --- update the replacement policy ------------//
+          if(&v_reg_valid[set_index] == 1) begin
+            if(alg != "PLRU" )
+              replacement.update_set(set_index,waynum);
+            else begin
+              if(wr_ram_hitset matches tagged Valid .i &&& i == set_index) begin
+              end
+              else
+                replacement.update_set(set_index,waynum);
+            end
+          end
+          // ---------------------------------------------------//
+        end
+      end
+      else begin
+        // enter here only if the fillbuffer entry has an error
+        v_fb_valid[rg_fbtail]<=False;
+        rg_fbtail <= rg_fbtail + 1;
+      end
+    endrule
+  `else
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && sb_empty && !fb_empty
                                     && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay
                                 `ifdef coherency && fb_stable `endif );
@@ -1034,7 +1302,7 @@ dataline ))
         rg_fbtail <= rg_fbtail + 1;
       end
     endrule
-
+  `endif
     /*doc:rule: */
     rule rl_perform_replay(rg_performing_replay);
       for (Integer i = 0; i<v_ways; i = i + 1) begin
@@ -1075,14 +1343,20 @@ dataline ))
       wr_cache_enable <= c;
     endmethod
 
+    interface core_resp = toGet(ff_core_response);
+  `ifdef coherency
+    interface mv_request_to_fabric = toGet(ff_req_to_fabric);
+    interface mv_response_to_fabric = toGet(ff_resp_to_fabric);
+    interface mv_response_from_fabric = toPut(ff_resp_from_fabric);
+  `else
     interface read_mem_req = toGet(ff_read_mem_request);
     interface read_mem_resp = toPut(ff_read_mem_response);
-    interface core_resp = toGet(ff_core_response);
     method write_mem_req = ff_write_mem_request.first;
     method Action write_mem_req_deq;
       ff_write_mem_request.deq;
     endmethod
     interface write_mem_resp = toPut(ff_write_mem_response);
+  `endif
     // TODO
   `ifdef supervisor
     interface ptw_resp = toGet(ff_ptw_response);
@@ -1114,6 +1388,8 @@ dataline ))
       if(sb_entry.epoch == currepoch) begin
         if(sb_entry.io) begin
           `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to NC Addr:%h",id,sb_entry.addr))
+        `ifdef coherency
+        `else
           ff_write_mem_request.enq(DCache_mem_writereq{address   : sb_entry.addr,
                                                       burst_len  : 0,
                                                       burst_size : zeroExtend(sb_entry.size),
@@ -1123,6 +1399,7 @@ dataline ))
                                                       , curr_state: Cacheline_state_I
                                                     `endif
                                                   });
+        `endif
         end
         else begin
           if(ff_pending_req.notEmpty && ff_pending_req.first.fbindex == sb_entry.fbindex)begin
@@ -1144,7 +1421,8 @@ dataline ))
       end
 
     endmethod
-    method mv_commit_store_ready = ff_write_mem_request.notFull;
+    method mv_commit_store_ready = `ifdef coherency ff_req_to_fabric.notFull 
+                                    `else ff_write_mem_request.notFull `endif ;
   endmodule
 endpackage
 

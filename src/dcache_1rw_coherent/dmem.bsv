@@ -42,6 +42,10 @@ package dmem;
   import globals::*;
   import io_func::*;
   `include "cache.defines"
+  `ifdef coherency
+    import coherence_types :: *;
+    `include "coherence.defines"
+  `endif
 `ifdef dcache
   import dcache :: *;
 `else
@@ -69,24 +73,25 @@ package dmem;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) core_resp;
     method Bool storebuffer_empty;
     method Action perform_store(Bit#(`desize ) currepoch);
-  `ifdef dcache
-    method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) write_mem_req_rd;
+  `ifdef coherency
+    interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_request_to_fabric;
+    interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_to_fabric;
+    interface Put#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_from_fabric;
   `else
-    method DCache_mem_writereq#(`paddr, TMul#(`dwords, 8)) write_mem_req_rd;
-  `endif
-    method Action write_mem_req_deq;
-    method Action cache_enable(Bool c);
+    `ifdef dcache
+      method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) write_mem_req_rd;
+      interface Put#(DCache_mem_writeresp) write_mem_resp;
+    `else
+      method DCache_mem_writereq#(`paddr, TMul#(`dwords, 8)) write_mem_req_rd;
+    `endif
+      method Action write_mem_req_deq;
     interface Get#(DCache_mem_readreq#(`paddr)) read_mem_req;
     interface Put#(DCache_mem_readresp#(`dbuswidth)) read_mem_resp;
+  `endif
+    method Action cache_enable(Bool c);
     method Bool cacheable_store;
     method Bool cache_available;
     method Bool mv_commit_store_ready;
-`ifdef dcache
-//    interface Get#(DCache_mem_readreq#(`paddr)) nc_read_req;
-//    interface Put#(DCache_mem_readresp#(TMul#(`dwords, 8))) nc_read_resp;
-//    interface Get#(DCache_mem_writereq#(`paddr, TMul#( `dwords, 8))) nc_write_req;
-    interface Put#(DCache_mem_writeresp) write_mem_resp;
-`endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -169,19 +174,22 @@ package dmem;
       endmethod
     endinterface;
     interface core_resp = dcache.core_resp;
+  `ifdef coherency
+    interface mv_request_to_fabric = dcache.mv_request_to_fabric;
+    interface mv_response_to_fabric = dcache.mv_response_to_fabric;
+    interface mv_response_from_fabric = dcache.mv_response_from_fabric;
+  `else
     interface read_mem_req = dcache.read_mem_req;
     interface read_mem_resp = dcache.read_mem_resp;
+    method write_mem_req_rd = dcache.write_mem_req;
+    method write_mem_req_deq = dcache.write_mem_req_deq;
+    `ifdef dcache
+      interface write_mem_resp = dcache.write_mem_resp;
+    `endif
+  `endif
     method Action cache_enable (Bool c);
       dcache.ma_cache_enable(c);
     endmethod
-    method write_mem_req_rd = dcache.write_mem_req;
-    method write_mem_req_deq = dcache.write_mem_req_deq;
-`ifdef dcache
-    interface write_mem_resp = dcache.write_mem_resp;
-//    interface nc_write_req = dcache.nc_write_req;
-//    interface nc_read_req = dcache.nc_read_req;
-//    interface nc_read_resp = dcache.nc_read_resp;
-`endif
     method Action perform_store(Bit#(`desize ) currepoch);
       dcache.ma_perform_store(currepoch);
     endmethod
