@@ -158,6 +158,7 @@ package nb_dcache;
 	(*preempts = "rl_receive_IO_resp, rl_stage2_fb_resp_to_core"*)
 	(*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
+  (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
 
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
@@ -477,17 +478,25 @@ package nb_dcache;
     in much complex conditions for rest of the rules.
     */
 
-    rule rl_stall_for_load_after_store_to_same_word;
-			let core_req= ff_req_from_core.first;
-      //if prev req was store, and current req is load (or from PTW), and the word address matches, then stall
-      if(tpl_1(rg_prev_req_info) && (core_req.origin==Load_buffer || core_req.origin==PTW)
-      && tpl_2(rg_prev_req_info)==truncateLSB(core_req.addr)) begin
-        wr_stall_req_from_core_as_prev_was_store<= True;
-      end
+		let core_req= ff_req_from_core.first;
+    //if prev req was store, and current req is load (or from PTW), and the word address matches, then stall
+    rule rl_stall_d(tpl_1(rg_prev_req_info));
+      `logLevel( dcache, 2, $format("DCACHE_INFO : Core_req: ", fshow(core_req)))
+      `logLevel( dcache, 2, $format("DCACHE_INFO : rg_prev_req_info: ", fshow(rg_prev_req_info)))
+			Bit#(TSub#(vaddr,wordbits)) lv_prev_addr= truncateLSB(tpl_2(rg_prev_req_info));
+			Bit#(TSub#(vaddr,wordbits)) lv_curr_addr= truncateLSB(core_req.addr);
+      `logLevel( dcache, 2, $format("DCACHE_INFO : prev_addr: %h curr_addr: %h", lv_prev_addr, lv_curr_addr))
+		endrule
+
+    rule rl_stall_for_load_after_store_to_same_word(tpl_1(rg_prev_req_info) &&
+    (core_req.origin==Load_buffer || core_req.origin==PTW) &&
+    tpl_2(rg_prev_req_info)==truncateLSB(core_req.addr));
+      rg_prev_req_info<= tuple2(False, ?);
+      `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as prev was store. Core_req: ", fshow(core_req)))
     endrule
 
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
-                                 && !wr_stall_req_from_core_as_prev_was_store);
+                                 );
 			let core_req= ff_req_from_core.first;
 			ff_req_from_core.deq;
 			Bool is_actual_store= (core_req.origin == Store_commit);
@@ -905,10 +914,15 @@ package nb_dcache;
 				lv_id_to_mshr= tagged Valid truncate(resp_from_mem.id);
 			let maybe_req_from_mshr<- mshr.req_to_fb(lv_id_to_mshr);		//Receive the request from MSHR corresponding to the rid
 			`logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(maybe_req_from_mshr)))
-			if(maybe_req_from_mshr matches tagged Valid .req_from_mshr) begin
-				wr_mshr_req_to_fb<= req_from_mshr;
+			if(tpl_1(maybe_req_from_mshr)) begin
+				wr_mshr_req_to_fb<= tpl_2(maybe_req_from_mshr);
 			end
 		endrule
+
+    rule rl_mshr_addr_to_fb;
+      fill_buffer.addr_from_MSHR_to_fb(mshr.addr_to_fb);
+    endrule
+
 
 		//This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
 		//This rule polls the MSHR with the rid of memory response to know if any pending requests to that
@@ -1216,7 +1230,7 @@ package nb_dcache;
 	endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, TLog#(`num_prfs), `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TLog#(`IW_SIZE)));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
