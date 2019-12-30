@@ -840,7 +840,7 @@ package nb_dcache;
 
 			//If no flush, or when flush is happening, "req" is after flush in program order
 			//OR if fence && a store request
-			if( (!flush.valid || !should_flush(flush.head, flush.flush_rob, req.rob))
+			if( !(flush.valid && should_flush(flush.head, flush.flush_rob, req.rob))
 				  || (rg_fence && req.origin==Store_buffer) ) begin  
 				let mshr_resp<- mshr.allocate(req);
 				if(mshr_resp matches tagged Valid .read_id) begin
