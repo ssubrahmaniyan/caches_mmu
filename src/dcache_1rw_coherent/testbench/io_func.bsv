@@ -35,8 +35,6 @@ package io_func;
   function Bool isIO(Bit#(`paddr) addr, Bool cacheable);
 	  if(!cacheable)
 		  return True;
-	  else if(addr < 'h1000)
-	    return True;
 	  else
 		  return False;
   endfunction

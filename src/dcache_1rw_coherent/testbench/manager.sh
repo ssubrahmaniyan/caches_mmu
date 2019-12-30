@@ -8,11 +8,13 @@ DEPS_FOLDER=.
 repo_list=(
   $REPO_BASE/common_bsv 
   $REPO_BASE/common_verilog 
+  $REPO_BASE/uncore/fabrics/
   )
 
 branch_list=(
   master
   master
+  17-tile-link-1-8-spec-compliant-fabric
   )
 COUNT=${#repo_list[*]}
 

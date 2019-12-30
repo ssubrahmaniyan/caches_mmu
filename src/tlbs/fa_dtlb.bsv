@@ -90,7 +90,7 @@ package fa_dtlb;
   /*doc:module: */
   (*synthesize*)
   (*conflict_free="response_frm_ptw_put, core_request_put"*)
-  module mkfa_dtlb#(parameter Bit#(`vaddr) hartid) (Ifc_fa_dtlb);
+  module mkfa_dtlb#(parameter Bit#(32) hartid) (Ifc_fa_dtlb);
 
     Vector#( `dtlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 

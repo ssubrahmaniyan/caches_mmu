@@ -44,7 +44,7 @@ override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCK
 								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)
+								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH) -D bus_width=$(DBUSWIDTH)
 
 ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
   VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout
@@ -105,6 +105,7 @@ generate_verilog:
 	@cp ${BLUESPECDIR}/Verilog/Counter.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/SizedFIFO.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/RegFileLoad.v ./verilog/
+	@cp ${BLUESPECDIR}/Verilog/ConstrainedRandom.v ./verilog/
 	@$(VERILOGLICENSE)
 
 .PHONY: link_vcs

@@ -27,8 +27,8 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
-TOP_MODULE:=mkdmem_tb
-DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
+TOP_MODULE:=mktb_cache_controller
+DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/:./fabrics/shaktilink/coherence:../../llc
 TOP_DIR:= ./
-TOP_FILE:= dmem_tb.bsv
+TOP_FILE:= tb_cache_controller.bsv
 
