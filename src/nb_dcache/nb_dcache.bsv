@@ -55,7 +55,7 @@ package nb_dcache;
 	import ConfigReg::*;
 	import DefaultValue :: *;
 	import GetPut::*;
-  import mem_config::*;
+  import mem_config_nb::*;
 	import SpecialFIFOs ::*;
   import BUtils::*;
 	import mshr::*;
@@ -63,6 +63,7 @@ package nb_dcache;
 	import fa_dtlb::*;
 	import replacement_dcache::*;
 	`include "parameters.txt"
+	`include "parameters.bsv"
   `include "nb_dcache.defines"
 
   String dcache=""; // defined for Logger
@@ -213,7 +214,10 @@ package nb_dcache;
       `endif
       Add#(s__, 44, vaddr),
       Add#(t__, 56, vaddr),
-      Add#(u__, 4, vaddr)
+      Add#(u__, 4, vaddr),
+		Add#(aa_, 8, datawidth),
+		Add#(bb_, 16, datawidth),
+		Add#(cc_, 32, datawidth)
     `endif
     `ifdef atomic
       , Add#(w__, 32, datawidth)
@@ -1130,7 +1134,7 @@ package nb_dcache;
       let req= ff_io_info.first;
       ff_io_req.enq(IO_Req { addr: req.addr,
                              size: req.access_size,
-                             is_store: req.origin==Store_buffer,
+                             is_store: True, //TODO done to finish sim. Change later.
                              data: req.data });
       rg_io_req_sent<= True;
     endrule
