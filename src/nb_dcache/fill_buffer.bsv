@@ -48,6 +48,7 @@ package fill_buffer;
 															numeric type linewidth, numeric type lineoffset, numeric type wordsize, numeric type prf_index);
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data, prf_index) req);
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last, Bit#(lineoffset) offset_val);
+    method Action addr_from_MSHR_to_fb(Bit#(TSub#(paddr, lineoffset)) addr_to_fb);
 		method Action release_fb;
 		method Bool can_release;
 		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
@@ -164,6 +165,7 @@ package fill_buffer;
 
 		Wire#(MSHR_Req#(paddr, data, prf_index)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
+    Wire#(Bit#(TSub#(paddr, lineoffset))) wr_addr_from_MSHR_to_fb <-mkWire;
 		Wire#(Bool) wr_can_perform_store <- mkDWire(False);
 
 		let all_valid= (rg_valid=='1);
@@ -177,7 +179,7 @@ package fill_buffer;
 		//Also, if rg_first_resp is set as False, if the memory responds with the last data, rg_first_resp
 		//should be set as True.
 		rule rl_set_rg_first_resp(rg_first_resp && !all_valid && !tpl_2(wr_data_from_mem));
-			rg_fb_addr<= wr_req.addr[paddr_val-1:lineoffset_val];
+			rg_fb_addr<= wr_addr_from_MSHR_to_fb;
 			rg_first_resp<= False;
     endrule
 
@@ -291,6 +293,10 @@ package fill_buffer;
 
 		method Action data_from_mem(Bit#(buswidth) mem_resp, Bool last, Bit#(lineoffset) offset_val) if(!all_valid);
 			wr_data_from_mem<= tuple3(mem_resp, last, truncateLSB(offset_val));
+		endmethod
+
+    method Action addr_from_MSHR_to_fb(Bit#(TSub#(paddr, lineoffset)) addr_to_fb);
+      wr_addr_from_MSHR_to_fb<= addr_to_fb;
 		endmethod
 
 		method Action release_fb if(all_valid);

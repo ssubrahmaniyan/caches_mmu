@@ -48,8 +48,9 @@ package mshr;
 											numeric type rob_index,
                       numeric type prf_index );
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
-		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
+    method Bit#(TSub#(paddr,linewidthbits)) addr_to_fb;
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
@@ -71,10 +72,10 @@ package mshr;
 
 		function Bool should_flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob, Bit#(rob_index) rob);
 			Bool lv_should_flush= False;
-			Bool cond1= (rob>(flush_rob+1));
-			Bool cond2= (rob<(head-1) && head!=0);
+			Bool cond1= (rob>=flush_rob);
+			Bool cond2= (rob<head && head!=0);
 
-			if(head<flush_rob) begin
+			if(head<=flush_rob) begin
 				if( cond1 || cond2 ) begin
 					lv_should_flush= True;
 				end
@@ -102,6 +103,7 @@ package mshr;
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
+		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -222,8 +224,8 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
-			Maybe#(MSHR_Req#(paddr, data, prf_index)) req= tagged Invalid;
+		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+			Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index)) req= tuple2(False, ?);
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
@@ -237,7 +239,7 @@ package mshr;
 					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
             Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
-						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+						req= tuple2(True, MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
@@ -264,7 +266,7 @@ package mshr;
 
 					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
             Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
-						req= tagged Valid (MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+						req= tuple2(True, MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
@@ -291,12 +293,17 @@ package mshr;
 				end
 
 			end
+			wr_addr_to_fb<= truncateLSB(tpl_2(req).addr);
 			return req;
 		endmethod
 
 		method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
 			return ff_mshr[id].first.addr;
 		endmethod
+
+    method Bit#(addr_in_mshr) addr_to_fb;
+      return wr_addr_to_fb;
+    endmethod
 
 		method Action ack_from_fb if(mshr_not_empty && !isValid(wr_deq_ff_id));
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
@@ -314,6 +321,7 @@ package mshr;
 		
 		method Action flush (Flush_type#(rob_index) bundle);
 			rg_flush[0]<= bundle;
+      `logLevel( nb_dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
 				Vector#(mshrfifo_depth,Bit#(rob_index)) cff_rob_id= cff_rob[i].contents;
