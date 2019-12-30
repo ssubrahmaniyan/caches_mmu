@@ -106,13 +106,24 @@ package fill_buffer;
 		endfunction
 
 		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size)
-      provisos(Add#(z__, datawidth, linewidth));
+      provisos(Add#(z__, datawidth, linewidth),
+							Add#(aa_, 8, datawidth),
+							Add#(bb_, 16, datawidth),
+							Add#(cc_, 32, datawidth));
+
+    	line = line>>{line_offset,3'd0};
+			Bit#(datawidth) readdata= truncate(line);
     	Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
     	                       size[1 : 0] == 1?'hFFFF : 
     	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
-
-    	line = line>>{line_offset,3'd0};
-			Bit#(datawidth) readdata= truncate(line) & mask;
+			if(size[2]==0) begin
+    		readdata = size[1 : 0] == 0? signExtend(readdata[7:0]): 
+    		           size[1 : 0] == 1? signExtend(readdata[15:0]): 
+    		           size[1 : 0] == 2? signExtend(readdata[31:0]) : readdata;
+			end
+			else begin
+				readdata = readdata & mask;
+			end
 			return readdata;
 		endfunction
 
