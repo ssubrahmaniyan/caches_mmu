@@ -56,12 +56,12 @@ package dmem;
 `endif
 
   (*synthesize*)
-  module mkdcache_inst(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
+  module mkdcache_inst#(parameter Bit#(32) id) (Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
                                                       `dsbsize, `dfbsize, `desize ,
                               `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `dbuswidth ));
     let ifc();
   `ifdef dcache
-    mkdcache#(isIO,"RROBIN",0) _temp(ifc);
+    mkdcache#(isIO,"RROBIN",id) _temp(ifc);
   `else
     mknull_dcache _temp(ifc);
   `endif
@@ -155,10 +155,10 @@ package dmem;
 `endif
 
   (*synthesize*)
-  module mkdmem(Ifc_dmem);
-    let dcache <- mkdcache_inst;
+  module mkdmem#(parameter Bit#(32) id)(Ifc_dmem);
+    let dcache <- mkdcache_inst(id);
   `ifdef supervisor
-    Ifc_fa_dtlb dtlb <- mkfa_dtlb(0);
+    Ifc_fa_dtlb dtlb <- mkfa_dtlb(id);
     mkConnection(dtlb.core_response, dcache.mav_pa_from_tlb);
   `endif
     interface core_req = interface Put

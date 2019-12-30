@@ -31,7 +31,7 @@ Time of Generation: 2019-12-28 17:37:56.157858
 
 `define paddr 32
 
-`define linesize 128
+`define linesize 64
 
 `define NrCaches 2
 
