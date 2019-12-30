@@ -44,7 +44,7 @@ package nb_dcache_types;
 
 	typedef struct {
 		Bit#(addr) addr;
-		Bit#(2) access_size;
+		Bit#(3) access_size;
 		Bit#(data) data;
 		Origin origin;
 		Bool ptwalk_trap;
@@ -74,7 +74,7 @@ package nb_dcache_types;
 	
 	typedef struct {
 		Bit#(addr) addr;
-		Bit#(2) access_size;
+		Bit#(3) access_size;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(prf_index) prf_index;
@@ -151,7 +151,7 @@ package nb_dcache_types;
 
 	typedef struct {
 		Bit#(addr) addr;
-		Bit#(2) access_size;
+		Bit#(3) access_size;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(prf_index) prf_index;
@@ -175,7 +175,7 @@ package nb_dcache_types;
 
 	typedef struct {
 		Bit#(addr) addr;
-		Bit#(2) access_size;
+		Bit#(3) access_size;
 		Bit#(data) payload;
 		Origin origin;
     `ifdef atomic
@@ -262,7 +262,7 @@ package nb_dcache_types;
 
 	typedef struct {
 		Bit#(addr) addr;
-		Bit#(2) size;
+		Bit#(3) size;
     Bool is_store;
     Bit#(data) data;
 	} IO_Req#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
