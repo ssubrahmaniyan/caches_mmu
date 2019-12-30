@@ -414,7 +414,15 @@ package nb_dcache;
 		endfunction
 
 		function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
-			return False;
+			if(addr < 'h2000) begin
+				return False;
+			end
+			else if(addr > 'h80000000 && addr < 'h90000000) begin
+				return False;
+			end
+			else begin
+				return True;
+			end
 		endfunction
 
     `ifdef atomic
