@@ -387,10 +387,10 @@ package nb_dcache;
 
 		function Bool should_flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob, Bit#(rob_index) rob);
 			Bool lv_should_flush= False;
-			Bool cond1= (rob>(flush_rob+1));
-			Bool cond2= (rob<(head-1) && head!=0);
+			Bool cond1= (rob>=(flush_rob));
+			Bool cond2= (rob<head && head!=0);
 
-			if(head<flush_rob) begin
+			if(head<=flush_rob) begin
 				if( cond1 || cond2 ) begin
 					lv_should_flush= True;
 				end
