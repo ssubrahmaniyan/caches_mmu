@@ -556,6 +556,7 @@ package nb_dcache;
 
 					if(is_IO_access) begin	//IO operation
 						//Enqueue into a separate FIFO that handles IO Requests
+      			`logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
 						ff_io_info.enq(req);
 					  rg_cache_busy<= True;
 					end
@@ -782,6 +783,7 @@ package nb_dcache;
         //have already started.
 				if(!is_store_instruction || !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_enq<= convert_to_Cache_req(req);
+					`logLevel( dcache, 2, $format("DCACHE : Converted to cache request"))
 				end
 				
 				if(is_store_instruction) begin
@@ -822,10 +824,12 @@ package nb_dcache;
 		endrule
 
 		rule rl_sram_resp_to_core;
+			`logLevel( dcache, 2, $format("DCACHE : SRAM response", fshow(wr_sram_resp_to_core)))
 			wr_resp_to_core<= wr_sram_resp_to_core;
 		endrule
 
 		rule rl_stage2_fb_resp_to_core;
+			`logLevel( dcache, 2, $format("DCACHE : FB response", fshow(wr_stage2_fb_resp_to_core)))
 			wr_resp_to_core<= wr_stage2_fb_resp_to_core;
 		endrule
 
@@ -951,6 +955,7 @@ package nb_dcache;
 		endrule
 
 		rule rl_MSHR_resp_to_core;
+			`logLevel( dcache, 2, $format("DCACHE : MSHR reponse", fshow(wr_mshr_resp_to_core)))
 			wr_resp_to_core<= wr_mshr_resp_to_core;
 		endrule
 		
