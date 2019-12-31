@@ -84,7 +84,7 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 	Ifc_mem_config1r1w#(`sets, V_dir_size, 1)  	 dir[`ways];	
 
 	//replacement way
-	Ifc_replace#(`sets, 8) repl <- mkreplace("RROBIN");
+	Ifc_replace#(`sets, `ways) repl <- mkreplace("RROBIN");
 
 	for(Integer i=0; i<`ways; i=i+1) begin
 		tag[i] <- mkmem_config1r1w(False, "double");
@@ -108,19 +108,12 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
   Ifc_slc_slave_agent#(a,w,o,i, op,acks,u) slave <- mkslc_slave_agent;
   Ifc_slc_master_agent#(a,w, o, i, op,acks,u) master <- mkslc_master_agent;
 
-	Randomize#(Bit#(TLog#(`ways))) replace_way <- mkGenericRandomizer(); 
 
 	Vector#(no_bursts, Reg#(Bit#(`bus_width))) rg_cache <- replicateM(mkReg(0)); 
 	Reg#(Bool) rg_cache_full <- mkReg(False); 
-	Reg#(Bool) rg_way_sel_init <- mkReg(True);
-
-	rule rl_rand_way_set(rg_way_sel_init);
-		replace_way.cntrl.init;
-		rg_way_sel_init<=False;
-	endrule
-
 	rule rl_read_cache(rg_state==Cache_read);
 		Req_channel#(a,w,o,i,op,u) req = ff_llc_req.first;
+		`logLevel( llc, 0, $format("LLC[%2d]: Processing Req:",id,fshow(req)))
 		Bool hit;
 		Bit#(tag_width) in_tag=req.address[v_a-1:v_b_offset+v_index];
 		Bit#(`ways) hit_way;
@@ -170,16 +163,19 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 				`logLevel( llc, 0, $format("LLC[%2d]: Sending RESP:",id, fshow(send_resp)))
 			end
 			if(multi_cast matches tagged Valid .send_multi_cast) begin
-				rg_state <= Multi_cast; 
-				rg_multi_cast <= send_multi_cast;
-				rg_sv <= lv_dir_info.sv;
-				`logLevel( llc, 0, $format("LLC[%2d]: Initiating Multicast:",id,fshow(send_multi_cast)))
+				let {msg, sv} = send_multi_cast;
+				if(sv !=0 ) begin
+  				rg_state <= Multi_cast; 
+	  			rg_multi_cast <= msg;
+		  		rg_sv <= sv;
+			  	`logLevel( llc, 0, $format("LLC[%2d]: Initiating Multicast:",id,fshow(send_multi_cast)))
+			  end
+			  else 
+			    rg_state <= Idle;
 			end
 			else begin
 				rg_state<=Idle;
 			end
-		  `logLevel( llc, 2, $format("LLC[%2d]:Hit for tag search %h address %h, data %h",id, 
-																					  in_tag[hit_way_id],  req.address, req.data))
 			ff_llc_req.deq;
 			repl.update_set(req.address[v_a-v_tag_width-1:v_b_offset], hit_way_id);
 		end
@@ -195,14 +191,13 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 																												data : ?, 
 																												user : ?};
 			master.i_req_channel.enq(req_rd);
-			`logLevel( llc, 0, $format("LLC[%2d]: Req:",id,fshow(req_rd)))
+		  `logLevel( llc, 2, $format("LLC[%2d]:Miss for address %h ",id, req.address))
+			`logLevel( llc, 0, $format("LLC[%2d]: Sending Req on Master:",id,fshow(req_rd)))
 			rg_state<=Memory_wait;
 			Bit#(TLog#(`ways)) replace_way<-repl.line_replace(req.address[v_a-v_tag_width-1:v_b_offset], 
 																											 is_valid);
 			repl.update_set(req.address[v_a-v_tag_width-1:v_b_offset], replace_way);
 			rg_replace_way<= replace_way;
-		  `logLevel( llc, 2, $format("LLC[%2d]:Miss for address %h tag searched is %h, data %h",id, 
-																					                in_tag, req.address, req.data))
       Bit#(2) vd=truncateLSB(tag[replace_way].read_response);
       Bit#(1) dirty = vd[0];
 			Bit#(tag_width) tag_metadata=truncate(tag[replace_way].read_response);
@@ -231,6 +226,7 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 		end
 		rg_state<=Cache_read;
 		ff_llc_req.enq(req);
+		`logLevel( llc, 0, $format("LLC[%2d]: Received Req: ",id, fshow(req)))
 	endrule
 
 	rule rl_send_write_req(rg_state==Memory_wait);
@@ -250,6 +246,9 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 		let {dir_entry, resp, fwd, multi_cast} = func_Dict(inmsg, cle);
 		if(resp matches tagged Valid .send_resp) begin
 			`logLevel( llc, 0, $format("LLC[%2d]: Sending Response: ",id,fshow(send_resp)))
+			`logLevel( llc, 0, $format("LLC[%2d]: NewCLE:",id,fshow(dir_entry)))
+			`logLevel( llc, 0, $format("LLC[%2d]: Allocating Addr:%h set:%d way:%d tag:%h",id,req.address,
+			    index, rg_replace_way,in_tag))
 			let packet = fn_gen_resp_pkt(send_resp);
 			slave.i_resp_channel.enq(packet);
 			tag[rg_replace_way].write(1,index,{2'b10,in_tag});
@@ -262,11 +261,13 @@ module mkllc_bank#(parameter Integer id)(Ifc_llc_bank#(a,w,o,i,op,acks,u))
 																												mode   : 0,//TODO specify
 																												source : req.dest, 
 																												dest 	 : 4,
-																												address : req.address,
+																												address : rg_metadata.addr,
 																												mask : '1,
 																												data : rg_metadata.data, 
 																												user : ?};
 			master.i_req_channel.enq(req_rd);
+			`logLevel( llc, 0, $format("LLC[%2d]: Evicting Addr:%h Data:%h",id,
+                          			  rg_metadata.addr,rg_metadata.data))
 			rg_evict <= False;
 		end
 		rg_state <= Idle;
