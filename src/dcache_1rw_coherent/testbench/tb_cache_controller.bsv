@@ -73,7 +73,7 @@ package tb_cache_controller;
     end
 
     Ifc_llc_bank#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
- g    TLog#(`NrCaches),0, `dwords, `dblocks, `dsets, TAdd#(1, TMul#(`dways,`NrCaches))) llc[`NrCaches];
+      TLog#(`NrCaches),0, `dwords, `dblocks, `dsets, TAdd#(1, TMul#(`dways,`NrCaches))) llc[`NrCaches];
     for (Integer i = 0; i<`NrCaches; i = i + 1) begin
       llc[i] <- mkllc_bank(fromInteger(i));
     end

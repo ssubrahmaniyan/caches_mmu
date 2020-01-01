@@ -435,6 +435,7 @@ package dcache;
     Wire#(Bit#(linewidth)) wr_store_data <- mkDWire(0);
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
+    Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
     // ----------------------- Coherency related structures -----------------------------------//
     /*doc:reg: This is an arry of coherency states for each of the lines in the RAMs*/
@@ -756,6 +757,7 @@ package dcache;
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
           isNonCacheable(phyaddr, wr_cache_enable));
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Response: Allocating Store Buffer",id))
+        wr_allocating_storebuffer <= True;        
       end
     endrule
 
@@ -881,6 +883,14 @@ package dcache;
                          acks_expected:new_cle.acksExpected, acks_received:new_cle.acksReceived};
         `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: fbindex:%d NewCLE: ",id,fbindex,
                                     fshow(new_cle)))
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Enq1:",id,fshow(enq_d1)))
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Enq2:",id,fshow(enq_d2)))
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Send_defer:",id,fshow(send_defer)))
+        `ifdef ASSERT
+          dynamicAssert(!isValid(enq_d1), "DCACHE: Enq1 is Valid");
+          dynamicAssert(!isValid(enq_d2), "DCACHE: Enq2 is Valid");
+          dynamicAssert(!send_defer, "DCACHE: Send_defer is Valid");
+        `endif
       end
       else begin // need to access ram structures
         for(Integer i=0;i<v_ways;i=i+1)begin
@@ -932,6 +942,9 @@ package dcache;
                           id: tagged Caches truncate(id)
                         };
       let {new_cle, send_resp, enq_d1, enq_d2, send_defer}  = func_Cacheline_state(response, lv_cle);
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Enq1:",id,fshow(enq_d1)))
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Enq2:",id,fshow(enq_d2)))
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Send_defer:",id,fshow(send_defer)))
       if(send_resp matches tagged Valid .m)
         ff_resp_to_fabric.enq(m);
       Bit#(TLog#(ways)) lv_ram_hitway =truncate(pack(countZerosLSB(hit_tag)));
@@ -941,6 +954,11 @@ package dcache;
         v_reg_cmeta[set_index][lv_ram_hitway] <= CoherenceMeta{state:new_cle.state,
                perm: new_cle.perm, acks_expected:new_cle.acksExpected,
                acks_received:new_cle.acksReceived};
+      `ifdef ASSERT
+        dynamicAssert(!isValid(enq_d1), "DCACHE: Enq1 is Valid");
+        dynamicAssert(!isValid(enq_d2), "DCACHE: Enq2 is Valid");
+        dynamicAssert(!send_defer, "DCACHE: Send_defer is Valid");
+      `endif
     endrule
     /*doc:rule: 
     This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
@@ -960,7 +978,7 @@ package dcache;
     line in one = cycle. The latest request from the core is replayed if the replacement was to
     the same index.*/
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && sb_empty && !fb_empty
-              && !rg_performing_replay && fb_stable && !rg_ram_cc_update);
+            && !wr_allocating_storebuffer  && !rg_performing_replay && fb_stable && !rg_ram_cc_update);
       
       let addr = v_fb_addr[rg_fbtail];
       Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :

@@ -386,6 +386,7 @@ package dcache;
     Wire#(Bit#(linewidth)) wr_store_data <- mkDWire(0);
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
+    Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
     // --------------------------- Rule operations ------------------------------------- //
 
@@ -690,6 +691,7 @@ dataline ))
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
           isNonCacheable(phyaddr, wr_cache_enable));
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Response: Allocating Store Buffer",id))
+        wr_allocating_storebuffer <= True;
       end
     endrule
 
@@ -832,7 +834,7 @@ dataline ))
     line in one = cycle. The latest request from the core is replayed if the replacement was to
     the same index.*/
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && sb_empty && !fb_empty
-                                    && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay);
+        && !wr_allocating_storebuffer  && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay);
       `logLevel( dcache, 0, $format("DCACHE[%2d]: Release rule firing",id))
       let addr = v_fb_addr[rg_fbtail];
       Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
@@ -881,7 +883,6 @@ dataline ))
           // update the valid and dirty bits of the rams. Also release the fillbuffer entry 
           v_reg_valid[set_index][waynum]<=1;
           v_reg_dirty[set_index][waynum]<=v_fb_dirty[rg_fbtail];
-          v_reg_states[set_index][waynum] <= v_fb_states[rg_fbtail];
           bram_tag[waynum].request(1,set_index,writetag);
           bram_data[waynum].request(1,set_index,writedata);
           if(rg_fbtail == fromInteger(v_fbsize-1))
