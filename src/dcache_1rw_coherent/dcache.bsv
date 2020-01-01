@@ -701,6 +701,7 @@ package dcache;
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Response: Hit from NC",id))
       end
 
+      lv_response.word = (storemask & storedata) | (~storemask & lv_response.word);
       // capture the sign bit of the response to the core
       Bit#(1) lv_sign =case(req.size[1:0])
           'b00: lv_response.word[7];
@@ -722,7 +723,6 @@ package dcache;
       // signmask basically has all bits which are zeros in the mask duplicated with the required
       // sign bit. Theese need to be set in the final response to the core and will thus be ORed
       Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
-      lv_response.word = (storemask & storedata) | (~storemask & lv_response.word);
       lv_response.word = (lv_response.word & mask) | signmask;
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
 
