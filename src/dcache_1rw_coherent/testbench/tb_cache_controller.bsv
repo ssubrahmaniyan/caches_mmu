@@ -40,8 +40,7 @@ package tb_cache_controller;
   import Semi_FIFOF :: * ;
   import ShaktiLink_Types :: * ;
   import ShaktiLink_Fabric :: * ;
-  import llc_cache :: * ;
-  import llc_types :: * ;
+  import llc_bank :: * ;
   import BRAMCore :: * ;
   import Randomizable ::*;
   import globals :: * ;
@@ -74,9 +73,9 @@ package tb_cache_controller;
     end
 
     Ifc_llc_bank#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
-                          TLog#(`NrCaches),0) llc[`NrCaches];
+ g    TLog#(`NrCaches),0, `dwords, `dblocks, `dsets, TAdd#(1, TMul#(`dways,`NrCaches))) llc[`NrCaches];
     for (Integer i = 0; i<`NrCaches; i = i + 1) begin
-      llc[i] <- mkllc_bank(i);
+      llc[i] <- mkllc_bank(fromInteger(i));
     end
 
     // memory instance
@@ -231,7 +230,7 @@ package tb_cache_controller;
       let {err, data0}<-dut.read_response;
       let req = ff_req.first;
       ff_req.deq;
-      let _r = Resp_channel{ opcode: req.opcode,
+      Resp_channel#(a,w,o,i,op,acks,u) _r = Resp_channel{ opcode: req.opcode,
                           acksExpected:0,
                           last: True,
                           source: (req.dest), 
@@ -240,7 +239,7 @@ package tb_cache_controller;
                           corrupt:0,
                           data:data0}; 
 			slave.i_resp_channel.enq(_r);
-			`logLevel( tb, 0, $format("DDR: Sending resposne"))
+			`logLevel( tb, 0, $format("DDR: Sending resposne:",fshow(_r)))
     endrule
     interface slave_side = slave.shaktilink_side;
   endmodule
