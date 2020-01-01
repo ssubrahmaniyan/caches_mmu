@@ -1,1 +1,0 @@
-/scratch/git-repo/shakti/saferv/ProtoGen/coherence_types.bsv
