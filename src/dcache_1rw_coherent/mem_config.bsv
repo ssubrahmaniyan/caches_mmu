@@ -84,7 +84,7 @@ package mem_config;
     );
     Integer bits_per_bank=valueOf(bpb);
     
-    staticAssert(porttype=="single","Only supported porttypes are: single");
+    staticAssert(porttype=="double","Only supported porttypes are: single");
 
     Ifc_bram_2rw#(TLog#(n_entries), bpb, n_entries) ram_single [valueOf(banks)];
     Reg#(Bit#(bpb)) rg_output_p1[valueOf(banks)][2];

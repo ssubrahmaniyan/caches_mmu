@@ -89,7 +89,9 @@ package dcache;
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_request_to_fabric;
     interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_to_fabric;
+    interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response2_to_fabric;
     interface Put#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_from_fabric;
+    interface Put#(Message#(paddr,TMul#(wordsize,blocksize))) mv_fwd_from_fabric;
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
@@ -292,7 +294,9 @@ package dcache;
   `endif
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_req_to_fabric <- mkSizedFIFOF(2);
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_to_fabric <- mkSizedFIFOF(2);
+    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp2_to_fabric <- mkSizedFIFOF(2);
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_from_fabric <- mkSizedFIFOF(2);
+    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_fwd_from_fabric <- mkSizedFIFOF(2);
   `ifdef supervisor 
     /*doc:fifo: this fifo receives the physical address from the TLB */
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
@@ -424,8 +428,8 @@ package dcache;
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Ifc_mem_config2rw#(sets, linewidth, dbanks) bram_data[v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
-      bram_tag[i]  <- mkmem_config2rw(False,"single");
-      bram_data[i] <- mkmem_config2rw(False,"single");
+      bram_tag[i]  <- mkmem_config2rw(False,"double");
+      bram_data[i] <- mkmem_config2rw(False,"double");
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
@@ -866,7 +870,6 @@ package dcache;
       let fbindex = fromMaybe(?,_fbindex);
       let lv_c_meta = v_fb_cmeta[fbindex];
       if(fbhit) begin
-        ff_resp_from_fabric.deq;
         let lv_cle = ENTRY_Cacheline_state{state: lv_c_meta.state,
                                            perm   : lv_c_meta.perm,
                                            cl: v_fb_data[fbindex],
@@ -874,23 +877,24 @@ package dcache;
                                            acksExpected: lv_c_meta.acks_expected,
                                            id: tagged Caches truncate(id)
                                          };
-        let {new_cle, send_resp, enq_d1, enq_d2, send_defer}  = func_Cacheline_state(response, lv_cle);
-        if(send_resp matches tagged Valid .m)
-          ff_resp_to_fabric.enq(m);
-        v_fb_err[fbindex] <= 0;
-        v_fb_data[fbindex] <=  response.cl;
-        v_fb_cmeta[fbindex] <= CoherenceMeta{state: new_cle.state, perm: new_cle.perm,
-                         acks_expected:new_cle.acksExpected, acks_received:new_cle.acksReceived};
-        `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: fbindex:%d NewCLE: ",id,fbindex,
-                                    fshow(new_cle)))
-        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Enq1:",id,fshow(enq_d1)))
-        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Enq2:",id,fshow(enq_d2)))
-        `logLevel( dcache, 0, $format("DCACHE[%2d]: A_Send_defer:",id,fshow(send_defer)))
-        `ifdef ASSERT
-          dynamicAssert(!isValid(enq_d1), "DCACHE: Enq1 is Valid");
-          dynamicAssert(!isValid(enq_d2), "DCACHE: Enq2 is Valid");
-          dynamicAssert(!send_defer, "DCACHE: Send_defer is Valid");
-        `endif
+        let lv_update  = func_Cacheline_state(response, lv_cle);
+        let new_cle = lv_update.new_cle;
+        if(!lv_update.stall) begin
+          ff_resp_from_fabric.deq;
+          if(lv_update.send_resp1 matches tagged Valid .m)
+            ff_resp_to_fabric.enq(m);
+          if(lv_update.send_resp2 matches tagged Valid .m)
+            ff_resp2_to_fabric.enq(m);
+          v_fb_err[fbindex] <= 0;
+          v_fb_data[fbindex] <=  response.cl;
+          v_fb_cmeta[fbindex] <= CoherenceMeta{state: new_cle.state, perm: new_cle.perm,
+                           acks_expected:new_cle.acksExpected, acks_received:new_cle.acksReceived};
+          `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: fbindex:%d NewCLE: ",id,fbindex,
+                                      fshow(new_cle)))
+        end
+        else begin
+          `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: Stalling:",id,fshow(lv_update)))
+        end
       end
       else begin // need to access ram structures
         for(Integer i=0;i<v_ways;i=i+1)begin
@@ -919,7 +923,6 @@ package dcache;
     rule rl_update_ram(rg_ram_cc_update);
       let response = ff_resp_from_fabric.first;
       let phyaddr = response.address;
-      ff_resp_from_fabric.deq;
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -932,7 +935,8 @@ package dcache;
         hit_tag[i] = pack(bram_tag[i].p2.read_response == request_tag);
       end
       let lv_c_meta = select(readVReg(v_reg_cmeta[set_index]),unpack(hit_tag));
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: UPDRAM: hit_tag:%b",id,hit_tag))
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: UPDRAM: hit_tag:%b curr_cle:",id,hit_tag,
+        fshow(lv_c_meta)))
       ENTRY_Cacheline_state#(TMul#(wordsize,blocksize)) lv_cle = ENTRY_Cacheline_state{
                           state: lv_c_meta.state,
                           perm: lv_c_meta.perm,
@@ -941,24 +945,25 @@ package dcache;
                           acksExpected: lv_c_meta.acks_expected,
                           id: tagged Caches truncate(id)
                         };
-      let {new_cle, send_resp, enq_d1, enq_d2, send_defer}  = func_Cacheline_state(response, lv_cle);
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: Enq1:",id,fshow(enq_d1)))
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: Enq2:",id,fshow(enq_d2)))
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: Send_defer:",id,fshow(send_defer)))
-      if(send_resp matches tagged Valid .m)
-        ff_resp_to_fabric.enq(m);
-      Bit#(TLog#(ways)) lv_ram_hitway =truncate(pack(countZerosLSB(hit_tag)));
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: OldCLE:",id,fshow(lv_cle)))
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: NewCLE:",id,fshow(new_cle)))
-      if(|hit_tag == 1)
-        v_reg_cmeta[set_index][lv_ram_hitway] <= CoherenceMeta{state:new_cle.state,
-               perm: new_cle.perm, acks_expected:new_cle.acksExpected,
-               acks_received:new_cle.acksReceived};
-      `ifdef ASSERT
-        dynamicAssert(!isValid(enq_d1), "DCACHE: Enq1 is Valid");
-        dynamicAssert(!isValid(enq_d2), "DCACHE: Enq2 is Valid");
-        dynamicAssert(!send_defer, "DCACHE: Send_defer is Valid");
-      `endif
+      let lv_update  = func_Cacheline_state(response, lv_cle);
+      let new_cle = lv_update.new_cle;
+      if(!lv_update.stall) begin
+        ff_resp_from_fabric.deq;
+        if(lv_update.send_resp1 matches tagged Valid .m)
+          ff_resp_to_fabric.enq(m);
+        if(lv_update.send_resp2 matches tagged Valid .m)
+          ff_resp2_to_fabric.enq(m);
+        Bit#(TLog#(ways)) lv_ram_hitway =truncate(pack(countZerosLSB(hit_tag)));
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: CCUPD: OldCLE:",id,fshow(lv_cle)))
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: CCUPD: NewCLE:",id,fshow(new_cle)))
+        if(|hit_tag == 1)
+          v_reg_cmeta[set_index][lv_ram_hitway] <= CoherenceMeta{state:new_cle.state,
+                 perm: new_cle.perm, acks_expected:new_cle.acksExpected,
+                 acks_received:new_cle.acksReceived};
+      end
+      else begin
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: CCUPD: Stalling:",id,fshow(lv_update)))
+      end
     endrule
     /*doc:rule: 
     This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
@@ -1094,7 +1099,9 @@ package dcache;
     interface core_resp = toGet(ff_core_response);
     interface mv_request_to_fabric = toGet(ff_req_to_fabric);
     interface mv_response_to_fabric = toGet(ff_resp_to_fabric);
+    interface mv_response2_to_fabric = toGet(ff_resp2_to_fabric);
     interface mv_response_from_fabric = toPut(ff_resp_from_fabric);
+    interface mv_fwd_from_fabric = toPut(ff_fwd_from_fabric);
     // TODO
   `ifdef supervisor
     interface ptw_resp = toGet(ff_ptw_response);

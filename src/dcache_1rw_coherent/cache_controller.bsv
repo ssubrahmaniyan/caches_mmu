@@ -156,6 +156,7 @@ package cache_controller;
   
   /*doc:module: */
   (*preempts="rl_resp_message_from_fabric,rl_fwd_message_from_fabric"*)
+  (*preempts="rl_send_resp2_to_fabric,rl_send_resp_to_fabric"*)
   module mkcache_controller#(parameter Integer id)(Ifc_cache_controller#(o,i))
     provisos(
       Add#(a__, 2, i),
@@ -183,6 +184,11 @@ package cache_controller;
 
     rule rl_send_resp_to_fabric;
       let resp <- dmem.mv_response_to_fabric.get;
+      `logLevel( cc, 0, $format("CC[%2d]: Sending Response:",id,fshow(resp)))
+      slave.i_resp_channel.enq(fn_gen_resp_pkt(resp));
+    endrule
+    rule rl_send_resp2_to_fabric;
+      let resp <- dmem.mv_response2_to_fabric.get;
       `logLevel( cc, 0, $format("CC[%2d]: Sending Response:",id,fshow(resp)))
       slave.i_resp_channel.enq(fn_gen_resp_pkt(resp));
     endrule

@@ -76,6 +76,7 @@ package dmem;
   `ifdef coherency
     interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_request_to_fabric;
     interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_to_fabric;
+    interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response2_to_fabric;
     interface Put#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_from_fabric;
   `else
     `ifdef dcache
@@ -177,6 +178,7 @@ package dmem;
   `ifdef coherency
     interface mv_request_to_fabric = dcache.mv_request_to_fabric;
     interface mv_response_to_fabric = dcache.mv_response_to_fabric;
+    interface mv_response2_to_fabric = dcache.mv_response2_to_fabric;
     interface mv_response_from_fabric = dcache.mv_response_from_fabric;
   `else
     interface read_mem_req = dcache.read_mem_req;

@@ -53,7 +53,7 @@ package llc_bank;
     interface Ifc_slc_slave#(a,w,o,i,op,acks,u) slave_side;
   endinterface
 
-  typedef enum {Idle, Cache_read, Multi_cast, Memory_wait} LLC_state deriving(Bits, Eq);
+  typedef enum {Idle, Cache_read, Multi_cast, Memory_wait} LLC_state deriving(Bits, Eq, FShow);
   typedef SizeOf#(ENTRY_Dict#(TDiv#(`linesize,8))) V_dir_size;
 
   typedef struct{
@@ -99,7 +99,19 @@ package llc_bank;
                           data:m.cl}; 
     return _r;
   endfunction
+  function Message#(a,w) fn_from_resp_pkt(Resp_channel#(a,w,o,i,op,acks,u) r)
+    provisos(Add#(a__, 2, i),Add#(c__, 4, op),Add#(d__, 2, o),Add#(e__, 1, acks));
+    let m = Message {address: r.address,
+                        msgtype: unpack(truncate(r.opcode)),
+                        src : unpack(truncate(r.source)),
+                        dst : unpack(truncate(r.dest)),
+                        acksExpected : truncate(r.acksExpected),
+                        cl : r.data};
+    return m;
+  endfunction
+  
 
+  (*conflict_free="rl_receive_io_response, rl_pick_request_on_slave"*)
   module mkllc_bank#(parameter Bit#(32) id)
     (Ifc_llc_bank#(a,w,o,i,op,acks,u, wordsize, blocksize, sets, ways))
     provisos(
@@ -130,11 +142,11 @@ package llc_bank;
     Ifc_slc_slave_agent#(a,w,o,i, op,acks,u) slave <- mkslc_slave_agent;
     Ifc_slc_master_agent#(a,w, o, i, op,acks,u) master <- mkslc_master_agent;
     Ifc_replace#(sets,ways) replacement <- mkreplace("RROBIN");
-    Ifc_mem_config1r1w#(sets, TAdd#(1,tagbits),1) tag [v_ways];
-    Ifc_mem_config1r1w#(sets, _c,1) data [v_ways];
+    Ifc_mem_config2rw#(sets, TAdd#(1,tagbits),1) tag [v_ways];
+    Ifc_mem_config2rw#(sets, _c,1) data [v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
-      tag[i] <- mkmem_config1r1w(False, "double");
-      data[i] <- mkmem_config1r1w(False, "double");
+      tag[i] <- mkmem_config2rw(False, "double");
+      data[i] <- mkmem_config2rw(False, "double");
     end
     // ------------------------------------------------------------------------------------------//
 
@@ -156,17 +168,26 @@ package llc_bank;
     Reg#(Bit#(TLog#(ways))) rg_replace_way <- mkReg(0);
     /*doc:reg: when true will evict line to the memory*/
     Reg#(Bool) rg_perform_evict <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bool) rg_read_phase <- mkReg(False);
 	
 	  /*doc:fifo: holds the current request from the fabric*/
-	  FIFOF#(Req_channel#(a,w,o,i,op,u)) ff_llc_req <- mkLFIFOF();
+	  FIFOF#(Req_channel#(a,w,o,i,op,u)) ff_llc_req <- mkUGSizedFIFOF(2);
   
+    /*doc:rule: */
+    rule rl_display_stuff;
+      `logLevel( llc_bank, 0, $format("LLC[%2d]: rg_state:",id,fshow(rg_state)))
+      `logLevel( llc_bank, 0, $format("LLC[%2d]: RESPNE:%b FWDNF:%b RESPNF:%b REQNF:%b",id,
+        master.o_resp_channel.notEmpty,slave.i_fwd_channel.notFull, slave.i_resp_channel.notFull
+        , master.i_req_channel.notFull))
+    endrule
     /*doc:rule: initializes the entire RAM to a default state.*/
     rule rl_initialise(rg_init && rg_state == Idle);
       ENTRY_Dict#(w) def = ENTRY_Dict{state:Dict_I, perm:None, sv:0,cl:0,owner:tagged Directory,
                                       id:tagged Directory};
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        tag[i].write(1,rg_init_index,0);
-        data[i].write(1,rg_init_index, pack(def));
+        tag[i].p1.request(1,rg_init_index,0);
+        data[i].p1.request(1,rg_init_index, pack(def));
       end
       if(rg_init_index == fromInteger(v_sets-1))
         rg_init <= False;
@@ -176,7 +197,7 @@ package llc_bank;
 
     /*doc:rule: processes the request from the fabric. If a hit is detected then the corresponding
     * response, fwd, multicast is initiated. On a miss, the request is sent to the Memory*/
-    rule rl_process_request(rg_state == Cache_read && !rg_init);
+    rule rl_process_request(rg_state == Cache_read && !rg_init && ff_llc_req.notEmpty);
       let req = ff_llc_req.first;
       Bit#(tagbits) intag = truncateLSB(req.address);
 			Bit#(setbits) index = req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -188,11 +209,11 @@ package llc_bank;
       Bit#(ways) valids;
 
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        lv_hit[i] = pack(intag == truncate(tag[i].read_response) && 
-                          truncateLSB(tag[i].read_response) == 1'b1);
-        datalines[i] = unpack(data[i].read_response);
-        tags[i] = tag[i].read_response;
-        valids[i] = truncateLSB(tag[i].read_response);
+        lv_hit[i] = pack(intag == truncate(tag[i].p1.read_response) && 
+                          truncateLSB(tag[i].p1.read_response) == 1'b1);
+        datalines[i] = unpack(data[i].p1.read_response);
+        tags[i] = tag[i].p1.read_response;
+        valids[i] = truncateLSB(tag[i].p1.read_response);
       end
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         states[i] = datalines[i].state;
@@ -211,8 +232,12 @@ package llc_bank;
 			`logLevel( llc_bank, 0, $format("LLC[%2d]: valids:%b states:",id,valids,fshow(states)))
       if( hit )begin
 			  replacement.update_set(index,hit_way_id);
-			  let {new_cle, resp, fwd, multi_cast} = func_Dict(inmsg, dataline);
-			  data[hit_way_id].write('1, index, pack(new_cle));
+			  let lv_update = func_Dict(inmsg, dataline);
+			  let new_cle = lv_update.new_cle;
+			  let resp = lv_update.send_resp1;
+			  let fwd = lv_update.send_fwd1;
+			  let multi_cast = lv_update.send_multicast;
+			  data[hit_way_id].p1.request('1, index, pack(new_cle));
 			  if(fwd matches tagged Valid. send_fwd) begin
 			  	let packet = fn_gen_fwd_pkt(send_fwd);
 			  	slave.i_fwd_channel.enq(packet);
@@ -282,66 +307,134 @@ package llc_bank;
     /*doc:rule: Receives the response from the Memory for a missed line. Updates the line and
     * thereby initiates the response, fwd or multicast. If the line being replaced is dirty then it
     * needs to be evicted.*/
-    rule rl_receive_io_response(rg_state == Memory_wait && !rg_init);
-      let resp <- pop_o(master.o_resp_channel);
+    rule rl_receive_io_response(!rg_init && rg_state != Multi_cast && rg_state != Cache_read);
+      let resp = master.o_resp_channel.first;
+      //master.o_resp_channel.deq;
       let req = ff_llc_req.first;
-			ff_llc_req.deq;
+      `logLevel( llc_bank, 0, $format("LLC[%2d]: Received response on Master. readphase:%b state:",
+        id, rg_read_phase, fshow(rg_state)))
       Bit#(tagbits) intag = truncateLSB(req.address);
 			Bit#(setbits) index = req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-  	  Message#(a,w) inmsg = fn_from_req_pkt(req); 
-		  ENTRY_Dict#(w) cle = ENTRY_Dict { state : Dict_I, 
-																	perm  : None,	
-																	cl    : resp.data,
-																	sv    : 0,
-																	owner : tagged Directory,
-																	id 		: tagged Directory}; //TODO need to check this
-		  let {new_cle, cle_resp, fwd, multi_cast} = func_Dict(inmsg, cle);
-			tag[rg_replace_way].write(1,index,{1'b1,intag});
-			data[rg_replace_way].write(1,index,pack(new_cle));
-			if(fwd matches tagged Valid. send_fwd) begin
-				let packet = fn_gen_fwd_pkt(send_fwd);
-				slave.i_fwd_channel.enq(packet);
-				`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending FWD:",id,fshow(send_fwd)))
-			end
-			else if(cle_resp matches tagged Valid .send_resp) begin
-				let packet = fn_gen_resp_pkt(send_resp); 
-				slave.i_resp_channel.enq(packet);
-				`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending RESP:",id, fshow(send_resp)))
-			end
-			if(multi_cast matches tagged Valid .send_multi_cast) begin
-				let {msg, sv} = send_multi_cast;
-				if(sv !=0 ) begin
-  				rg_state <= Multi_cast; 
-	  			rg_multi_cast <= msg;
-		  		rg_sv <= sv;
-			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Initiating Multicast:",id,
-			  	                                fshow(send_multi_cast)))
+
+      if(ff_llc_req.notEmpty && rg_state == Memory_wait && resp.address == ff_llc_req.first.address) begin
+  	    ff_llc_req.deq;
+  	    Message#(a,w) inmsg = fn_from_req_pkt(req); 
+		    ENTRY_Dict#(w) cle = ENTRY_Dict { state : Dict_I, 
+			  														perm  : None,	
+			  														cl    : resp.data,
+			  														sv    : 0,
+			  														owner : tagged Directory,
+			  														id 		: tagged Directory}; //TODO need to check this
+			  let lv_update = func_Dict(inmsg, cle);
+			  let new_cle = lv_update.new_cle;
+			  let cle_resp = lv_update.send_resp1;
+			  let fwd = lv_update.send_fwd1;
+			  let multi_cast = lv_update.send_multicast;
+			  tag[rg_replace_way].p1.request(1,index,{1'b1,intag});
+			  data[rg_replace_way].p1.request(1,index,pack(new_cle));
+			  if(fwd matches tagged Valid. send_fwd) begin
+			  	let packet = fn_gen_fwd_pkt(send_fwd);
+			  	slave.i_fwd_channel.enq(packet);
+			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending FWD:",id,fshow(send_fwd)))
 			  end
-			  else 
-			    rg_state <= Idle;
-			end
-			else begin
-				rg_state<=Idle;
-			end
+			  else if(cle_resp matches tagged Valid .send_resp) begin
+			  	let packet = fn_gen_resp_pkt(send_resp); 
+			  	slave.i_resp_channel.enq(packet);
+			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending RESP:",id, fshow(send_resp)))
+			  end
+			  if(multi_cast matches tagged Valid .send_multi_cast) begin
+			  	let {msg, sv} = send_multi_cast;
+			  	if(sv !=0 ) begin
+  		  		rg_state <= Multi_cast; 
+	  	  		rg_multi_cast <= msg;
+		    		rg_sv <= sv;
+			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Initiating Multicast:",id,
+			    	                                fshow(send_multi_cast)))
+			    end
+			    else 
+			      rg_state <= Idle;
+			  end
+			  else begin
+			  	rg_state<=Idle;
+			  end
+			  master.o_resp_channel.deq;
  
-      `logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: ",id,fshow(resp)))
-      `logLevel( llc_bank, 0, $format("LLC[%2d]: Resp for Req:",id,fshow(req)))
-      `logLevel( llc_bank, 0, $format("LLC[%2d]: Upd index:%d tag:%h ways:%d CLE:",id,index,intag,
-                                        rg_replace_way, fshow(new_cle)))
-		  if(rg_perform_evict) begin
-		  	Req_channel#(a,w,o,i,op,u) req_rd = Req_channel { opcode : zeroExtend(pack(PutM)), 
-		  																										len    : 0,
-		  																										size   : 3, 
-		  																										mode   : 0,//TODO specify
-		  																										source : req.dest, 
-		  																										dest 	 : 4,
-		  																										address : rg_evict_meta.address,
-		  																										mask : '1,
-		  																										data : rg_evict_meta.dataline.cl, 
-		  																										user : ?};
-		  	master.i_req_channel.enq(req_rd);
-		  	rg_perform_evict<= False;
-		  	`logLevel( llc_bank, 0, $format("LLC[%2d]: Evicting :",id,fshow(rg_evict_meta)))
+        `logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: ",id,fshow(resp)))
+        `logLevel( llc_bank, 0, $format("LLC[%2d]: Resp for Req:",id,fshow(req)))
+        `logLevel( llc_bank, 0, $format("LLC[%2d]: Upd index:%d tag:%h ways:%d CLE:",id,index,intag,
+                                          rg_replace_way, fshow(new_cle)))
+		    if(rg_perform_evict) begin
+		    	Req_channel#(a,w,o,i,op,u) req_rd = Req_channel { opcode : zeroExtend(pack(PutM)), 
+		    																										len    : 0,
+		    																										size   : 3, 
+		    																										mode   : 0,//TODO specify
+		    																										source : req.dest, 
+		    																										dest 	 : 4,
+		    																										address : rg_evict_meta.address,
+		    																										mask : '1,
+		    																										data : rg_evict_meta.dataline.cl, 
+		    																										user : ?};
+		    	master.i_req_channel.enq(req_rd);
+		    	rg_perform_evict<= False;
+		    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Evicting :",id,fshow(rg_evict_meta)))
+		    end
+		  end
+		  else begin
+		    if(rg_read_phase) begin
+			    master.o_resp_channel.deq;
+          Bit#(ways) lv_hit;
+          Vector#(ways, ENTRY_Dict#(w)) datalines;
+          Vector#(ways, Bit#(TAdd#(1,tagbits))) tags;
+          Vector#(ways, Dict) states;
+          Bit#(ways) valids;
+
+          for (Integer i = 0; i<v_ways; i = i + 1) begin
+            lv_hit[i] = pack(intag == truncate(tag[i].p2.read_response) && 
+                                     truncateLSB(tag[i].p2.read_response) == 1'b1);
+            datalines[i] = unpack(data[i].p2.read_response);
+            tags[i] = tag[i].p2.read_response;
+            valids[i] = truncateLSB(tag[i].p2.read_response);
+          end
+          for (Integer i = 0; i<v_ways; i = i + 1) begin
+            states[i] = datalines[i].state;
+          end
+
+          let dataline = select(datalines,unpack(lv_hit));
+          let tag_entry = select(tags, unpack(lv_hit));
+          Bit#(1) lv_tag_valid = truncateLSB(tag_entry);
+          Bit#(tagbits) lv_tag= truncate(tag_entry);
+		
+		      Bit#(TLog#(ways)) hit_way_id=truncate(pack(countZerosLSB(lv_hit))); 
+
+          Bool hit = unpack(|lv_hit);
+     
+  		    Message#(a,w) inmsg = fn_from_resp_pkt(resp); 
+			    let lv_update = func_Dict(inmsg, dataline);
+			    let new_cle = lv_update.new_cle;
+			    let resp1 = lv_update.send_resp1;
+			    let fwd = lv_update.send_fwd1;
+			    let multi_cast = lv_update.send_multicast;
+			    data[hit_way_id].p2.request('1, index, pack(new_cle));
+			    if(fwd matches tagged Valid. send_fwd) begin
+			    	let packet = fn_gen_fwd_pkt(send_fwd);
+			    	slave.i_fwd_channel.enq(packet);
+			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending FWD:",id,fshow(send_fwd)))
+			    end
+			    else if(resp1 matches tagged Valid .send_resp) begin
+			    	let packet = fn_gen_resp_pkt(send_resp); 
+			    	slave.i_resp_channel.enq(packet);
+			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending RESP:",id, fshow(send_resp)))
+			    end
+			    rg_read_phase <= False;
+		    end
+		    else begin
+	        for (Integer i = 0; i<v_ways; i = i + 1) begin
+	          tag[i].p2.request(0,index,?);
+	          data[i].p2.request(0,index,?);
+	        end
+	        rg_read_phase <= True;
+	        `logLevel( llc_bank, 0, $format("LLC[%2d]: performing read of BRAMs. Index:%d",id,index))
+		    end
 		  end
     endrule
 
@@ -365,12 +458,12 @@ package llc_bank;
 	  endrule
 
 	  /*doc:rule: this rule receives the request from the fabric initiated by any of the caches*/
-	  rule rl_pick_request_on_slave(rg_state == Idle && !rg_init);
+	  rule rl_pick_request_on_slave(rg_state == Idle && !rg_init && ff_llc_req.notFull);
 	    let req <- pop_o(slave.o_req_channel);
 			let index = req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 	    for (Integer i = 0; i<v_ways; i = i + 1) begin
-	      tag[i].read(index);
-	      data[i].read(index);
+	      tag[i].p1.request(0,index,?);
+	      data[i].p1.request(0,index,?);
 	    end
 		  rg_state<=Cache_read;
   		ff_llc_req.enq(req);
