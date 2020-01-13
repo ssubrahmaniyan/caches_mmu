@@ -337,6 +337,8 @@ package dcache;
     Reg#(Bit#(TDiv#(linewidth,8)))                  rg_temp_enable<- mkReg(0);
     /*doc:reg: this register indicates the read-phase of the release sequence*/
     Reg#(Bool) rg_release_readphase <- mkReg(False);
+    /*doc:reg: this register indicates that post eviction a replay to the p1 port is required*/
+    Reg#(Bool) rg_replay_required <- mkReg(False);
 
     /*doc:reg: This register indicates that the bram inputs are being re-driven by those provided
     * from the core in the most recent request. This happens because as the release from the
@@ -807,7 +809,7 @@ package dcache;
       // -- allocate a new entry in the fillbuffer
       if(!lv_io_req) begin
 
-        if(!wr_ram_permission_upgrade && !wr_fb_permission_upgrade)
+        if(!wr_fb_permission_upgrade)
           if(rg_fbhead == fromInteger(v_fbsize-1))
             rg_fbhead <=0;
           else
@@ -995,8 +997,8 @@ package dcache;
         lv_dirty[i] = pack(v_reg_cmeta[set_index][i].state != Cacheline_state_I);
       end
       let waynum <- replacement.line_replace(set_index, lv_valid, lv_dirty);
-      `logLevel( dcache, 0, $format("DCACHE[%2d]: Release rule firing. way:%d set:%d",id,waynum
-                                        ,set_index))
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Release rule firing. Addr:%h way:%d set:%d",id,
+                  addr, waynum, set_index))
       
       if(v_reg_cmeta[set_index][waynum].state == Cacheline_state_I) begin
         let lv_fb_cmeta = v_fb_cmeta[rg_fbtail];
@@ -1021,18 +1023,20 @@ package dcache;
               replacement.update_set(set_index,waynum);
           end
         end
-        `logLevel( dcache, 0, $format("DCACHE[%2d]: Release: Replacing: set:%d tag:%h way:%d",id,
-                                      set_index,writetag,waynum))
-        if(rg_release_readphase || set_index == rg_recent_req) begin
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: Release: Writing: set:%d tag:%h way:%d",id,
+                                      set_index,writetag,waynum, fshow(lv_fb_cmeta)))
+        if(rg_replay_required || set_index == rg_recent_req) begin
           rg_performing_replay <= True;
           `logLevel( dcache, 0, $format("DCACHE[%2d]: Release initiating Replay",id))
-          rg_release_readphase <= False;
+          rg_replay_required <= False;
         end
+        rg_release_readphase <= False;
       end
       else if(!rg_release_readphase) begin
         bram_tag[waynum].p1.request(0,set_index,writetag);
         bram_data[waynum].p1.request(0,set_index,writedata);
         rg_release_readphase <= True;
+        rg_replay_required <= True;
           `logLevel( dcache, 0, $format("DCACHE[%2d]: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
       end 
