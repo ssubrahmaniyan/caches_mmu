@@ -201,7 +201,9 @@ package tb_cache_controller;
   module mkbram_slc#(parameter String modulename )(Ifc_bram_slc#(a,w,o,i,op,acks,u))
     provisos(
       Mul#(TDiv#(TMul#(w, 8), TDiv#(TMul#(w, 8), 8)), TDiv#(TMul#(w, 8), 8),TMul#(w, 8)),
-      Add#(0, o, i)
+      Add#(0, o, i),
+      Add#(a__, 2, i),
+      Add#(b__, 4, op)
     );
     UserInterface#(a, TMul#(w,8), 18) dut <- mkbram(0, "code.mem", modulename);
     Ifc_slc_slave_agent#(a,w,o,i, op,acks,u) slave <- mkslc_slave_agent;
@@ -222,8 +224,16 @@ package tb_cache_controller;
 //    // Burst. capture the request type and keep track of counter.
     rule read_request_first;
 		  let req <- pop_o(slave.o_req_channel);
-      dut.read_request(req.address);
-      ff_req.enq(req);
+		  Message#(a,w) msg = fn_from_req_pkt(req);
+		  if (msg.msgtype == GetS) begin
+        dut.read_request(req.address);
+        ff_req.enq(req);
+        `logLevel( bram, 0, $format("DDR: Initiating Read Req:",fshow(msg)))
+      end
+      else begin
+        dut.write_request(tuple3(req.address, req.data,'1));
+        `logLevel( bram, 0, $format("DDR: Performing Write:",fshow(msg)))
+      end
     endrule
 //    // get data from the memory. shift,  truncate, duplicate based on the size and offset.
     rule read_response;
