@@ -170,6 +170,9 @@ package llc_bank;
     Reg#(Bool) rg_perform_evict <- mkReg(False);
     /*doc:reg: */
     Reg#(Bool) rg_read_phase <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(`NrCaches))) rg_dest_count <- mkReg(0);
+
 	
 	  /*doc:fifo: holds the current request from the fabric*/
 	  FIFOF#(Req_channel#(a,w,o,i,op,u)) ff_llc_req <- mkUGSizedFIFOF(2);
@@ -254,7 +257,9 @@ package llc_bank;
   		  		rg_state <= Multi_cast; 
 	  	  		rg_multi_cast <= msg;
 		    		rg_sv <= sv;
-			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Initiating Multicast:",id,fshow(send_multi_cast)))
+		    		rg_dest_count <= 0;
+			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Initiating Multicast: sv:%b",id,
+			    	  sv,fshow(send_multi_cast)))
 			    end
 			    else 
 			      rg_state <= Idle;
@@ -313,10 +318,10 @@ package llc_bank;
       let req = ff_llc_req.first;
       `logLevel( llc_bank, 0, $format("LLC[%2d]: Received response on Master. readphase:%b state:",
         id, rg_read_phase, fshow(rg_state)))
-      Bit#(tagbits) intag = truncateLSB(req.address);
-			Bit#(setbits) index = req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       if(ff_llc_req.notEmpty && rg_state == Memory_wait && resp.address == ff_llc_req.first.address) begin
+        Bit#(tagbits) intag = truncateLSB(req.address);
+  			Bit#(setbits) index = req.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
   	    ff_llc_req.deq;
   	    Message#(a,w) inmsg = fn_from_req_pkt(req); 
 		    ENTRY_Dict#(w) cle = ENTRY_Dict { state : Dict_I, 
@@ -348,6 +353,7 @@ package llc_bank;
   		  		rg_state <= Multi_cast; 
 	  	  		rg_multi_cast <= msg;
 		    		rg_sv <= sv;
+		    		rg_dest_count <= 0;
 			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Initiating Multicast:",id,
 			    	                                fshow(send_multi_cast)))
 			    end
@@ -380,6 +386,8 @@ package llc_bank;
 		    end
 		  end
 		  else begin
+        Bit#(tagbits) intag = truncateLSB(resp.address);
+  			Bit#(setbits) index = resp.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 		    if(rg_read_phase) begin
 			    master.o_resp_channel.deq;
           Bit#(ways) lv_hit;
@@ -409,11 +417,14 @@ package llc_bank;
           Bool hit = unpack(|lv_hit);
      
   		    Message#(a,w) inmsg = fn_from_resp_pkt(resp); 
+  		    `logLevel( llc_bank, 0, $format("LLC[%2d]: InMsg:",id,fshow(inmsg)))
 			    let lv_update = func_Dict(inmsg, dataline);
 			    let new_cle = lv_update.new_cle;
 			    let resp1 = lv_update.send_resp1;
 			    let fwd = lv_update.send_fwd1;
 			    let multi_cast = lv_update.send_multicast;
+			    `logLevel( llc_bank, 0, $format("LLC[%2d]: OldCLE:",id,fshow(dataline)))
+			    `logLevel( llc_bank, 0, $format("LLC[%2d]: NewCLE:",id,fshow(new_cle)))
 			    data[hit_way_id].p2.request('1, index, pack(new_cle));
 			    if(fwd matches tagged Valid. send_fwd) begin
 			    	let packet = fn_gen_fwd_pkt(send_fwd);
@@ -439,22 +450,20 @@ package llc_bank;
     endrule
 
 	  rule rl_send_multi_cast(rg_state==Multi_cast && !rg_init);
-
+      `logLevel( llc_bank, 0, $format("LLV[%2d]: RGSV:%b",id,rg_sv))
 	  	let msg = rg_multi_cast;
-	  	let lv_sv = rg_sv;
-	  	let lv_shift_sv = countZerosLSB(rg_sv);
-	  	if(lv_sv[0]==1) begin
-	  		msg.dst = tagged Caches truncate(pack(lv_shift_sv));	
+	  	if(rg_sv[0]==1) begin
+	  		msg.dst = tagged Caches rg_dest_count;	
 	  		msg.src = msg.src;	
-	  		lv_sv[0]=1;
+	  	  let packet = fn_gen_fwd_pkt(msg);
+	  	  slave.i_fwd_channel.enq(packet);
+	  	  `logLevel( llc_bank, 0, $format("LLC[%2d]: Sending MultiCast FWD:",id,fshow(msg)))
 	  	end
-	  	if(lv_sv==0) begin
+	  	if(rg_sv==0) begin
 	  		rg_state <= Idle;
 	  	end
-	    rg_sv <= rg_sv >> (lv_shift_sv+1);
-	  	let packet = fn_gen_fwd_pkt(msg);
-	  	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending MultiCast FWD:",id,fshow(msg)))
-	  	slave.i_fwd_channel.enq(packet);
+	  	rg_sv <= rg_sv >> 1;
+	  	rg_dest_count <= rg_dest_count + 1;
 	  endrule
 
 	  /*doc:rule: this rule receives the request from the fabric initiated by any of the caches*/
