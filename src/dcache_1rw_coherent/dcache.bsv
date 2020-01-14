@@ -306,7 +306,7 @@ package dcache;
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
     /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
-    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8),fbsize)) ff_pending_req <- mkUGSizedFIFOF(2);    //TODO
+    FIFOF#(Pending_req#(paddr, TDiv#(linewidth,8),fbsize)) ff_pending_req <- mkUGSizedFIFOF(2);    
 
     // -------------------- Register declarations ----------------------------------------------//
 
@@ -417,13 +417,6 @@ package dcache;
 
 
     // ----------------------- Storage elements -------------------------------------------//
-    /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
-     * 'way' number of bits in each entry*/
-//    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
-    
-    /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
-     * 'way' number of bits in each entry*/
-//    Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkRegA(0));
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Ifc_mem_config2rw#(sets, tagbits, tbanks) bram_tag [v_ways];
 
@@ -1106,7 +1099,6 @@ package dcache;
     interface mv_response2_to_fabric = toGet(ff_resp2_to_fabric);
     interface mv_response_from_fabric = toPut(ff_resp_from_fabric);
     interface mv_fwd_from_fabric = toPut(ff_fwd_from_fabric);
-    // TODO
   `ifdef supervisor
     interface ptw_resp = toGet(ff_ptw_response);
     interface mav_pa_from_tlb = toPut(ff_from_tlb);
@@ -1117,7 +1109,6 @@ package dcache;
                             , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss , 
                               wr_total_write_miss , wr_total_atomic_miss , wr_total_evictions };
     `endif
-    //TODO
     method mv_storebuffer_empty = storebuffer.mv_sb_empty;
     method mv_cacheable_store = storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull && 
