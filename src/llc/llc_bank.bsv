@@ -76,18 +76,19 @@ package llc_bank;
                         cl : r.data};
     return m;
   endfunction
-  function Fwd_channel#(a,w,o,i,op,u) fn_gen_fwd_pkt(Message#(a,w) m)
+  function Fwd_channel#(a,w,o,i,op,u) fn_gen_fwd_pkt(Message#(a,w) m, Bit#(u) user)
     provisos(Add#(a__, 2, i),Add#(b__, 2, o),Add#(c__, 4, op));
     let _r = Fwd_channel{ opcode: zeroExtend(pack(m.msgtype)),
                           source: zeroExtend(pack(m.src)), 
                           dest:signExtend(pack(m.dst)), 
                           address:m.address, 
                           mask:'1,
-                          data:m.cl}; 
+                          data:m.cl, 
+                          user: user}; 
     return _r;
   endfunction
   
-  function Resp_channel#(a,w,o,i,op,acks,u) fn_gen_resp_pkt(Message#(a,w) m)
+  function Resp_channel#(a,w,o,i,op,acks,u) fn_gen_resp_pkt(Message#(a,w) m, Bit#(u) user)
     provisos(Add#(a__, 2, i),Add#(c__, 4, op),Add#(d__, 2, o),Add#(e__, 1, acks));
     let _r = Resp_channel{ opcode: zeroExtend(pack(m.msgtype)),
                           acksExpected:zeroExtend(m.acksExpected),
@@ -96,7 +97,8 @@ package llc_bank;
                           dest: signExtend(pack(m.dst)), 
                           address:m.address, 
                           corrupt:0,
-                          data:m.cl}; 
+                          data:m.cl,
+                          user: user}; 
     return _r;
   endfunction
   function Message#(a,w) fn_from_resp_pkt(Resp_channel#(a,w,o,i,op,acks,u) r)
@@ -162,6 +164,8 @@ package llc_bank;
     Reg#(Message#(a,w)) rg_multi_cast <- mkReg(unpack(0));
     /*doc:reg: the shared-vector for a multi-cast op*/
     Reg#(Bit#(`NrCaches)) rg_sv <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(u)) rg_user <- mkReg(unpack(0));
     /*doc:reg: holds the information for performing an eviction*/
     Reg#(EvictMeta#(a,w,ways)) rg_evict_meta <- mkReg(unpack(0));
     /*doc:reg: indicates the way that needs to be replaced to fill the response from memory*/
@@ -242,12 +246,12 @@ package llc_bank;
 			  let multi_cast = lv_update.send_multicast;
 			  data[hit_way_id].p1.request('1, index, pack(new_cle));
 			  if(fwd matches tagged Valid. send_fwd) begin
-			  	let packet = fn_gen_fwd_pkt(send_fwd);
+			  	let packet = fn_gen_fwd_pkt(send_fwd, req.user);
 			  	slave.i_fwd_channel.enq(packet);
 			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending FWD:",id,fshow(send_fwd)))
 			  end
 			  else if(resp matches tagged Valid .send_resp) begin
-			  	let packet = fn_gen_resp_pkt(send_resp); 
+			  	let packet = fn_gen_resp_pkt(send_resp, req.user); 
 			  	slave.i_resp_channel.enq(packet);
 			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending RESP:",id, fshow(send_resp)))
 			  end
@@ -257,6 +261,7 @@ package llc_bank;
   		  		rg_state <= Multi_cast; 
 	  	  		rg_multi_cast <= msg;
 		    		rg_sv <= sv;
+		    		rg_user <= req.user;
 		    		rg_dest_count <= 0;
 			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Initiating Multicast: sv:%b",id,
 			    	  sv,fshow(send_multi_cast)))
@@ -287,7 +292,7 @@ package llc_bank;
 			  																									address : req.address,
 			  																									mask : 0,
 			  																									data : ?, 
-			  																									user : ?};
+			  																									user : req.user};
 			  master.i_req_channel.enq(req_rd);
 			  rg_state<=Memory_wait;
 
@@ -338,12 +343,12 @@ package llc_bank;
 			  tag[rg_replace_way].p1.request(1,index,{1'b1,intag});
 			  data[rg_replace_way].p1.request(1,index,pack(new_cle));
 			  if(fwd matches tagged Valid. send_fwd) begin
-			  	let packet = fn_gen_fwd_pkt(send_fwd);
+			  	let packet = fn_gen_fwd_pkt(send_fwd, req.user);
 			  	slave.i_fwd_channel.enq(packet);
 			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending FWD:",id,fshow(send_fwd)))
 			  end
 			  else if(cle_resp matches tagged Valid .send_resp) begin
-			  	let packet = fn_gen_resp_pkt(send_resp); 
+			  	let packet = fn_gen_resp_pkt(send_resp, req.user); 
 			  	slave.i_resp_channel.enq(packet);
 			  	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Sending RESP:",id, fshow(send_resp)))
 			  end
@@ -353,6 +358,7 @@ package llc_bank;
   		  		rg_state <= Multi_cast; 
 	  	  		rg_multi_cast <= msg;
 		    		rg_sv <= sv;
+		    		rg_user <= req.user;
 		    		rg_dest_count <= 0;
 			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: MemResp: Initiating Multicast:",id,
 			    	                                fshow(send_multi_cast)))
@@ -379,7 +385,7 @@ package llc_bank;
 		    																										address : rg_evict_meta.address,
 		    																										mask : '1,
 		    																										data : rg_evict_meta.dataline.cl, 
-		    																										user : ?};
+		    																										user : req.user};
 		    	master.i_req_channel.enq(req_rd);
 		    	rg_perform_evict<= False;
 		    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Evicting :",id,fshow(rg_evict_meta)))
@@ -427,12 +433,12 @@ package llc_bank;
 			    `logLevel( llc_bank, 0, $format("LLC[%2d]: NewCLE:",id,fshow(new_cle)))
 			    data[hit_way_id].p2.request('1, index, pack(new_cle));
 			    if(fwd matches tagged Valid. send_fwd) begin
-			    	let packet = fn_gen_fwd_pkt(send_fwd);
+			    	let packet = fn_gen_fwd_pkt(send_fwd, resp.user);
 			    	slave.i_fwd_channel.enq(packet);
 			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending FWD:",id,fshow(send_fwd)))
 			    end
 			    else if(resp1 matches tagged Valid .send_resp) begin
-			    	let packet = fn_gen_resp_pkt(send_resp); 
+			    	let packet = fn_gen_resp_pkt(send_resp, resp.user); 
 			    	slave.i_resp_channel.enq(packet);
 			    	`logLevel( llc_bank, 0, $format("LLC[%2d]: Sending RESP:",id, fshow(send_resp)))
 			    end
@@ -455,7 +461,7 @@ package llc_bank;
 	  	if(rg_sv[0]==1) begin
 	  		msg.dst = tagged Caches rg_dest_count;	
 	  		msg.src = msg.src;	
-	  	  let packet = fn_gen_fwd_pkt(msg);
+	  	  let packet = fn_gen_fwd_pkt(msg, rg_user);
 	  	  slave.i_fwd_channel.enq(packet);
 	  	  `logLevel( llc_bank, 0, $format("LLC[%2d]: Sending MultiCast FWD:",id,fshow(msg)))
 	  	end

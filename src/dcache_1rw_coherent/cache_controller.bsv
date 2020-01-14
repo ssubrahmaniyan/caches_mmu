@@ -48,9 +48,9 @@ package cache_controller;
 
   interface Ifc_cache_controller#(numeric type o, numeric type i);
     interface Ifc_slc_master#(`paddr, TMul#(`dwords,`dblocks),o,i,SizeOf#(MessageType),
-                            TLog#(`NrCaches), 0) master_side;
+                            TLog#(`NrCaches), 1) master_side;
     interface Ifc_slc_slave#(`paddr, TMul#(`dwords,`dblocks),o,i,SizeOf#(MessageType),
-                            TLog#(`NrCaches), 0) slave_side;
+                            TLog#(`NrCaches), 1) slave_side;
 
     interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) core_req;
     interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) core_resp;
@@ -60,6 +60,8 @@ package cache_controller;
     method Bool cacheable_store;
     method Bool cache_available;
     method Bool mv_commit_store_ready;
+    (*always_ready,always_enabled*)
+    method Action ma_criticality(Bit#(1) c);
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -93,7 +95,7 @@ package cache_controller;
 `endif
   endinterface
 
-  function Req_channel#(a,w,o,i,op,u) fn_gen_req_pkt(Message#(a,w) m, Bit#(o) id)
+  function Req_channel#(a,w,o,i,op,u) fn_gen_req_pkt(Message#(a,w) m, Bit#(o) id, Bit#(u) user)
     provisos(Add#(a__, 2, i),Add#(b__, 4, op));
     let _r = Req_channel{ opcode: zeroExtend(pack(m.msgtype)),
                           len: 0,
@@ -103,22 +105,24 @@ package cache_controller;
                           dest: signExtend(pack(m.dst)), 
                           address:m.address, 
                           mask:'1,
-                          data:m.cl}; 
+                          data:m.cl,
+                          user: user}; 
     return _r;
   endfunction
   
-  function Fwd_channel#(a,w,o,i,op,u) fn_gen_fwd_pkt(Message#(a,w) m)
+  function Fwd_channel#(a,w,o,i,op,u) fn_gen_fwd_pkt(Message#(a,w) m, Bit#(u) user)
     provisos(Add#(a__, 2, i),Add#(b__, 2, o),Add#(c__, 4, op));
     let _r = Fwd_channel{ opcode: zeroExtend(pack(m.msgtype)),
                           source: zeroExtend(pack(m.src)), 
                           dest:signExtend(pack(m.dst)), 
                           address:m.address, 
                           mask:'1,
-                          data:m.cl}; 
+                          data:m.cl,
+                          user: user}; 
     return _r;
   endfunction
   
-  function Resp_channel#(a,w,o,i,op,acks,u) fn_gen_resp_pkt(Message#(a,w) m)
+  function Resp_channel#(a,w,o,i,op,acks,u) fn_gen_resp_pkt(Message#(a,w) m, Bit#(u) user)
     provisos(Add#(a__, 2, i),Add#(c__, 4, op),Add#(d__, 2, o),Add#(e__, 1, acks));
     let _r = Resp_channel{ opcode: zeroExtend(pack(m.msgtype)),
                           acksExpected:zeroExtend(m.acksExpected),
@@ -127,7 +131,8 @@ package cache_controller;
                           dest: signExtend(pack(m.dst)), 
                           address:m.address, 
                           corrupt:0,
-                          data:m.cl}; 
+                          data:m.cl,
+                          user: user}; 
     return _r;
   endfunction
   
@@ -167,30 +172,32 @@ package cache_controller;
     // Since we are having the number of banks equal to the number of caches the source and
     // destinations ids are simply 2x number of caches
     Ifc_slc_master_agent#(`paddr, TMul#(`dwords,`dblocks),o,i,SizeOf#(MessageType),
-                            TLog#(`NrCaches), 0) master <- mkslc_master_agent;
+                            TLog#(`NrCaches), 1) master <- mkslc_master_agent;
 
     // This agent is responsible to communication to other caches.
     // Since we are having the number of banks equal to the number of caches the source and
     // destinations ids are simply 2x number of caches
     Ifc_slc_slave_agent#(`paddr, TMul#(`dwords,`dblocks),o,i,SizeOf#(MessageType),
-                            TLog#(`NrCaches), 0) slave <- mkslc_slave_agent;
-
+                            TLog#(`NrCaches), 1) slave <- mkslc_slave_agent;
+  
+    /*doc:wire: */
+    Wire#(Bit#(1)) wr_criticality <- mkWire();
     /*doc:rule: */
     rule rl_send_req_to_fabric;
       let req <- dmem.mv_request_to_fabric.get;
       `logLevel( cc, 0, $format("CC[%2d]: Sending Request to Fabric:", id, fshow(req)))
-      master.i_req_channel.enq(fn_gen_req_pkt(req,fromInteger(id)));
+      master.i_req_channel.enq(fn_gen_req_pkt(req,fromInteger(id), wr_criticality));
     endrule
 
     rule rl_send_resp_to_fabric;
       let resp <- dmem.mv_response_to_fabric.get;
       `logLevel( cc, 0, $format("CC[%2d]: Sending Response:",id,fshow(resp)))
-      slave.i_resp_channel.enq(fn_gen_resp_pkt(resp));
+      slave.i_resp_channel.enq(fn_gen_resp_pkt(resp, wr_criticality));
     endrule
     rule rl_send_resp2_to_fabric;
       let resp <- dmem.mv_response2_to_fabric.get;
       `logLevel( cc, 0, $format("CC[%2d]: Sending Response:",id,fshow(resp)))
-      slave.i_resp_channel.enq(fn_gen_resp_pkt(resp));
+      slave.i_resp_channel.enq(fn_gen_resp_pkt(resp, wr_criticality));
     endrule
 
     /*doc:rule: */
@@ -218,6 +225,9 @@ package cache_controller;
     method cacheable_store = dmem.cacheable_store;
     method cache_available = dmem.cache_available;
     method mv_commit_store_ready = dmem.mv_commit_store_ready;
+    method Action ma_criticality(Bit#(1) c);
+      wr_criticality <= c;
+    endmethod
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor

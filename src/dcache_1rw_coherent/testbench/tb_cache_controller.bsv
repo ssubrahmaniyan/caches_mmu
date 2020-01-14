@@ -73,17 +73,17 @@ package tb_cache_controller;
     end
 
     Ifc_llc_bank#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
-      TLog#(`NrCaches),0, `dwords, `dblocks, `dsets, TAdd#(1, TMul#(`dways,`NrCaches))) llc[`NrCaches];
+      TLog#(`NrCaches),1, `dwords, `dblocks, `dsets, TAdd#(1, TMul#(`dways,`NrCaches))) llc[`NrCaches];
     for (Integer i = 0; i<`NrCaches; i = i + 1) begin
       llc[i] <- mkllc_bank(fromInteger(i));
     end
 
     // memory instance
     Ifc_bram_slc#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
-                          TLog#(`NrCaches),0) bram <- mkbram_slc("DDR");
+                          TLog#(`NrCaches),1) bram <- mkbram_slc("DDR");
   
     Ifc_ShaktiLink_Fabric#(Num_Masters,Num_Slaves,`paddr, TDiv#(`linesize,8), 
-                           FSize, FSize, SizeOf#(MessageType), TLog#(`NrCaches),0) 
+                           FSize, FSize, SizeOf#(MessageType), TLog#(`NrCaches),1) 
       fabric <- mkShaktiLink_Fabric(fn_addr_map);
 
     for(Integer i=0;i<`NrCaches; i=i+1) begin
@@ -132,6 +132,7 @@ package tb_cache_controller;
     for (Integer i = 0; i<`NrCaches; i = i + 1) begin
         rule enable_disable_cache;
           tile[i].cache_enable(True);
+          tile[i].ma_criticality(0);
         endrule
         rule tlb_csr_info;
           tile[i].ma_satp_from_csr(0);
@@ -247,7 +248,8 @@ package tb_cache_controller;
                           dest: (req.source), 
                           address:req.address, 
                           corrupt:0,
-                          data:data0}; 
+                          data:data0,
+                          user: req.user}; 
 			slave.i_resp_channel.enq(_r);
 			`logLevel( tb, 0, $format("DDR: Sending resposne:",fshow(_r)))
     endrule
