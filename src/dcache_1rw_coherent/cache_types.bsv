@@ -92,6 +92,13 @@ package cache_types;
   } DCache_mem_writereq#(numeric type addr, numeric type data) deriving(Bits, Eq, FShow);
 
   typedef Bool DCache_mem_writeresp;
+
+  typedef struct{
+    Bit#(a) addr;
+    Bit#(d) data;
+    Bit#(2) size;
+    Bool read_write;
+  } NCAccess#(numeric type a, numeric type d) deriving (Bits, Eq, FShow);
 // --------------------------------------------------------------------------------------------- //
 
 // --------------------------------- Data TLB types ---------------------------------------------//

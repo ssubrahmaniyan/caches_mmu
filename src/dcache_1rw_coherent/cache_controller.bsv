@@ -162,6 +162,7 @@ package cache_controller;
   /*doc:module: */
   (*preempts="rl_resp_message_from_fabric,rl_fwd_message_from_fabric"*)
   (*preempts="rl_send_resp2_to_fabric,rl_send_resp_to_fabric"*)
+  (*preempts="rl_send_io_req_to_fabric,rl_send_resp_to_fabric"*)
   module mkcache_controller#(parameter Integer id)(Ifc_cache_controller#(o,i))
     provisos(
       Add#(a__, 2, i),
@@ -187,6 +188,22 @@ package cache_controller;
       let req <- dmem.mv_request_to_fabric.get;
       `logLevel( cc, 0, $format("CC[%2d]: Sending Request to Fabric:", id, fshow(req)))
       master.i_req_channel.enq(fn_gen_req_pkt(req,fromInteger(id), wr_criticality));
+    endrule
+
+    rule rl_send_io_req_to_fabric;
+      let req <- dmem.mv_io_request_to_fabric.get;
+      let _r = Req_channel{ opcode: req.read_write?zeroExtend(pack(PutM)):zeroExtend(pack(GetS)),
+                          len: 0,
+                          size: zeroExtend(req.size),		                       
+                          mode:0,
+                          source: fromInteger(id), 
+                          dest: 5, 
+                          address:req.addr, 
+                          mask:'1,
+                          data:zeroExtend(req.data),
+                          user: wr_criticality}; 
+      master.i_req_channel.enq(_r);
+      `logLevel( cc, 0, $format("CC[%2d]: Sending IO Request to Fabric: Addr:%h", id,req.addr))
     endrule
 
     rule rl_send_resp_to_fabric;

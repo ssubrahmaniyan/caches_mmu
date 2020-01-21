@@ -75,6 +75,7 @@ package dmem;
     method Action perform_store(Bit#(`desize ) currepoch);
   `ifdef coherency
     interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_request_to_fabric;
+    interface Get#(NCAccess#(`paddr, TMul#(`dwords,8))) mv_io_request_to_fabric;
     interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_to_fabric;
     interface Get#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response2_to_fabric;
     interface Put#(Message#(`paddr,TMul#(`dwords,`dblocks))) mv_response_from_fabric;
@@ -177,6 +178,7 @@ package dmem;
     interface core_resp = dcache.core_resp;
   `ifdef coherency
     interface mv_request_to_fabric = dcache.mv_request_to_fabric;
+    interface mv_io_request_to_fabric = dcache.mv_io_request_to_fabric;
     interface mv_response_to_fabric = dcache.mv_response_to_fabric;
     interface mv_response2_to_fabric = dcache.mv_response2_to_fabric;
     interface mv_response_from_fabric = dcache.mv_response_from_fabric;

@@ -88,10 +88,10 @@ package dcache;
     interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
     interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_request_to_fabric;
+    interface Get#(NCAccess#(paddr, TMul#(wordsize,8))) mv_io_request_to_fabric;
     interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_to_fabric;
     interface Get#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response2_to_fabric;
     interface Put#(Message#(paddr,TMul#(wordsize,blocksize))) mv_response_from_fabric;
-    interface Put#(Message#(paddr,TMul#(wordsize,blocksize))) mv_fwd_from_fabric;
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
     interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
@@ -184,6 +184,11 @@ package dcache;
   // not fire. The rule rl_fill_from_memory will fire again and will find the entry in the FB
   // instead of the RAM this time.
   (*preempts="rl_send_memory_request,rl_update_ram"*)
+
+  // the below rules both update wr_nc_state but they can never update this together 
+  // since fill_memory will update wr_nc_state only if its a IO load request in which case
+  // rg_handling_miss is set to true and thus rl_ram_check cannot fire in this conditions
+  (*preempts="rl_ram_check, rl_fill_from_memory"*)
   module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
                   parameter String alg, parameter Bit#(32) id)
                   (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, fbsize,
@@ -220,10 +225,11 @@ package dcache;
           Mul#(TMul#(wordsize, 8), z__, linewidth),
           Mul#(aa__, 8, linewidth),
           Add#(ab__, TLog#(fbsize), TLog#(TAdd#(1, fbsize))),
-           Div#(linewidth, 8, aa__),
+          Div#(linewidth, 8, aa__),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
+          Add#(ac__, respwidth, TMul#(8, TMul#(wordsize, blocksize))),
 
           // for using mem_config
           Mul#(TDiv#(tagbits, tbanks), tbanks, tagbits),
@@ -293,10 +299,10 @@ package dcache;
     FIFOF#(DMem_core_response#(respwidth,esize))ff_ptw_response <- mkBypassFIFOF();
   `endif
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_req_to_fabric <- mkSizedFIFOF(2);
+    FIFOF#(NCAccess#(paddr,TMul#(wordsize,8))) ff_io_req_to_fabric <- mkSizedFIFOF(2);
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_to_fabric <- mkSizedFIFOF(2);
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp2_to_fabric <- mkSizedFIFOF(2);
     FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_resp_from_fabric <- mkSizedFIFOF(2);
-    FIFOF#(Message#(paddr,TMul#(wordsize,blocksize))) ff_fwd_from_fabric <- mkSizedFIFOF(2);
   `ifdef supervisor 
     /*doc:fifo: this fifo receives the physical address from the TLB */
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
@@ -574,17 +580,27 @@ package dcache;
       Bool lv_permitted = fn_permissions_avail(req.access, lv_c_meta.perm);
       wr_ram_permission_upgrade <= lv_upgrade_required;
 
-      if(lv_access_fault) begin
-        wr_ram_state <= Hit;
-      end
-      else if(|(hit_tag) == 1)begin
-        if (lv_permitted)
-          wr_ram_state <= Hit;
-        else if(lv_upgrade_required)
-          wr_ram_state <= Miss;
-      end
-      else begin // in case of miss from cache
+      // -------- IO checks -----------------//
+      if(isNonCacheable(phyaddr, wr_cache_enable)) begin
+        if(req.access == 0)
+          wr_nc_state <= Miss;
+        else
+          wr_nc_state <= Hit;
         wr_ram_state <= Miss;
+      end
+      else begin
+        if(lv_access_fault) begin
+          wr_ram_state <= Hit;
+        end
+        else if(|(hit_tag) == 1)begin
+          if (lv_permitted)
+            wr_ram_state <= Hit;
+          else if(lv_upgrade_required)
+            wr_ram_state <= Miss;
+        end
+        else begin // in case of miss from cache
+          wr_ram_state <= Miss;
+        end
       end
 
     `ifdef ASSERT
@@ -636,9 +652,9 @@ package dcache;
       wr_fb_permission_upgrade <= lv_upgrade_required;
       `logLevel( dcache, 0, $format("DCACHE[%2d]: FB: CMETA:",id,fshow(lv_c_meta),
                                     " lv_p:%b lv_upg:%b",lv_permitted, lv_upgrade_required))
-      if(lv_io_req && req.access != 0) begin
-        wr_fb_state <= Hit;
-        `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Detected NC Write",id))
+      if(lv_io_req ) begin
+        `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Detected NC Access",id))
+        wr_fb_state <= Miss;
       end
       else if(|lv_hit == 1 )begin
         `logLevel( dcache, 1, $format("DCACHE[%2d]: FB: Hit in Line(%b) for Addr:%h",id,lv_hit,phyaddr))
@@ -754,7 +770,7 @@ package dcache;
       if(req.access!=0)begin
         Bit#(TLog#(fbsize)) fbindex = wr_fb_state == Hit? wr_fb_hitindex:rg_fbhead;
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
-          isNonCacheable(phyaddr, wr_cache_enable));
+          wr_nc_state == Hit);
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Response: Allocating Store Buffer",id))
         wr_allocating_storebuffer <= True;        
       end
@@ -763,8 +779,9 @@ package dcache;
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
      * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
-    rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-          !rg_handling_miss && ff_pending_req.notFull && !ff_core_request.first.fence);
+    rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && wr_nc_state == Miss
+            && !fb_full &&  !rg_handling_miss && ff_pending_req.notFull 
+            && !ff_core_request.first.fence);
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -793,8 +810,15 @@ package dcache;
                                    acksReceived:0, acksExpected:0, id: tagged Caches truncate(id)};
 
       let {cacheline, message} = func_frm_core(_t, lv_line_addr, unpack(req.access));
-      if(message matches tagged Valid .m)
+      if(lv_io_req && req.access == 0) begin
+        ff_io_req_to_fabric.enq(NCAccess{addr: phyaddr, data:?, read_write:False, 
+          size:req.size[1:0]});
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: Sending IO Read Request",id))
+      end
+      else if(message matches tagged Valid .m) begin
         ff_req_to_fabric.enq(m);
+        `logLevel( dcache, 0, $format("DCACHE[%2d]: Sending Coherent Req:",id,fshow(m)))
+      end
       rg_handling_miss <= True;
       Bit#(TLog#(fbsize)) lv_alotted_fb = (!wr_ram_permission_upgrade && wr_fb_permission_upgrade)?
                       wr_fb_hitindex: rg_fbhead;
@@ -821,8 +845,7 @@ package dcache;
       end
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req, fbindex: lv_alotted_fb};
-      if(!wr_ram_permission_upgrade && !wr_fb_permission_upgrade)
-        ff_pending_req.enq(pend_req);
+      ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
         `logLevel( dcache, 0, $format("DCACHE[%2d]: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
       `ifdef perfmonitors
@@ -864,7 +887,15 @@ package dcache;
       Bool fbhit = isValid(_fbindex);
       let fbindex = fromMaybe(?,_fbindex);
       let lv_c_meta = v_fb_cmeta[fbindex];
-      if(fbhit) begin
+      if(response.address == pending_req.phyaddr && ff_pending_req.notEmpty &&
+                                                                    pending_req.io_request) begin
+        let lv_response = DMem_core_response{word:truncate(response.cl), trap: False,
+                                            cause: ?, epochs: ?};
+        wr_nc_response <= lv_response;
+        wr_nc_state <= Hit;
+        ff_resp_from_fabric.deq;
+      end
+      else if(fbhit) begin
         let lv_cle = ENTRY_Cacheline_state{state: lv_c_meta.state,
                                            perm   : lv_c_meta.perm,
                                            cl: v_fb_data[fbindex],
@@ -899,16 +930,7 @@ package dcache;
         rg_ram_cc_update <= True;
         `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: Indexing RAMS set:%d",id,set_index))
       end
-//      else if(response.address == pending_req.phyaddr && ff_pending_req.notEmpty 
-//                                                      && pending_req.io_request)  begin
-//        // TODO figure out how to handle io error
-//        let lv_response = DMem_core_response{word:truncate(response.cl), trap: False,
-//                                            cause: ?, epochs: ?};
-//        wr_nc_response <= lv_response;
-//        wr_nc_state <= Hit;
-//      end
-      if(inmsg_addr == truncateLSB(pending_req.phyaddr) && ff_pending_req.notEmpty &&
-                                                  !pending_req.io_request) begin
+      if(inmsg_addr == truncateLSB(pending_req.phyaddr) && ff_pending_req.notEmpty) begin
         ff_pending_req.deq;
         `logLevel( dcache, 0, $format("DCACHE[%2d]: FILL: Dequeing pending_req",id))
       end
@@ -1095,10 +1117,10 @@ package dcache;
 
     interface core_resp = toGet(ff_core_response);
     interface mv_request_to_fabric = toGet(ff_req_to_fabric);
+    interface mv_io_request_to_fabric = toGet(ff_io_req_to_fabric);
     interface mv_response_to_fabric = toGet(ff_resp_to_fabric);
     interface mv_response2_to_fabric = toGet(ff_resp2_to_fabric);
     interface mv_response_from_fabric = toPut(ff_resp_from_fabric);
-    interface mv_fwd_from_fabric = toPut(ff_fwd_from_fabric);
   `ifdef supervisor
     interface ptw_resp = toGet(ff_ptw_response);
     interface mav_pa_from_tlb = toPut(ff_from_tlb);
@@ -1128,6 +1150,8 @@ package dcache;
       if(sb_entry.epoch == currepoch) begin
         if(sb_entry.io) begin
           `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to NC Addr:%h",id,sb_entry.addr))
+          ff_io_req_to_fabric.enq(NCAccess{addr: sb_entry.addr, data:sb_entry.data, 
+            size: sb_entry.size[1:0], read_write: True});
         end
         else begin
           if(ff_pending_req.notEmpty && ff_pending_req.first.fbindex == sb_entry.fbindex)begin
@@ -1139,9 +1163,6 @@ package dcache;
             `logLevel( dcache, 0, $format("DCACHE[%2d]: Store to Available line",id))
             v_fb_data[sb_entry.fbindex] <= updateDataWithMask(v_fb_data[sb_entry.fbindex],
                                                               duplicate(sb_entry.data), mask);
-          `ifdef ASSERT
-//            dynamicAssert(v_fb_perm[sb_entry.fbindex]== Store,"Store to a transient entry");
-          `endif
           end
           rg_globaldirty <= True;
         end
