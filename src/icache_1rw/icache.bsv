@@ -74,12 +74,12 @@ package icache;
                         numeric type tbanks,
                         numeric type buswidth
                            );
-    interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
-    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(DCache_mem_readreq#(paddr)) read_mem_req;
-    interface Put#(DCache_mem_readresp#(buswidth)) read_mem_resp;
+    interface Put#(ICache_core_request#(vaddr,esize)) core_req;
+    interface Get#(IMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
+    interface Get#(ICache_mem_readreq#(paddr)) read_mem_req;
+    interface Put#(ICache_mem_readresp#(buswidth)) read_mem_resp;
   `ifdef supervisor
-    interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
+    interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
   `endif
   `ifdef perfmonitors
     method Bit#(3) perf_counters;
@@ -145,7 +145,7 @@ package icache;
           Add#(h__, TDiv#(tagbits, tbanks), tagbits),
           Mul#(TDiv#(linewidth, dbanks), dbanks, linewidth),
           Add#(i__, TDiv#(linewidth, dbanks), linewidth),
-          Add#(q__, TDiv#(linewidth, buswidth), paddr),
+          Add#(q__, TDiv#(linewidth, buswidth), paddr)
 
     );
 
@@ -172,6 +172,10 @@ package icache;
       64: 8;
       128: 16;
     endcase;
+  
+    function Bool isTrue(Bool a);
+      return a;
+    endfunction
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
@@ -194,17 +198,17 @@ package icache;
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
-    FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_core_request <- mkSizedFIFOF(2);
+    FIFOF#(ICache_core_request#(vaddr, esize)) ff_core_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response that needs to be sent back to the core.*/
-    FIFOF#(DMem_core_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
+    FIFOF#(IMem_core_response#(respwidth,esize))ff_core_response <- mkBypassFIFOF();
     /*doc:fifo: this fifo stores the read request that needs to be sent to the next memory level.*/
-    FIFOF#(DCache_mem_readreq#(paddr)) ff_read_mem_request <- mkSizedFIFOF(2);
+    FIFOF#(ICache_mem_readreq#(paddr)) ff_read_mem_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
-    FIFOF#(DCache_mem_readresp#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
+    FIFOF#(ICache_mem_readresp#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
 
   `ifdef supervisor 
     /*doc:fifo: this fifo receives the physical address from the TLB */
-    FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
+    FIFOF#(ITLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
   `endif
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
@@ -269,17 +273,17 @@ package icache;
 
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
-    Wire#(DMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
+    Wire#(IMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
     Wire#(Bit#(linewidth)) wr_ram_hitline <- mkDWire(?);
     Wire#(Maybe#(Bit#(setbits))) wr_ram_hitset <- mkDWire(tagged Invalid);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
     Wire#(RespState) wr_fb_state <- mkDWire(None);
-    Wire#(DMem_core_response#(respwidth,esize)) wr_fb_response <- mkDWire(?);
+    Wire#(IMem_core_response#(respwidth,esize)) wr_fb_response <- mkDWire(?);
 
     Wire#(RespState) wr_nc_state <- mkDWire(None);
-    Wire#(DMem_core_response#(respwidth,esize)) wr_nc_response <- mkDWire(?);
+    Wire#(IMem_core_response#(respwidth,esize)) wr_nc_response <- mkDWire(?);
   `ifdef perfmonitors
     /*doc:wire: wire to pulse on every read access*/
     Wire#(Bit#(1)) wr_total_read_access <- mkDWire(0);
@@ -287,8 +291,6 @@ package icache;
     Wire#(Bit#(1)) wr_total_io_reads <- mkDWire(0);
     /*doc:wire: wire to pulse on every read miss within the cache*/
     Wire#(Bit#(1)) wr_total_read_miss <- mkDWire(0);
-    /*doc:wire: wire to pulse on every eviction from the cache*/
-    Wire#(Bit#(1)) wr_total_evictions <- mkDWire(0);
   `endif
 
 
@@ -317,7 +319,7 @@ package icache;
     endrule
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty &&
-                                      !rg_fence_pending && !rg_performing_replay) ;
+                                      !rg_performing_replay) ;
       `logLevel( icache, 0, $format("ICACHE[%2d] : Fence operation in progress",id))
 
       for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
@@ -326,18 +328,6 @@ package icache;
       rg_fence_stall <= False;
       ff_core_request.deq;
       replacement.reset_repl;
-    endrule
-
-    /*doc:rule: */
-    rule rl_deq_write_resp(rg_fence_pending && ff_core_request.first.fence);
-      rg_fence_pending <= False;
-      let x = ff_write_mem_response.first;
-    endrule
-
-    /*doc:rule: whether the write response is for a fence or is for eviction it has to be evicted.
-     * Hence this has been decoupled from the previous rule - which is meant only for fence*/
-    rule rl_deq_write_response;
-      ff_write_mem_response.deq;
     endrule
 
     /*doc:rule: This rule checks the tag rams for a hit*/
@@ -372,7 +362,7 @@ package icache;
       end
       Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
 
-      let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
+      let lv_response = IMem_core_response{word:response_word, trap: lv_access_fault,
                                           cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
@@ -424,6 +414,7 @@ package icache;
       Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
       Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
       Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
+      let lv_response = IMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
       `logLevel( icache, 1, $format("ICACHE[%2d]: FB: processing Req: ",id,fshow(req)))
       if(|lv_hit == 1 )begin
@@ -465,13 +456,13 @@ package icache;
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-      DMem_core_response#(respwidth,esize) lv_response;
+      IMem_core_response#(respwidth,esize) lv_response;
 
       Bit#(3) onehot_hit = {pack(wr_ram_state==Hit), pack(wr_fb_state==Hit), pack(wr_nc_state==Hit)};
     `ifdef ASSERT
       dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
     `endif
-      Vector#(3, DMem_core_response#(respwidth,esize)) lv_responses;
+      Vector#(3, IMem_core_response#(respwidth,esize)) lv_responses;
       lv_responses[0] = wr_nc_response;
       lv_responses[1] = wr_fb_response;
       lv_responses[2] = wr_ram_response;
@@ -491,29 +482,9 @@ package icache;
       if(wr_nc_state == Hit) begin
         `logLevel( icache, 0, $format("ICACHE[%2d]: Response: Hit from NC",id))
       end
-
-      // capture the sign bit of the response to the core
-      Bit#(1) lv_sign =case(req.size[1:0])
-          'b00: lv_response.word[7];
-          'b01: lv_response.word[15];
-          'b10: lv_response.word[31];
-          default: truncateLSB(lv_response.word);
-        endcase;
-      // manipulate the sign based on the request of the core
-      lv_sign = lv_sign & ~req.size[2];
-
-      // generate a mask based on the request of the core.
-      Bit#(respwidth) mask = case(req.size[1:0])
-        'b00: 'hFF;
-        'b01: 'hFFFF;
-        'b10: 'hFFFFFFFF;
-        default: '1;
-      endcase;
     
       // signmask basically has all bits which are zeros in the mask duplicated with the required
       // sign bit. Theese need to be set in the final response to the core and will thus be ORed
-      Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
-      lv_response.word = (lv_response.word & mask) | signmask;
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
 
       ff_core_request.deq;
@@ -546,7 +517,7 @@ package icache;
       // upgrades are demanded
        // align the address to be line-address aligned
       phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount;
-      ff_read_mem_request.enq(DCache_mem_readreq{  address   : phyaddr,
+      ff_read_mem_request.enq(ICache_mem_readreq{  address   : phyaddr,
                                                   burst_len  : fromInteger(burst_len),
                                                   burst_size : fromInteger(burst_size),
                                                   io: lv_io_req
@@ -622,7 +593,7 @@ package icache;
       let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault;
-      let lv_response = DMem_core_response{word:truncate(response.data), trap: response.err,
+      let lv_response = IMem_core_response{word:truncate(response.data), trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
       wr_nc_state <= Hit;
@@ -700,17 +671,10 @@ package icache;
     endrule
 
     interface core_req=interface Put
-      method Action put(DCache_core_request#(vaddr,respwidth,esize) req)if( ff_core_response.notFull &&
+      method Action put(ICache_core_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                             !rg_fence_stall && !fb_full && !rg_performing_replay);
       `ifdef perfmonitors
-          if(req.access == 0)
-            wr_total_read_access <= 1;
-          if(req.access == 1)
-            wr_total_write_access <= 1;
-        `ifdef atomic
-          if(req.access == 2)
-            wr_total_atomic_access <= 1;
-        `endif
+          wr_total_read_access <= 1;
       `endif
         Bit#(paddr) phyaddr = truncate(req.address);
         Bit#(setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -732,11 +696,6 @@ package icache;
     interface read_mem_req = toGet(ff_read_mem_request);
     interface read_mem_resp = toPut(ff_read_mem_response);
     interface core_resp = toGet(ff_core_response);
-    method write_mem_req = ff_write_mem_request.first;
-    method Action write_mem_req_deq;
-      ff_write_mem_request.deq;
-    endmethod
-    interface write_mem_resp = toPut(ff_write_mem_response);
     // TODO
   `ifdef supervisor
     interface mav_pa_from_tlb = toPut(ff_from_tlb);

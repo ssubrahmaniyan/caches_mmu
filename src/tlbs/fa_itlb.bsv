@@ -76,7 +76,7 @@ package fa_itlb;
   (*synthesize*)
   module mkfa_itlb#(parameter Bit#(`vaddr) hartid) (Ifc_fa_itlb);
 
-    Vector#( `itlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
+    Vector#( `itlbsize , Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
     Reg#(Bit#(TLog#(`itlbsize))) rg_replace <- mkReg(0);

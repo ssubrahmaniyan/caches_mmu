@@ -17,8 +17,8 @@ endif
 ifeq ($(ATOMIC), enable)
   override define_macros += -D atomic=True
 endif
-ifeq ($(DCACHE), enable)
-  override define_macros += -D dcache=True
+ifeq ($(ICACHE), enable)
+  override define_macros += -D icache=True
 endif
 
 ifneq ($(SUPERVISOR),  none)
@@ -35,13 +35,13 @@ ifeq ($(TRACE), enable)
   trace := --trace
 endif
 
-override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCKS) -D dways=$(DWAYS) \
-								-D dsets=$(DSETS) -D drepl=$(DREPL) -D dcachereset=$(DRESET) -D dsbsize=$(DSBSIZE)\
-								-D dfbsize=$(DFBSIZE)\
-								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) \
+override define_macros += -D ASSERT=True -D iwords=$(IWORDS) -D iblocks=$(IBLOCKS) -D iways=$(IWAYS) \
+								-D isets=$(ISETS) -D irepl=$(IREPL) -D icachereset=$(IRESET) \
+								-D ifbsize=$(IFBSIZE)\
+								-D iesize=$(IESIZE) -D idbanks=$(IDBANKS) -D itbanks=$(ITBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
-								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)
+								-D simulate=True -D itlbsize=$(ITLBSIZE) -D causesize=6 \
+								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(IBUSWIDTH)
 
 ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
   VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout

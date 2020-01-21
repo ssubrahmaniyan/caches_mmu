@@ -50,6 +50,21 @@ package icache_types;
     Bool          err;
   } ICache_mem_readresp#(numeric type data) deriving(Bits, Eq, FShow);
 
+  typedef struct{
+    Bit#(addr)    address;
+    Bool          fence;
+    Bit#(esize)   epochs;
+  `ifdef supervisor
+    Bool          sfence;
+  `endif
+  } IMem_core_request#( numeric type addr, numeric type esize) deriving (Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(data)        word;
+    Bool              trap;
+    Bit#(`causesize)  cause;
+    Bit#(esize)       epochs;
+  } IMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq, FShow);
 // --------------------------------------------------------------------------------------------- //
 
 // --------------------------- Common Structs ---------------------------------------------------//
