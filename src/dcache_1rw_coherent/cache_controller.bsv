@@ -41,6 +41,7 @@ package cache_controller;
   import ShaktiLink_Types :: * ;
   import dmem :: *;
   import cache_types :: * ;
+  import common_tlb_types :: * ;
   import globals :: * ;
 
 //  `define O TAdd#(TLog#(`NrCaches),1)
