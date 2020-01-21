@@ -43,7 +43,7 @@ package icache;
   import DReg :: * ;
 
 
-  `include "cache.defines"
+  `include "icache.defines"
   import icache_types :: * ;
   import common_tlb_types :: * ;
   import globals :: * ;

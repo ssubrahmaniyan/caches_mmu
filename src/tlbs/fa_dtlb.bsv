@@ -30,7 +30,7 @@ Details:
 */
 package fa_dtlb;
   `include "Logger.bsv"
-  `include "cache.defines"
+  `include "common_tlb.defines"
   import FIFO :: * ;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;
