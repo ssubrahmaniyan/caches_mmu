@@ -35,7 +35,7 @@ package fa_dtlb;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;
   import Vector :: * ;
-  import cache_types :: * ;
+  import common_tlb_types:: * ;
   import GetPut :: * ;
 
   // structure of the virtual tag for fully-associative look-up

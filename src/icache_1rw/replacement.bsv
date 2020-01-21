@@ -28,7 +28,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package replacement_dcache;
+package replacement;
   import Vector::*;
   import LFSR::*;
   import Assert::*;
