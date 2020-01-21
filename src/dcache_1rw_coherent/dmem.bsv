@@ -53,6 +53,7 @@ package dmem;
 `endif
 `ifdef supervisor
   import fa_dtlb :: * ;
+  import common_tlb_types :: * ;
 `endif
 
   (*synthesize*)

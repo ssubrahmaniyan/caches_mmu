@@ -48,6 +48,7 @@ package dcache;
 
   `include "cache.defines"
   import cache_types :: * ;
+  import common_tlb_types :: * ;
   import globals :: * ;
   import replacement_dcache :: * ;
   import mem_config :: * ;

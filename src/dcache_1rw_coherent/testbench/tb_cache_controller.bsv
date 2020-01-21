@@ -50,7 +50,7 @@ package tb_cache_controller;
   import Connectable :: * ;
 
   typedef TMul#(`NrCaches,2) Num_Masters;
-  typedef TAdd#(TMul#(`NrCaches,2),1) Num_Slaves;
+  typedef TAdd#(TMul#(`NrCaches,2),2) Num_Slaves;
   typedef TAdd#(TLog#(Num_Masters),1) Isize;
   typedef TAdd#(TLog#(Num_Slaves),1) Osize;
   typedef TMax#(Isize,Osize) FSize;
@@ -81,6 +81,9 @@ package tb_cache_controller;
     // memory instance
     Ifc_bram_slc#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
                           TLog#(`NrCaches),1) bram <- mkbram_slc("DDR");
+    // memory instance
+    Ifc_bram_slc#(`paddr, TDiv#(`linesize,8), FSize, FSize, SizeOf#(MessageType), 
+                          TLog#(`NrCaches),1) bram_io <- mkbram_slc("DDR-IO");
   
     Ifc_ShaktiLink_Fabric#(Num_Masters,Num_Slaves,`paddr, TDiv#(`linesize,8), 
                            FSize, FSize, SizeOf#(MessageType), TLog#(`NrCaches),1) 
@@ -95,6 +98,7 @@ package tb_cache_controller;
       mkConnection(fabric.v_to_slaves[i],llc[i-`NrCaches].slave_side);
     end
     mkConnection(fabric.v_to_slaves[2*`NrCaches],bram.slave_side);
+    mkConnection(fabric.v_to_slaves[2*`NrCaches+1],bram_io.slave_side);
 
     Reg#(Bool) rg_init <- mkReg(True);
     Reg#(Bool) rg_do_perform_store [`NrCaches];
@@ -229,11 +233,11 @@ package tb_cache_controller;
 		  if (msg.msgtype == GetS) begin
         dut.read_request(req.address);
         ff_req.enq(req);
-        `logLevel( bram, 0, $format("DDR: Initiating Read Req:",fshow(msg)))
+        `logLevel( bram, 0, $format(modulename,": Initiating Read Req:",fshow(msg)))
       end
       else begin
         dut.write_request(tuple3(req.address, req.data,'1));
-        `logLevel( bram, 0, $format("DDR: Performing Write:",fshow(msg)))
+        `logLevel( bram, 0, $format(modulename,": Performing Write:",fshow(msg)))
       end
     endrule
 //    // get data from the memory. shift,  truncate, duplicate based on the size and offset.
@@ -251,7 +255,7 @@ package tb_cache_controller;
                           data:data0,
                           user: req.user}; 
 			slave.i_resp_channel.enq(_r);
-			`logLevel( tb, 0, $format("DDR: Sending resposne:",fshow(_r)))
+			`logLevel( tb, 0, $format(modulename,": Sending resposne:",fshow(_r)))
     endrule
     interface slave_side = slave.shaktilink_side;
   endmodule
