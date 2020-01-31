@@ -168,6 +168,7 @@ package storebuffer;
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
       v_sb_valid[rg_head] <= False;
+      v_sb_meta[rg_head] <= unpack(0);
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = v_sb_meta[rg_head].io;
