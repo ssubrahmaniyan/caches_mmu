@@ -414,6 +414,7 @@ package l1icache;
       Bit#(setbits) read_set = phy_addr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phy_addr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(blockbits) word_index=phy_addr[v_blockbits+v_wordbits-1:v_wordbits];
+		  Bit#(wordbits) byte_index = phy_addr[v_wordbits-1:0];
       Bit#(TAdd#(tagbits,setbits)) t=truncateLSB(phy_addr);
       Bit#(fbsize) fbhit=0;
       Bit#(linewidth) hitline=0;
@@ -437,10 +438,18 @@ package l1icache;
           hitline=fb_dataline[i];
           fberr=fb_err[i];
           fbhit[i]=1;
-          if(fb_enables[i][word_index]==1'b1) begin
-            wordhit=True;
+		  //Changes for i-class
+          if(byte_index==0) begin
+							if(fb_enables[i][word_index]==1'b1)
+									wordhit=True;
           end
-        end          
+				  else begin
+							if(&(word_index) == 1 && fb_enables[i][word_index]==1'b1)
+									wordhit=True;
+			        else if(&(word_index) == 0 && fb_enables[i][word_index]==1'b1 && fb_enables[i][word_index+1]==1'b1)
+								  wordhit=True;
+				  end
+				end          
       end
       
       Bool linehit=unpack(|fbhit);
