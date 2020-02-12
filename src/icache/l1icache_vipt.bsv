@@ -616,21 +616,22 @@ package l1icache_vipt;
     `ifdef ECC
       let m= valueOf(TDiv#(buswidth,respwidth));
       Bit#(ecc_encoded_parity_wordsize) response_word_ecc = 0;
-      Bit#(TAdd#(1, TLog#(ecc_wordsize))) decoded_parity = 0;
       Bit#(respwidth) response_word_correct = 0;
       Bit#(1) det_only = 0;
-      Bool trap = False;
+//    Bit#(TAdd#(1, TLog#(ecc_wordsize))) decoded_parity = 0;
+//    Bool trap = False;
+//    Bit#(ecc_wordsize) word_correct = 0;
       Bool resp_ecc_fault = False;
 
-      response_word_ecc= truncate(hitline_ecc>> ((block_offset_ecc/fromInteger(m))*fromInteger(v_ecc_encoded_parity_wordsize)));
+      response_word_ecc= truncate(hitline_ecc>> ((block_offset_ecc)*fromInteger(v_ecc_encoded_parity_wordsize)));
 
       Bit#(ecc_wordsize) ecc_word = 0;
       Bit#(encoded_paritysize) ecc_enc_word = 0;
-      Bit#(ecc_wordsize) word_correct = 0;
       for (Integer i=0; i < v_num_ecc_per_word; i=i+1) begin
         ecc_word = response_word[i*v_ecc_wordsize+v_ecc_wordsize-1:i*v_ecc_wordsize];
         ecc_enc_word = response_word_ecc[i*v_encoded_paritysize+v_encoded_paritysize-1:i*v_encoded_paritysize];
         {word_correct,decoded_parity, trap} = ecc_hamming_decode_correct(ecc_word,ecc_enc_word,det_only);
+        let {word_correct,decoded_parity, trap} = ecc_hamming_decode_correct(ecc_word,ecc_enc_word,det_only);
         if (trap == True) begin
            resp_ecc_fault = resp_ecc_fault || trap;
         end
@@ -842,14 +843,14 @@ package l1icache_vipt;
       let m= valueOf(TDiv#(buswidth,respwidth));
       Bit#(ecc_wordsize) ecc_word = 0;
       Bit#(TAdd#(2, TLog#(ecc_wordsize))) ecc_encoded_parity = 0;
-      Bit#(TMul#((TDiv#(respwidth, ecc_wordsize)), (TAdd#(2, TLog#(ecc_wordsize)))) )  ecc_encoded_parity_word = 0;
+//      Bit#(TMul#((TDiv#(respwidth, ecc_wordsize)), (TAdd#(2, TLog#(ecc_wordsize)))) )  ecc_encoded_parity_word = 0;
       Bit#(TMul#(TDiv#(buswidth,respwidth), TMul#((TDiv#(respwidth, ecc_wordsize)), TAdd#(2, TLog#(ecc_wordsize))) ))  ecc_encoded_parity_word_mtpl = 0;
       for (Integer j=0; j < m; j=j+1) begin
       	for (Integer i=0; i < v_num_ecc_per_word; i=i+1) begin
 		let k = (j*v_num_ecc_per_word) + i;
         	ecc_word = response.data[k*v_ecc_wordsize+v_ecc_wordsize-1:k*v_ecc_wordsize];
         	ecc_encoded_parity = ecc_hamming_encode(ecc_word);
-		ecc_encoded_parity_word[i* v_encoded_paritysize+ v_encoded_paritysize -1:i*v_encoded_paritysize] = ecc_encoded_parity;
+		//ecc_encoded_parity_word[i* v_encoded_paritysize+ v_encoded_paritysize -1:i*v_encoded_paritysize] = ecc_encoded_parity;
 		ecc_encoded_parity_word_mtpl[k* v_encoded_paritysize+ v_encoded_paritysize -1:k*v_encoded_paritysize] = ecc_encoded_parity;
       	end 
       end
