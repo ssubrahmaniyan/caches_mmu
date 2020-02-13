@@ -162,7 +162,11 @@ package nb_dcache_tb;
                                                                                    sfence: False,
                                                                                    ptwalk_trap: False,
 																																									 rob: rob,
-																																								 	 prf_index: pack(new_token)};
+																																								 	 prf_index: pack(new_token)
+                                                                                  `ifdef atomic
+                                                                                   , is_atomic: False
+                                                                                   , atomic_fn: 'b01000
+                                                                                  `endif };
 					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
         	dcache.subifc_req_from_core.put(temp_req);
 				end
