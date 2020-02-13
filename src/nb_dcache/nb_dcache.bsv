@@ -601,7 +601,7 @@ package nb_dcache;
 
   `ifdef atomic
     rule rl_sc_fail_response_to_core(!wr_is_mshr_resp_to_core && rg_sc_fail && !rg_fence && rg_cache_busy);
-			wr_resp_to_core<= Resp_to_core {data: ?,
+			wr_resp_to_core<= Resp_to_core {data: 'd1,
 																			prf_index: tpl_2(rg_access_fault_response),
 																			exception: defaultValue };
       rg_sc_fail<= False;
@@ -727,6 +727,9 @@ package nb_dcache;
       data_arr[hit_way].write(set_index, write_data);
       wr_stage1_deq<= True;
       rg_atomic_hit_info<= tagged Invalid;
+      if(atomic_fn=='d3) begin  //if SC
+        cache_data= 'd0;
+      end
 			wr_sram_resp_to_core<= Resp_to_core { data: cache_data, //TODO check if correct for atomics
 														  							prf_index: req.prf_index,
 														  							exception: No_exception };
@@ -742,6 +745,7 @@ package nb_dcache;
       Maybe#(Bit#(linewidth)) fill_buffer_resp= tagged Invalid;
 			Bool lv_stage1_fb_deq= False;
 
+      //TODO for mshr response for SC, change response to 0
       `ifdef atomic
       if(!req.is_atomic) begin  //If not atomic
       `endif
@@ -770,6 +774,11 @@ package nb_dcache;
 				`logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h for prf_index: %h",  fb_data, req.prf_index))
 				Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
 				Bool send_resp= req.origin!=Store_buffer;
+      `ifdef atomic
+        if(req.is_atomic && req.atomic_fn=='d3) begin //SC
+          data_to_core= 0;
+        end
+      `endif
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_resp_to_core<= Resp_to_core { data: data_to_core,
 																		 								 prf_index: req.prf_index,
@@ -955,6 +964,11 @@ package nb_dcache;
                          `ifdef atomic || req_from_mshr.is_atomic `endif );
 				if(send_resp) begin
 					Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
+        `ifdef atomic
+          if(req_from_mshr.is_atomic && req_from_mshr.atomic_fn=='d3) begin //SC
+            data_to_core= 0;
+          end
+        `endif
 					wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
 																					      prf_index: req_from_mshr.prf_index,
 																					      exception: No_exception };
