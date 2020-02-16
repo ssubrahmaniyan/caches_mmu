@@ -39,9 +39,9 @@ package imem;
   import Connectable::*;
 
   import icache_types::*;
-//  import globals::*;
   import io_func::*;
   `include "icache.defines"
+  `include "common_tlb.defines"
 `ifdef icache
   import icache :: *;
 `else
@@ -53,12 +53,12 @@ package imem;
 `endif
 
   (*synthesize*)
-  module mkicache_inst(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr,
+  module mkicache_inst#(parameter Bit#(32) id)(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr,
                                                       `ifbsize, `iesize ,
                               `ifdef ECC `vaddr, 1, `endif `idbanks, `itbanks, `ibuswidth ));
     let ifc();
   `ifdef icache
-    mkicache#(isIO,"RROBIN",0) _temp(ifc);
+    mkicache#(isIO,"RROBIN",id) _temp(ifc);
   `else
     mknull_icache _temp(ifc);
   `endif
@@ -75,7 +75,8 @@ package imem;
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
-    interface Get#(PTWalk_tlb_request#(`vaddr)) req_to_ptw;
+    interface Get#(PTWalk_tlb_request#(`vaddr)) request_to_ptw;
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
     /*doc:method: method to receive the current satp csr from the core*/
     method Action ma_satp_from_csr (Bit#(`vaddr) s);
 
@@ -91,7 +92,7 @@ package imem;
 
 `ifdef perfmonitors
   `ifdef icache
-    method Bit#(3) mv_icache_perf_counters;
+    method Bit#(5) mv_icache_perf_counters;
   `endif
   `ifdef supervisor
     method Bit#(1) mv_itlb_perf_counters ;
@@ -116,8 +117,8 @@ package imem;
 `endif
 
   (*synthesize*)
-  module mkimem(Ifc_imem);
-    let icache <- mkicache_inst;
+  module mkimem#(parameter Bit#(32) id)(Ifc_imem);
+    let icache <- mkicache_inst(id);
   `ifdef supervisor
     Ifc_fa_itlb itlb <- mkfa_itlb(0);
     mkConnection(itlb.core_response, icache.mav_pa_from_tlb);
@@ -142,7 +143,8 @@ package imem;
     endmethod
       method cache_available = icache.mv_cache_available;
 `ifdef supervisor
-    interface req_to_ptw = itlb.request_to_ptw;
+    interface request_to_ptw = itlb.request_to_ptw;
+    interface response_frm_ptw = itlb.response_frm_ptw;
     method ma_satp_from_csr = itlb.ma_satp_from_csr;
     method ma_curr_priv = itlb.ma_curr_priv;
     `ifdef pmp

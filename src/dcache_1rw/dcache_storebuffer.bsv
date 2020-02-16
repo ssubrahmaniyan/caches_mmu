@@ -171,7 +171,7 @@ package dcache_storebuffer;
       v_sb_meta[rg_head] <= unpack(0);
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
-    method mv_cacheable_store = v_sb_meta[rg_head].io;
+    method mv_cacheable_store = !v_sb_meta[rg_head].io;
   endmodule
 
 //  (*synthesize*)

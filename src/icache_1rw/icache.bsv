@@ -46,7 +46,6 @@ package icache;
   `include "icache.defines"
   import icache_types :: * ;
   import common_tlb_types :: * ;
-  import globals :: * ;
   import replacement:: * ;
   import mem_config :: * ;
 
@@ -82,7 +81,7 @@ package icache;
     interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
   `endif
   `ifdef perfmonitors
-    method Bit#(3) perf_counters;
+    method Bit#(5) perf_counters;
   `endif
     method Action ma_cache_enable(Bool c);
     method Bool mv_cache_available;
@@ -285,15 +284,17 @@ package icache;
     Wire#(RespState) wr_nc_state <- mkDWire(None);
     Wire#(IMem_core_response#(respwidth,esize)) wr_nc_response <- mkDWire(?);
   `ifdef perfmonitors
-    /*doc:wire: wire to pulse on every read access*/
-    Wire#(Bit#(1)) wr_total_read_access <- mkDWire(0);
-    /*doc:wire: wire to pulse on every atomic access*/
-    Wire#(Bit#(1)) wr_total_io_reads <- mkDWire(0);
-    /*doc:wire: wire to pulse on every read miss within the cache*/
-    Wire#(Bit#(1)) wr_total_read_miss <- mkDWire(0);
+    /*doc:wire: pulse on every request made by the core*/
+    Wire#(Bit#(1)) wr_total_access <- mkDWire(0);
+    /*doc:wire: pulse on every miss in the cache*/
+    Wire#(Bit#(1)) wr_total_cache_misses <- mkDWire(0);
+    /*doc:wire: pulse everytime there is a hit from the fill-buffer*/
+    Wire#(Bit#(1)) wr_total_fb_hits <- mkDWire(0);
+    /*doc:wire: pulse everytime there is a non-cacheable access*/
+    Wire#(Bit#(1)) wr_total_nc <- mkDWire(0);
+    /*doc:wire: pulse everytime there is a fill from the fill-buffer to the RAMs*/
+    Wire#(Bit#(1)) wr_total_fbfills <- mkDWire(0);
   `endif
-
-
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
@@ -314,13 +315,13 @@ package icache;
 
     /*doc:rule: */
     rule rl_print_stats;
-      `logLevel( icache, 2, $format("ICACHE[%2d]: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d FEB:%b",
+      `logLevel( icache, 2, $format("[%2d]ICACHE: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d FEB:%b",
       id, fb_full, fb_empty, rg_fbhead, rg_fbtail, &(v_fb_enables[rg_fbtail])))
     endrule
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty &&
                                       !rg_performing_replay) ;
-      `logLevel( icache, 0, $format("ICACHE[%2d] : Fence operation in progress",id))
+      `logLevel( icache, 0, $format("[%2d]ICACHE : Fence operation in progress",id))
 
       for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
         v_reg_valid[i] <= 0 ;
@@ -378,10 +379,10 @@ package icache;
     `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"ICACHE: More than one way is a hit in the cache");
     `endif
-      `logLevel( icache, 0, $format("ICACHE[%2d]: RAM For Req:",id,(hit_tag),fshow(req)))
-      `logLevel( icache, 0, $format("ICACHE[%2d]: RAM Hit:%b set:%d tag:%h",id,hit_tag,set_index,
+      `logLevel( icache, 0, $format("[%2d]ICACHE: RAM For Req:",id,(hit_tag),fshow(req)))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: RAM Hit:%b set:%d tag:%h",id,hit_tag,set_index,
                                     request_tag))
-      `logLevel( icache, 0, $format("ICACHE[%2d]: RAM Response:",id, fshow(lv_response)))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: RAM Response:",id, fshow(lv_response)))
     endrule
 
     /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
@@ -416,25 +417,25 @@ package icache;
       Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
       let lv_response = IMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
-      `logLevel( icache, 1, $format("ICACHE[%2d]: FB: processing Req: ",id,fshow(req)))
+      `logLevel( icache, 1, $format("[%2d]ICACHE: FB: processing Req: ",id,fshow(req)))
       if(|lv_hit == 1 )begin
-        `logLevel( icache, 1, $format("ICACHE[%2d]: FB: Hit in Line for Addr:%h",id,phyaddr))
+        `logLevel( icache, 1, $format("[%2d]ICACHE: FB: Hit in Line for Addr:%h",id,phyaddr))
         if((required_enable & lv_fb_enable) !=0)begin
           wr_fb_state <= Hit;
           wr_fb_response <= lv_response;
-          `logLevel( icache, 1, $format("ICACHE[%2d]: FB: Required Word found",id))
+          `logLevel( icache, 1, $format("[%2d]ICACHE: FB: Required Word found",id))
           rg_polling_mode <= False;
         end
         else begin
           wr_fb_state <= None;
           rg_polling_mode <= True;
-          `logLevel( icache, 1, $format("ICACHE[%2d]: FB: Required word not available yet",id))
+          `logLevel( icache, 1, $format("[%2d]ICACHE: FB: Required word not available yet",id))
         end
       end
       else begin
         wr_fb_state <= Miss;
         rg_polling_mode <= False;
-        `logLevel( icache, 1, $format("ICACHE[%2d]: FB: Miss",id))
+        `logLevel( icache, 1, $format("[%2d]ICACHE: FB: Miss",id))
       end      
     endrule
 
@@ -470,17 +471,17 @@ package icache;
       lv_response = select(lv_responses,unpack(onehot_hit));
 
       if(wr_ram_state == Hit) begin
-        `logLevel( icache, 0, $format("ICACHE[%2d]: Response: Hit from SRAM",id))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from SRAM",id))
         if(alg == "PLRU") begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
           wr_ram_hitset <= tagged Valid set_index;
         end
       end
       if(wr_fb_state == Hit) begin
-        `logLevel( icache, 0, $format("ICACHE[%2d]: Response: Hit from Fillbuffer",id))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from Fillbuffer",id))
       end
       if(wr_nc_state == Hit) begin
-        `logLevel( icache, 0, $format("ICACHE[%2d]: Response: Hit from NC",id))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from NC",id))
       end
     
       // signmask basically has all bits which are zeros in the mask duplicated with the required
@@ -490,7 +491,10 @@ package icache;
       ff_core_request.deq;
       ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
-
+    `ifdef perfmonitors
+      if(!rg_handling_miss && onehot_hit[1] == 1)
+          wr_total_fb_hits<=1;
+    `endif
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
@@ -539,22 +543,22 @@ package icache;
           v_fb_enables[rg_fbhead] <= 0;
           v_fb_err[rg_fbhead] <= 0;
         end
-        `logLevel( icache, 0, $format("ICACHE[%2d]: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
       let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
                                 io_request: lv_io_req, fbindex: lv_alotted_fb};
       ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
-        `logLevel( icache, 0, $format("ICACHE[%2d]: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
       `ifdef perfmonitors
-          wr_total_io_reads <= 1;
+          wr_total_nc<= 1;
       `endif
       end
       else begin
       `ifdef perfmonitors
-          wr_total_read_miss <= 1;
+          wr_total_cache_misses <= 1;
       `endif
-        `logLevel( icache, 0, $format("ICACHE[%2d] : MemReq: Sending Line Request for Addr:%h",id, phyaddr))
+        `logLevel( icache, 0, $format("[%2d]ICACHE : MemReq: Sending Line Request for Addr:%h",id, phyaddr))
       end
     endrule
 
@@ -564,7 +568,7 @@ package icache;
     rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
-      `logLevel( icache, 0, $format("ICACHE[%2d]: Processing:",id,fshow(pending_req)))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Processing:",id,fshow(pending_req)))
       ff_read_mem_response.deq;
 
       let fbindex = pending_req.fbindex;
@@ -581,9 +585,9 @@ package icache;
       rg_temp_enable <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
       v_fb_enables[fbindex] <= lv_fb_enable | lv_current_enable;
       v_fb_data[fbindex] <=  lv_fb_linedata;
-      `logLevel( icache, 0, $format("ICACHE[%2d]: current_enable:%h ",id,
+      `logLevel( icache, 0, $format("[%2d]ICACHE: current_enable:%h ",id,
                                                               lv_current_enable))
-      `logLevel( icache, 0, $format("ICACHE[%2d]: Response from Memory:",id,fshow(response)))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Response from Memory:",id,fshow(response)))
       if(response.last)
         ff_pending_req.deq;
     endrule
@@ -599,7 +603,7 @@ package icache;
       wr_nc_state <= Hit;
       ff_read_mem_response.deq;
       ff_pending_req.deq;
-      `logLevel( icache, 2, $format("ICACHE[%2d]: NC Response from Memory: ",id,fshow(response)))
+      `logLevel( icache, 2, $format("[%2d]ICACHE: NC Response from Memory: ",id,fshow(response)))
     endrule
 
     /*doc:rule: 
@@ -621,13 +625,13 @@ package icache;
     the same index.*/
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && !fb_empty
         && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay);
-      `logLevel( icache, 0, $format("ICACHE[%2d]: Release rule firing",id))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Release rule firing",id))
       let addr = v_fb_addr[rg_fbtail];
       Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                          v_blockbits + v_wordbits];
 
       let waynum <- replacement.line_replace(set_index, v_reg_valid[set_index],0);
-      `logLevel( icache, 2, $format("ICACHE[%2d]: Release: set%d way:%d valid:%b",id,
+      `logLevel( icache, 2, $format("[%2d]ICACHE: Release: set%d way:%d valid:%b",id,
                                     set_index, waynum,v_reg_valid[set_index][waynum]))
       if(v_fb_err[rg_fbtail] == 0)begin
         v_reg_valid[set_index][waynum]<=1;
@@ -652,6 +656,9 @@ package icache;
               replacement.update_set(set_index,waynum);
           end
         end
+      `ifdef perfmonitors
+        wr_total_fbfills<=1;
+      `endif
       end
       else begin
         // enter here only if the fillbuffer entry has an error
@@ -667,14 +674,14 @@ package icache;
         bram_data[i].request(0,rg_recent_req,writedata);
       end
       rg_performing_replay <= False;
-      `logLevel( icache, 0, $format("ICACHE[%2d]: Replaying Req. Index:%d",id,rg_recent_req))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
 
     interface core_req=interface Put
       method Action put(ICache_core_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                             !rg_fence_stall && !fb_full && !rg_performing_replay);
       `ifdef perfmonitors
-          wr_total_read_access <= 1;
+        wr_total_access<= 1;
       `endif
         Bit#(paddr) phyaddr = truncate(req.address);
         Bit#(setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
@@ -685,8 +692,8 @@ package icache;
           bram_data[i].request(0,set_index,writedata);
           bram_tag[i].request(0,set_index,writetag);
         end
-        `logLevel( icache, 0, $format("ICACHE[%2d]: Receiving request: ",id,fshow(req)))
-        `logLevel( icache, 0, $format("ICACHE[%2d]: set:%d",id,set_index))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: Receiving request: ",id,fshow(req)))
+        `logLevel( icache, 0, $format("[%2d]ICACHE: set:%d",id,set_index))
       endmethod
     endinterface;
     method Action ma_cache_enable(Bool c);
@@ -701,7 +708,7 @@ package icache;
     interface mav_pa_from_tlb = toPut(ff_from_tlb);
   `endif
     `ifdef perfmonitors
-      method perf_counters = {wr_total_read_access, wr_total_io_reads ,wr_total_read_miss};
+      method perf_counters = {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_misses,wr_total_access};
     `endif
     //TODO
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull && 

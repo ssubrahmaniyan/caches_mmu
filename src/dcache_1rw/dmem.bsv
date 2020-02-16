@@ -38,10 +38,9 @@ package dmem;
   import GetPut::*;
   import Connectable::*;
 
-  import cache_types::*;
-  import globals::*;
+  import dcache_types::*;
   import io_func::*;
-  `include "cache.defines"
+  `include "dcache.defines"
 `ifdef dcache
   import dcache :: *;
 `else
@@ -49,6 +48,7 @@ package dmem;
 `endif
 `ifdef supervisor
   import fa_dtlb :: * ;
+  import common_tlb_types :: * ;
 `endif
 
   (*synthesize*)
@@ -112,7 +112,7 @@ package dmem;
 
 `ifdef perfmonitors
   `ifdef dcache
-    method Bit#(9) mv_dcache_perf_counters;
+    method Bit#(13) mv_dcache_perf_counters;
   `endif
   `ifdef supervisor
     method Bit#(1) mv_dtlb_perf_counters ;

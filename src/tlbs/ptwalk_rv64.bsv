@@ -37,9 +37,9 @@ package ptwalk_rv64;
   import FIFO::*;
   import GetPut::*;
 
-  import cache_types::*;
-  import globals::*;
-  `include "cache.defines"
+  import dcache_types::*;
+  import common_tlb_types :: * ;
+  `include "dcache.defines"
   `include "Logger.bsv"
 
   interface Ifc_ptwalk_rv64#(numeric type asid_width);
