@@ -232,7 +232,7 @@ package dcache;
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(DCache_mem_readresp#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo stores the eviction request to be written back*/
-    FIFOF#(DCache_mem_writereq#(paddr, linewidth)) ff_write_mem_request <- mkSizedFIFOF(1);
+    FIFOF#(DCache_mem_writereq#(paddr, linewidth)) ff_write_mem_request <- mkSizedFIFOF(2);
     /*doc:fifo: this fifo stores the write response from an eviction or a io write req*/
     FIFOF#(DCache_mem_writeresp) ff_write_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
