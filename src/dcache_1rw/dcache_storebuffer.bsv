@@ -28,7 +28,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package storebuffer;
+package dcache_storebuffer;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;

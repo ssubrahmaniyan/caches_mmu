@@ -48,7 +48,7 @@ package dcache;
   import globals :: * ;
   import replacement_dcache :: * ;
   import mem_config :: * ;
-  import storebuffer :: * ;
+  import dcache_storebuffer :: * ;
 
   typedef struct{
     Bit#(addr)  phyaddr;
