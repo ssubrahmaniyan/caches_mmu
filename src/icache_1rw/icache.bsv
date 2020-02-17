@@ -224,11 +224,17 @@ package icache;
     Reg#(Bool) rg_handling_miss <- mkRegA(False);
 
     //------------------------- Fill buffer data structures -------------------------------------//
-    
+   
+    /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
     Vector#(fbsize,Reg#(Bool))                      v_fb_valid    <- replicateM(mkReg(False));
+    /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
+    /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_err      <- replicateM(mkReg(0));
+    /*doc: vec: vector of regisetrs to indicate how many bytes of the line have been filled by the
+     bus*/
     Vector#(fbsize,Reg#(Bit#(TDiv#(linewidth,8))))  v_fb_enables  <- replicateM(mkReg(0));
+    /*doc: vec: vector registers indicating the address of the fill-buffer line*/
     Vector#(fbsize,Reg#(Bit#(paddr)))               v_fb_addr     <- replicateM(mkReg(0));
 
     /*doc:reg: register pointing to next entry being allotted on the filbuffer*/
@@ -270,19 +276,28 @@ package icache;
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
 
-    /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
+    /*doc:wire: this wire indicates if there was a fault in the address or during translation*/
     Wire#(RespState) wr_fault <- mkDWire(None);
+    /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response from the RAM in case of a hit in the RAMs*/
     Wire#(IMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
+    /*doc:wire: in case of a hit in the ram, this wire holds the information of which way was a hit.
+    * This is used for replacement purposes only.*/
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
-    Wire#(Bit#(linewidth)) wr_ram_hitline <- mkDWire(?);
+    /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
+     * caused a hit. This is necessary since an eviction from the same set should not affect the
+     * replacement policy if a hit to the same set has occurred in the same cycle */
     Wire#(Maybe#(Bit#(setbits))) wr_ram_hitset <- mkDWire(tagged Invalid);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
     Wire#(RespState) wr_fb_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response data structure in case of a hit from fill-buffers*/
     Wire#(IMem_core_response#(respwidth,esize)) wr_fb_response <- mkDWire(?);
 
+    /*doc:wire: this wire indicates if the current request is non-cacheable*/
     Wire#(RespState) wr_nc_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response data structure in case of a Non-cacheable access*/
     Wire#(IMem_core_response#(respwidth,esize)) wr_nc_response <- mkDWire(?);
   `ifdef perfmonitors
     /*doc:wire: pulse on every request made by the core*/
@@ -368,7 +383,6 @@ package icache;
                                           cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
-      wr_ram_hitline<=select(lines,unpack(hit_tag));
 
       if(lv_access_fault) begin
         wr_fault <= Hit;

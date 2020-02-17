@@ -55,7 +55,7 @@ package dcache;
     Bit#(besize) init_enable;
     Bit#(TLog#(fbsize)) fbindex;
     Bool io_request;
-  } Pending_req#(numeric type addr, numeric type besize, numeric type fbsize) 
+  } Pending_req#(numeric type addr, numeric type besize, numeric type fbsize)
                 deriving(Bits, Eq, FShow);
 
   interface Ifc_dcache#(numeric type wordsize,
@@ -103,7 +103,7 @@ package dcache;
   // both update rg_handling_miss but can never fire together
   (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
   // both update different entries of fb
-  (*conflict_free="rl_send_memory_request, rl_fill_from_memory"*) 
+  (*conflict_free="rl_send_memory_request, rl_fill_from_memory"*)
   // both update fb buffer entries, however both can never fire simultaneously
   (*conflict_free="rl_send_memory_request, rl_release_from_fillbuffer"*)
   //both of these update fillbuffer entries but can never fire simultaneously
@@ -119,7 +119,7 @@ package dcache;
   // entry in fb while ma_perform_store will update an existing allotted entry in the fb so hence no
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
-  module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
+  module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable),
                   parameter String alg, parameter Bit#(32) id)
                   (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, fbsize,
                                 esize, dbanks, tbanks, buswidth))
@@ -205,7 +205,7 @@ package dcache;
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
-    
+
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
      * request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
@@ -216,6 +216,31 @@ package dcache;
       endcase;
       Bit#(TDiv#(linewidth,8)) write_enable = we << ({4'b0,word_index}*fromInteger(lv_offset1));
       return write_enable;
+    endfunction
+
+    /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
+    function Bit#(respwidth) fn_atomic_op (Bit#(5) op,  Bit#(respwidth) rs2,  Bit#(respwidth) loaded);
+      Bit#(respwidth) op1 = loaded;
+      Bit#(respwidth) op2 = rs2;
+      if(op[4]==0)begin
+	  		op1=signExtend(loaded[31:0]);
+        op2= signExtend(rs2[31:0]);
+      end
+      Int#(respwidth) s_op1 = unpack(op1);
+	  	Int#(respwidth) s_op2 = unpack(op2);
+
+      case (op[3:0])
+	  			'b0011:return op2;
+	  			'b0000:return (op1+op2);
+	  			'b0010:return (op1^op2);
+	  			'b0110:return (op1&op2);
+	  			'b0100:return (op1|op2);
+	  			'b1100:return min(op1,op2);
+	  			'b1110:return max(op1,op2);
+	  			'b1000:return pack(min(s_op1,s_op2));
+	  			'b1010:return pack(max(s_op1,s_op2));
+	  			default:return op1;
+	  		endcase
     endfunction
 
     // ----------------------- FIFOs to interact with interface of the design -------------------//
@@ -238,7 +263,7 @@ package dcache;
     /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
     FIFOF#(DCache_core_request#(vaddr, respwidth, esize)) ff_hold_request <- mkBypassFIFOF();
 
-  `ifdef supervisor 
+  `ifdef supervisor
     /*doc:fifo: this fifo receives the physical address from the TLB */
     FIFOF#(DTLB_core_response#(paddr)) ff_from_tlb <- mkBypassFIFOF();
   `endif
@@ -260,12 +285,19 @@ package dcache;
     Reg#(Bit#(1)) rg_wEpoch <- mkReg(0);
 
     //------------------------- Fill buffer data structures -------------------------------------//
-    
+
+    /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
     Vector#(fbsize,Reg#(Bool))                      v_fb_valid    <- replicateM(mkReg(False));
+    /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
+    /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_err      <- replicateM(mkReg(0));
+    /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkReg(0));
+    /*doc: vec: vector of regisetrs to indicate how many bytes of the line have been filled by the
+     bus*/
     Vector#(fbsize,Reg#(Bit#(TDiv#(linewidth,8))))  v_fb_enables  <- replicateM(mkReg(0));
+    /*doc: vec: vector registers indicating the address of the fill-buffer line*/
     Vector#(fbsize,Reg#(Bit#(paddr)))               v_fb_addr     <- replicateM(mkReg(0));
 
     /*doc:reg: register pointing to next entry being allotted on the filbuffer*/
@@ -290,15 +322,19 @@ package dcache;
     * core is already persent however, the necessary is not present. This doesn't generate a miss
     * and thus rg_miss_handling cannot be used here. Hence the need for this register*/
     Reg#(Bool) rg_polling_mode <- mkReg(False);
-    
+
+    /*doc:var: Following is a global variable holding the latest tag to be released into the RAMs
+     * form the fill-buffer*/
     Bit#(tagbits) writetag = truncateLSB(v_fb_addr[rg_fbtail]);
+    /*doc:var: Following is a global variable holding the latest dataline to be released into the RAMs
+     * form the fill-buffer*/
     Bit#(linewidth) writedata = v_fb_data[rg_fbtail];
 
     /*doc:wire: in case of a hit in fb this wire will hold the index of the fb which was a hit. This
     * value is used to indicate the storebuffer which fb entry it needs to update when committing
     * the store*/
     Wire#(Bit#(TLog#(fbsize))) wr_fb_hitindex <- mkDWire(?);
-    
+
     /*doc:var: variable indicating the fillbuffer is full*/
     Bool fb_full = (all(isTrue, readVReg(v_fb_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
@@ -306,7 +342,7 @@ package dcache;
 //    Bool fill_oppurtunity = (!ff_core_request.notEmpty ) && !fb_empty &&
 //         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_latest_index);
     // ------------------------------------------------------------------------------------------//
-    
+
     // ----------------------------- structures for fence operation -----------------------------//
     /*doc:reg: this register selects the way for performing a fence operation */
     Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkRegA(0);
@@ -326,18 +362,31 @@ package dcache;
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
 
+    /*doc:wire: this wire indicates if there was a fault in the address or during translation*/
+    Wire#(RespState) wr_fault <- mkDWire(None);
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response from the RAM in case of a hit in the RAMs*/
     Wire#(DMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
+    /*doc:wire: in case of a hit in the ram, this wire holds the information of which way was a hit.
+    * This is used for replacement purposes only.*/
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
+    /*doc:wire: in case of a store-hit in the RAM, the hit line needs to be transfered to the FB.
+     * This wire holds that hit line*/
     Wire#(Bit#(linewidth)) wr_ram_hitline <- mkDWire(?);
+    /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
+     * caused a hit. This is necessary since an eviction from the same set should not affect the
+     * replacement policy if a hit to the same set has occurred in the same cycle */
     Wire#(Maybe#(Bit#(setbits))) wr_ram_hitset <- mkDWire(tagged Invalid);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
     Wire#(RespState) wr_fb_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response data structure in case of a hit from fill-buffers*/
     Wire#(DMem_core_response#(respwidth,esize)) wr_fb_response <- mkDWire(?);
 
+    /*doc:wire: this wire indicates if the current request is non-cacheable*/
     Wire#(RespState) wr_nc_state <- mkDWire(None);
+    /*doc:wire: this wire holds the response data structure in case of a Non-cacheable access*/
     Wire#(DMem_core_response#(respwidth,esize)) wr_nc_response <- mkDWire(?);
   `ifdef perfmonitors
     /*doc:wire: wire to pulse on every read access*/
@@ -373,7 +422,7 @@ package dcache;
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
-    
+
     /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkRegA(0));
@@ -412,7 +461,7 @@ package dcache;
 
       let lv_curr_way = rg_fence_way;
       let lv_curr_set = rg_fence_set;
-      
+
       let lv_next_way = rg_fence_way;
       let lv_next_set = {1'b0,rg_fence_set};
 
@@ -425,7 +474,7 @@ package dcache;
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
-Dirty:%b Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address, 
+Dirty:%b Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address,
 dataline ))
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
       if( writeback_condition) begin
@@ -500,7 +549,7 @@ dataline ))
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-      
+
       Vector#(ways, Bit#(respwidth)) dataword;
       Vector#(ways, Bit#(linewidth)) lines;
       Bit#(ways) hit_tag =0;
@@ -544,7 +593,7 @@ dataline ))
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
-      
+
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(phyaddr);
 
       Bit#(blockbits) word_index = truncate(phyaddr >> v_wordbits);
@@ -552,7 +601,7 @@ dataline ))
       Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
       Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset =
                                                       {phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
-      
+
       Vector#(fbsize, Bit#(respwidth)) lv_respwords;
       Bit#(fbsize) lv_hit = 0;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
@@ -565,7 +614,7 @@ dataline ))
       Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
       Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
       Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
-      wr_fb_hitindex <= truncate(pack(countZerosLSB(lv_hit))); 
+      wr_fb_hitindex <= truncate(pack(countZerosLSB(lv_hit)));
       let lv_response = DMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
       `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: processing Req: ",id,fshow(req)))
@@ -591,7 +640,7 @@ dataline ))
         wr_fb_state <= Miss;
         rg_polling_mode <= False;
         `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Miss",id))
-      end      
+      end
     endrule
 
     /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
@@ -630,7 +679,7 @@ dataline ))
       if(wr_ram_state == Hit) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from SRAM",id))
         if(alg == "PLRU") begin
-          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
+          replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line);
           wr_ram_hitset <= tagged Valid set_index;
         end
       end
@@ -672,7 +721,7 @@ dataline ))
         'b10: 'hFFFFFFFF;
         default: '1;
       endcase;
-    
+
       // signmask basically has all bits which are zeros in the mask duplicated with the required
       // sign bit. Theese need to be set in the final response to the core and will thus be ORed
       Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
@@ -710,6 +759,10 @@ dataline ))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
       if(req.access!=0)begin
         Bit#(TLog#(fbsize)) fbindex = wr_fb_state == Hit? wr_fb_hitindex:rg_fbhead;
+        `ifdef atomic
+          if(request.access == 2)
+            req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
+        `endif
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
           isNonCacheable(phyaddr, wr_cache_enable));
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
@@ -721,7 +774,7 @@ dataline ))
      * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-                                !rg_handling_miss && ! ff_core_request.first.fence && 
+                                !rg_handling_miss && ! ff_core_request.first.fence &&
                                 ff_pending_req.notFull );
       let req = ff_core_request.first;
     `ifdef supervisor
@@ -756,7 +809,7 @@ dataline ))
           rg_fbhead <=0;
         else
           rg_fbhead <= rg_fbhead + 1;
-        
+
         begin
           v_fb_valid[rg_fbhead] <= True;
           v_fb_addr[rg_fbhead] <= phyaddr;
@@ -766,7 +819,7 @@ dataline ))
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
-      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index), 
+      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index),
                                 io_request: lv_io_req, fbindex: lv_alotted_fb};
       ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
@@ -810,7 +863,7 @@ dataline ))
       Bit#(linewidth) lv_new_word = duplicate(response.data);
       Bit#(TAdd#(TLog#(TDiv#(linewidth,8)),1)) rotate_amount =
                                                 (fromInteger(valueOf(TDiv#(buswidth,8))));
-  
+
       // using a special function here from Memory library of Bluespec to update data
       let lv_fb_linedata = updateDataWithMask(v_fb_data[fbindex], lv_new_word, lv_current_enable);
       lv_fb_linedata = updateDataWithMask(lv_fb_linedata, wr_store_data, wr_store_be);
@@ -838,7 +891,7 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: NC Response from Memory: ",id,fshow(response)))
     endrule
 
-    /*doc:rule: 
+    /*doc:rule:
     This rule will evict an entry from the fill - buffer and update it in the cache RAMS.
     Multiple conditions under which this rule can fire:
     1. when the FB is full
@@ -862,10 +915,10 @@ dataline ))
       Bit#(setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                          v_blockbits + v_wordbits];
 
-      let waynum <- replacement.line_replace(set_index, v_reg_valid[set_index], 
+      let waynum <- replacement.line_replace(set_index, v_reg_valid[set_index],
                                                                             v_reg_dirty[set_index]);
       `logLevel( dcache, 2, $format("[%2d]DCACHE: Release: set%d way:%d valid:%b dirty:%b",id,
-                                    set_index, waynum,v_reg_valid[set_index][waynum] , 
+                                    set_index, waynum,v_reg_valid[set_index][waynum] ,
                                     v_reg_dirty[set_index][waynum] ))
       if(v_fb_err[rg_fbtail] == 0)begin
         // enter here if the fillbuffer entry is valid and has no errors
@@ -879,7 +932,7 @@ dataline ))
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
         end
-        else if((v_reg_valid[set_index][waynum] & v_reg_dirty[set_index][waynum]) !=1 || 
+        else if((v_reg_valid[set_index][waynum] & v_reg_dirty[set_index][waynum]) !=1 ||
                                                                         rg_release_readphase)begin
           // enter here if either the entry being replaced is not dirty or if its dirty then it has
           // been read out of the ram in the previous cycle and is ready for eviction
@@ -905,7 +958,7 @@ dataline ))
             wr_total_evictions <= 1;
           `endif
           end
-          // update the valid and dirty bits of the rams. Also release the fillbuffer entry 
+          // update the valid and dirty bits of the rams. Also release the fillbuffer entry
         `ifdef perfmonitors
           wr_total_fb_releases <= 1;
         `endif
@@ -1000,20 +1053,20 @@ dataline ))
     interface hold_req = toGet(ff_hold_request);
   `endif
     `ifdef perfmonitors
-      method perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access 
-                            , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss , 
-                              wr_total_write_miss , wr_total_atomic_miss , wr_total_read_fb_hits, 
-                              wr_total_write_fb_hits, wr_total_atomic_fb_hits, 
+      method perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access
+                            , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss ,
+                              wr_total_write_miss , wr_total_atomic_miss , wr_total_read_fb_hits,
+                              wr_total_write_fb_hits, wr_total_atomic_fb_hits,
                               wr_total_fb_releases, wr_total_evictions };
     `endif
     //TODO
     method mv_storebuffer_empty = storebuffer.mv_sb_empty;
     method mv_cacheable_store = storebuffer.mv_cacheable_store;
-    method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull && 
+    method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !rg_performing_replay && !sb_full;
-            
+
     method Action ma_perform_store(Bit#(esize) currepoch);
-      let {sb_valid, sb_entry} <- storebuffer.mav_store_to_commit; 
+      let {sb_valid, sb_entry} <- storebuffer.mav_store_to_commit;
       Bit#(TDiv#(linewidth,8)) mask = sb_entry.size[1 : 0] == 0?'b1 :
                                       sb_entry.size[1 : 0] == 1?'b11 :
                                       sb_entry.size[1 : 0] == 2?'b1111 : '1;
@@ -1049,7 +1102,7 @@ dataline ))
         end
       end
       else begin
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Store is being dropped- epoch mismatch",id)) 
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Store is being dropped- epoch mismatch",id))
       end
 
     endmethod
