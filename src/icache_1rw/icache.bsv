@@ -271,6 +271,7 @@ package icache;
     Wire#(Bool) wr_cache_enable<-mkWire();
 
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
+    Wire#(RespState) wr_fault <- mkDWire(None);
     Wire#(RespState) wr_ram_state <- mkDWire(None);
     Wire#(IMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
@@ -369,7 +370,10 @@ package icache;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
       wr_ram_hitline<=select(lines,unpack(hit_tag));
 
-      if(lv_access_fault || (|(hit_tag) == 1 )) begin// trap or hit in RAMs
+      if(lv_access_fault) begin
+        wr_fault <= Hit;
+      end
+      else if(|(hit_tag) == 1 ) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
       else begin // in case of miss from cache
@@ -446,7 +450,8 @@ package icache;
     could initiate a commit-store which could get dropped since the method performing the cannot
     fire since the fifo is full and thus the store being dropped.*/
     rule rl_response_to_core(!ff_core_request.first.fence &&
-                      ( wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
+                      ( wr_fault == Hit || wr_nc_state == Hit || wr_ram_state == Hit || 
+                        wr_fb_state == Hit));
 
       let req = ff_core_request.first;
     `ifdef supervisor
@@ -461,7 +466,8 @@ package icache;
 
       Bit#(3) onehot_hit = {pack(wr_ram_state==Hit), pack(wr_fb_state==Hit), pack(wr_nc_state==Hit)};
     `ifdef ASSERT
-      dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
+      if(wr_fault != Hit)
+        dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
     `endif
       Vector#(3, IMem_core_response#(respwidth,esize)) lv_responses;
       lv_responses[0] = wr_nc_response;
@@ -470,23 +476,24 @@ package icache;
 
       lv_response = select(lv_responses,unpack(onehot_hit));
 
-      if(wr_ram_state == Hit) begin
+      if(wr_ram_state == Hit && wr_fault != Hit) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from SRAM",id))
         if(alg == "PLRU") begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
           wr_ram_hitset <= tagged Valid set_index;
         end
       end
-      if(wr_fb_state == Hit) begin
+      if(wr_fb_state == Hit && wr_fault != Hit) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from Fillbuffer",id))
       end
-      if(wr_nc_state == Hit) begin
+      if(wr_nc_state == Hit && wr_fault != Hit) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from NC",id))
       end
     
-      // signmask basically has all bits which are zeros in the mask duplicated with the required
-      // sign bit. Theese need to be set in the final response to the core and will thus be ORed
-      lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
+      if(wr_fault == Hit) begin
+        lv_response.word = truncate(req.address);
+        lv_response.trap = True;
+      end
 
       ff_core_request.deq;
       ff_core_response.enq(lv_response);
