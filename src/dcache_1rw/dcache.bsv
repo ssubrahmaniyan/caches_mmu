@@ -707,6 +707,7 @@ dataline ))
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
         v_fb_data[rg_fbhead] <=  wr_ram_hitline;
       end
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
       if(req.access!=0)begin
         Bit#(TLog#(fbsize)) fbindex = wr_fb_state == Hit? wr_fb_hitindex:rg_fbhead;
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),

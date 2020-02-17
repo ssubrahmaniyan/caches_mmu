@@ -132,8 +132,13 @@ package dcache_storebuffer;
       for (Integer i = 0; i<valueOf(sbsize); i = i + 1) begin
         data_values[i] = storemask[i] & data_values[i];
       end
-      Bit#(wordbits) zeros = 0;
-      Bit#(TMul#(wordbits,2)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
+      Bit#(3) zeros = 0;
+      Bit#(TAdd#(wordbits,3)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
+  
+      for (Integer i = 0; i< valueOf(sbsize); i = i + 1) begin
+        `logLevel( storebuffer, 0, $format("[%2d]SB: storemask:%h data:%h shiftamt:%d",id, storemask[i],
+          data_values[i], shiftamt))
+      end
 
       return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
@@ -147,8 +152,8 @@ package dcache_storebuffer;
         'b10 : duplicate(data[31 : 0]);
         default : data;
       endcase;
-      Bit#(wordbits) zeros = 0;
-      Bit#(TMul#(wordbits,2)) shiftamt = {address[v_wordbits - 1:0], zeros};
+      Bit#(3) zeros = 0;
+      Bit#(TAdd#(wordbits,3)) shiftamt = {address[v_wordbits - 1:0], zeros};
       Bit#(dataword) temp =  size == 0?'hff:
                              size == 1?'hffff:
                              size == 2?'hffffffff : '1;
@@ -159,7 +164,7 @@ package dcache_storebuffer;
                                       io: io, mask: storemask, size:truncate(size)};
       v_sb_meta[rg_tail] <= _s;
       rg_tail <= rg_tail + 1;
-      `logLevel( storebuffer, 0, $format("SB[%2d]: Allocating sbindex:%d with ",id,rg_tail,
+      `logLevel( storebuffer, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
                                           fshow(_s)))
     endmethod
     method mv_sb_full = sb_full;
