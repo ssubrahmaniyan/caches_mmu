@@ -732,7 +732,7 @@ dataline ))
     `ifdef supervisor
       if(pa_response.tlbmiss)
         ff_hold_request.enq(ff_core_request.first());
-      if(req.ptwalk_req && !pa_response.tlbmiss)
+      else if(req.ptwalk_req && !pa_response.tlbmiss)
         ff_ptw_response.enq(lv_response);
       else
     `endif
@@ -756,11 +756,14 @@ dataline ))
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
         v_fb_data[rg_fbhead] <=  wr_ram_hitline;
       end
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
-      if(req.access!=0)begin
+    `ifdef supervisor
+      if(!pa_response.tlbmiss)
+    `endif
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+      if(req.access!=0 `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         Bit#(TLog#(fbsize)) fbindex = wr_fb_state == Hit? wr_fb_hitindex:rg_fbhead;
         `ifdef atomic
-          if(request.access == 2)
+          if(req.access == 2)
             req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
         `endif
         storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
@@ -1075,7 +1078,7 @@ dataline ))
                                     {sb_entry.addr[v_blockbits + v_wordbits - 1:0]};
       mask = mask<<block_offset;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: BE:%h blockoffset:%d",id,mask,block_offset))
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: BE:%h blockoffset:%d",id,mask,block_offset))
       if(sb_entry.epoch == currepoch) begin
         if(sb_entry.io) begin
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Store to NC Addr:%h",id,sb_entry.addr))

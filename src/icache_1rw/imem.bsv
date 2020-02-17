@@ -120,7 +120,7 @@ package imem;
   module mkimem#(parameter Bit#(32) id)(Ifc_imem);
     let icache <- mkicache_inst(id);
   `ifdef supervisor
-    Ifc_fa_itlb itlb <- mkfa_itlb(0);
+    Ifc_fa_itlb itlb <- mkfa_itlb(id);
     mkConnection(itlb.core_response, icache.mav_pa_from_tlb);
   `endif
     interface core_req = interface Put

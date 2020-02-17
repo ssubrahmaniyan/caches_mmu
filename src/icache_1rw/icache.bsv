@@ -379,8 +379,8 @@ package icache;
       end
       Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
 
-      let lv_response = IMem_core_response{word:response_word, trap: lv_access_fault,
-                                          cause: lv_cause, epochs: req.epochs};
+      let lv_response = IMem_core_response{word:lv_access_fault? truncate(req.address):response_word, 
+                                          trap: lv_access_fault, cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
 
@@ -505,13 +505,13 @@ package icache;
       end
     
       if(wr_fault == Hit) begin
-        lv_response.word = truncate(req.address);
-        lv_response.trap = True;
+        lv_response = wr_ram_response;
       end
 
       ff_core_request.deq;
       ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Sending Response:",id,fshow(lv_response)))
     `ifdef perfmonitors
       if(!rg_handling_miss && onehot_hit[1] == 1)
           wr_total_fb_hits<=1;

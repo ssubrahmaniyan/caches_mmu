@@ -135,11 +135,6 @@ package dcache_storebuffer;
       Bit#(3) zeros = 0;
       Bit#(TAdd#(wordbits,3)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
   
-      for (Integer i = 0; i< valueOf(sbsize); i = i + 1) begin
-        `logLevel( storebuffer, 0, $format("[%2d]SB: storemask:%h data:%h shiftamt:%d",id, storemask[i],
-          data_values[i], shiftamt))
-      end
-
       return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
 

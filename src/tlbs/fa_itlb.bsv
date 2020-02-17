@@ -74,7 +74,7 @@ package fa_itlb;
 
   /*doc:module: */
   (*synthesize*)
-  module mkfa_itlb#(parameter Bit#(`vaddr) hartid) (Ifc_fa_itlb);
+  module mkfa_itlb#(parameter Bit#(32) hartid) (Ifc_fa_itlb);
 
     Vector#( `itlbsize , Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
@@ -127,7 +127,7 @@ package fa_itlb;
     interface core_request = interface Put
       method Action put (ITLB_core_request#(`vaddr) req) if(!rg_sfence && !rg_tlb_miss);
 
-        `logLevel( tlb, 0, $format("core id:%2d ", hartid,"ITLB: received req: ",fshow(req)))
+        `logLevel( tlb, 0, $format("[%2d]ITLB: received req: ",hartid,fshow(req)))
 
         Bit#(12) page_offset = req.address[11 : 0];
         Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
@@ -140,7 +140,7 @@ package fa_itlb;
 
         Bit#(TLog#(`itlbsize)) tagmatch = 0;
         if(req.sfence)begin
-          `logLevel( itlb, 0, $format("ITLB: SFence received"))
+          `logLevel( itlb, 0, $format("[%2d]ITLB: SFence received",hartid))
           rg_sfence <= True;
         end
         else begin
@@ -155,10 +155,10 @@ package fa_itlb;
             ff_core_respone.enq(ITLB_core_response{address  : signExtend(coreresp),
                                                    trap     : trap,
                                                    cause    : `Inst_access_fault});
-            `logLevel( itlb, 0, $format("ITLB : Transparent Translation. PhyAddr: %h",coreresp))
+            `logLevel( itlb, 0, $format("[%2d]ITLB : Transparent Translation. PhyAddr: %h",hartid,coreresp))
           end
           else if (hit_entry matches tagged Valid .pte) begin
-            `logLevel( itlb, 0, $format("ITLB: Hit in TLB:",fshow(pte)))
+            `logLevel( itlb, 0, $format("[%2d]ITLB: Hit in TLB:",hartid,fshow(pte)))
             let permissions = pte.permissions;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
@@ -171,11 +171,11 @@ package fa_itlb;
             Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
           `endif
 
-            `logLevel( itlb, 0, $format("mask:%h",mask))
-            `logLevel( itlb, 0, $format("lower_ppn:%h",lower_ppn))
-            `logLevel( itlb, 0, $format("lower_vpn:%h",lower_vpn))
-            `logLevel( itlb, 0, $format("lower_pa:%h",lower_pa))
-            `logLevel( itlb, 0, $format("highest_ppn:%h",highest_ppn))
+            `logLevel( itlb, 0, $format("[%2d]mask:%h",hartid,mask))
+            `logLevel( itlb, 0, $format("[%2d]lower_ppn:%h",hartid,lower_ppn))
+            `logLevel( itlb, 0, $format("[%2d]lower_vpn:%h",hartid,lower_vpn))
+            `logLevel( itlb, 0, $format("[%2d]lower_pa:%h",hartid,lower_pa))
+            `logLevel( itlb, 0, $format("[%2d]highest_ppn:%h",hartid,highest_ppn))
 
             // check for permission faults
           `ifndef sv32
@@ -195,14 +195,14 @@ package fa_itlb;
             // pte.u = 1 for supervisor
             else if(permissions.u && wr_priv == 1)
               page_fault = True;
-            `logLevel( itlb, 0, $format("ITLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+            `logLevel( itlb, 0, $format("[%2d]ITLB: Sending PA:%h Trap:%b", hartid,physicaladdress, page_fault))
             ff_core_respone.enq(ITLB_core_response{address  : truncate(physicaladdress),
                                                    trap     : page_fault,
                                                    cause    : `Inst_pagefault });
           end
           else begin
             // Send virtual - address and indicate it is an instruction access to the PTW
-            `logLevel( itlb, 0, $format("ITLB : TLBMiss. Sending Address to PTW:%h",req.address))
+            `logLevel( itlb, 0, $format("[%2d]ITLB : TLBMiss. Sending Address to PTW:%h", hartid,req.address))
             rg_tlb_miss <= True;
           `ifdef perfmonitors
             wr_count_misses <= 1;
@@ -244,9 +244,12 @@ package fa_itlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          `logLevel( itlb, 0, $format("ITLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
+          `logLevel( itlb, 0, $format("[%2d]ITLB: Allocating index:%d for Tag:", hartid,rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
           rg_replace <= rg_replace + 1;
+        end
+        else begin
+          `logLevel( itlb, 0, $format("[%2d]ITLB: Got an Error from PTW",hartid))
         end
 
         rg_tlb_miss <= False;
