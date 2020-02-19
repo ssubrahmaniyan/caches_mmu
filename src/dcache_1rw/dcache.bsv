@@ -363,7 +363,7 @@ package dcache;
     Wire#(Bool) wr_cache_enable<-mkWire();
 
     /*doc:wire: this wire indicates if there was a fault in the address or during translation*/
-    Wire#(RespState) wr_fault <- mkDWire(None);
+    Wire#(Bool) wr_fault <- mkDWire(False);
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
     /*doc:wire: this wire holds the response from the RAM in case of a hit in the RAMs*/
@@ -540,6 +540,7 @@ dataline ))
       Bool lv_access_fault = pa_response.trap;
       Bit#(`causesize) lv_cause = lv_access_fault? pa_response.cause:
                                   req.access == 0?`Load_access_fault:`Store_access_fault;
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
     `else
       Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
       Bit#(paddr) phyaddr = truncate(req.address);
@@ -568,7 +569,10 @@ dataline ))
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
       wr_ram_hitline<=select(lines,unpack(hit_tag));
 
-      if(lv_access_fault || (|(hit_tag) == 1 )) begin// trap or hit in RAMs
+      if(lv_access_fault ) begin
+        wr_fault <= True;
+      end
+      else if(|(hit_tag) == 1 ) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
       else begin // in case of miss from cache
@@ -650,7 +654,7 @@ dataline ))
     could initiate a commit-store which could get dropped since the method performing the cannot
     fire since the fifo is full and thus the store being dropped.*/
     rule rl_response_to_core(!ff_core_request.first.fence &&
-                      ( wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
+                      ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
 
       let req = ff_core_request.first;
     `ifdef supervisor
@@ -665,9 +669,12 @@ dataline ))
 
       let {storemask, storedata} <- storebuffer.mav_check_sb_hit(phyaddr);
 
-      Bit#(3) onehot_hit = {pack(wr_ram_state==Hit), pack(wr_fb_state==Hit), pack(wr_nc_state==Hit)};
+      Bit#(3) onehot_hit = {pack(wr_ram_state==Hit || wr_fault), 
+                            pack(wr_fb_state==Hit && !wr_fault), 
+                            pack(wr_nc_state==Hit && !wr_fault)};
     `ifdef ASSERT
-      dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
+      if(!wr_fault)
+        dynamicAssert(countOnes(onehot_hit) == 1, "More than one data structure shows a hit");
     `endif
       Vector#(3, DMem_core_response#(respwidth,esize)) lv_responses;
       lv_responses[0] = wr_nc_response;
@@ -676,14 +683,14 @@ dataline ))
 
       lv_response = select(lv_responses,unpack(onehot_hit));
 
-      if(wr_ram_state == Hit) begin
+      if(wr_ram_state == Hit && !wr_fault) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from SRAM",id))
         if(alg == "PLRU") begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line);
           wr_ram_hitset <= tagged Valid set_index;
         end
       end
-      if(wr_fb_state == Hit) begin
+      if(wr_fb_state == Hit && !wr_fault) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from Fillbuffer",id))
       `ifdef perfmonitors
         if(rg_handling_miss) begin
@@ -698,7 +705,7 @@ dataline ))
         end
       `endif
       end
-      if(wr_nc_state == Hit) begin
+      if(wr_nc_state == Hit && !wr_fault) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from NC",id))
       end
 
@@ -761,7 +768,7 @@ dataline ))
     `endif
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
       if(req.access!=0 `ifdef supervisor && !pa_response.tlbmiss `endif )begin
-        Bit#(TLog#(fbsize)) fbindex = wr_fb_state == Hit? wr_fb_hitindex:rg_fbhead;
+        Bit#(TLog#(fbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:rg_fbhead;
         `ifdef atomic
           if(req.access == 2)
             req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
@@ -777,7 +784,7 @@ dataline ))
      * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
      * be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-                                !rg_handling_miss && ! ff_core_request.first.fence &&
+                                !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence &&
                                 ff_pending_req.notFull );
       let req = ff_core_request.first;
     `ifdef supervisor
