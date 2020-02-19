@@ -41,7 +41,7 @@ package nb_dcache_tb;
   //import dcache_nway::*;
   import test_caches::*;
   //import icache_dm::*;
-  import mem_config::*;
+  //import mem_config::*;
   import BUtils ::*;
   import RegFile::*;
   import Vector::*;
