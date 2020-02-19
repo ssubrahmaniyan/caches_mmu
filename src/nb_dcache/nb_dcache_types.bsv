@@ -100,11 +100,13 @@ package nb_dcache_types;
 	typedef struct {
 		Bit#(data) data;
 		Bit#(prf_index) prf_index;
+    Bit#(rob_index) rob;
 		DCache_exception exception;
-	} Resp_to_core#(numeric type data, numeric type prf_index) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(Resp_to_core#(data, prf_index));
+	} Resp_to_core#(numeric type data, numeric type prf_index, numeric type rob_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Resp_to_core#(data, prf_index, rob_index));
 		defaultValue= Resp_to_core {data: 0,
 																prf_index: 0,
+                                rob: 0,
 																exception: defaultValue };
 	endinstance
 	
@@ -155,17 +157,19 @@ package nb_dcache_types;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(prf_index) prf_index;
+    Bit#(rob_index) rob;
     `ifdef atomic
-    Bool is_atomic;
-    Bit#(5) atomic_fn;
+      Bool is_atomic;
+      Bit#(5) atomic_fn;
     `endif
-	} MSHR_Req#(numeric type addr, numeric type data, numeric type prf_index) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(MSHR_Req#(addr, data, prf_index));
+	} MSHR_Req#(numeric type addr, numeric type data, numeric type prf_index, numeric type rob_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(MSHR_Req#(addr, data, prf_index, rob_index));
 		defaultValue= MSHR_Req {	addr: 'd0,
 															access_size: 'd3,
 															payload: 'd0,
 															origin: defaultValue,
-                              prf_index: 'd0
+                              prf_index: 'd0,
+                              rob: 'd0
                               `ifdef atomic
                               , is_atomic: False
                               , atomic_fn: 'd0

@@ -48,7 +48,7 @@ package mshr;
 											numeric type rob_index,
                       numeric type prf_index );
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
-		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
     method Bit#(TSub#(paddr,linewidthbits)) addr_to_fb;
 		method Action ack_from_fb;
@@ -224,8 +224,8 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
-			Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index)) req= tuple2(False, ?);
+		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+			Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index)) req= tuple2(False, ?);
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
@@ -243,7 +243,8 @@ package mshr;
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
-                                          prf_index: prf_id
+                                          prf_index: prf_id,
+                                          rob: cff_rob[req_rid].first
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info) 
@@ -270,7 +271,8 @@ package mshr;
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
-                                          prf_index: prf_id
+                                          prf_index: prf_id,
+                                          rob: cff_rob[curr_rid].first
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info)

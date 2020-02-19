@@ -83,7 +83,7 @@ package nb_dcache;
 													numeric type buswidth,
 													numeric type rob_index);	//width of the bus in bits
 		interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_from_core;
-		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index))									 	  subifc_resp_to_core;
+		interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index))			 	  subifc_resp_to_core;
 		interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_to_ptw;
 		interface Ifc_ptw_meta#(vaddr)                                                  subifc_ptw_meta;
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) 					  subifc_response_frm_ptw;
@@ -241,7 +241,7 @@ package nb_dcache;
 		//TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
 		Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
 		Ifc_fa_dtlb#(vaddr, paddr) dtlb <-mkfa_dtlb;
-		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index) fill_buffer <-mkfill_buffer;
+		Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index, rob_index) fill_buffer <-mkfill_buffer;
 		Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
 
@@ -265,7 +265,7 @@ package nb_dcache;
 		////////////////////////////// Interface signals ///////////////////////////////////////////////
 		//These handle the interface signals
 		FIFOF#(Req_from_core#(vaddr, datawidth, rob_index, prf_index)) ff_req_from_core <- mkBypassFIFOF;
-		Wire#(Resp_to_core#(datawidth, prf_index)) wr_resp_to_core <- mkWire;
+		Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_resp_to_core <- mkWire;
 		
 		//If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
 		//store this req and also start performing the PTW. Once PTW is done, it again sends this req
@@ -301,7 +301,7 @@ package nb_dcache;
 		Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
 		Reg#(Bit#(setbits)) rg_prev_fence_set_index <- mkConfigReg(0);
 		Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
-		Reg#(Tuple2#(DCache_exception, Bit#(prf_index))) rg_access_fault_response <- mkReg(tuple2(defaultValue, ?));
+		Reg#(Tuple3#(DCache_exception, Bit#(prf_index), Bit#(rob_index))) rg_access_fault_response <- mkReg(tuple3(defaultValue, ?, ?));
     Reg#(Bool) rg_io_req_sent <- mkReg(False);
     Reg#(Tuple2#(Bool, Bit#(TSub#(vaddr,wordbits)))) rg_prev_req_info <- mkReg(tuple2(False, ?));
 
@@ -312,13 +312,13 @@ package nb_dcache;
   `endif
 
 		Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
-		Wire#(MSHR_Req#(paddr, datawidth, prf_index)) wr_mshr_req_to_fb <- mkWire;
+		Wire#(MSHR_Req#(paddr, datawidth, prf_index, rob_index)) wr_mshr_req_to_fb <- mkWire;
 		Wire#(Bool) wr_stage2_check_fb <-mkWire;
 		Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
 		Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
-		Wire#(Resp_to_core#(datawidth, prf_index)) wr_mshr_resp_to_core <- mkWire;
-		Wire#(Resp_to_core#(datawidth, prf_index)) wr_sram_resp_to_core <- mkWire();
-		Wire#(Resp_to_core#(datawidth, prf_index)) wr_stage2_fb_resp_to_core <- mkWire();
+		Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_mshr_resp_to_core <- mkWire;
+		Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_sram_resp_to_core <- mkWire();
+		Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_stage2_fb_resp_to_core <- mkWire();
 		Wire#(Bool) wr_stage1_deq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
 		Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
@@ -378,12 +378,13 @@ package nb_dcache;
                        `endif };
 		endfunction
 
-		function MSHR_Req#(addrwidth, datawidth, prf_index) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
+		function MSHR_Req#(addrwidth, datawidth, prf_index, rob_index) convert_to_MSHR_Req(Req_from_core#(addrwidth, datawidth, rob_index, prf_index) req);
 			return MSHR_Req { addr: req.addr,
 												access_size: req.access_size,
 												payload: req.data,
 												origin: req.origin,
-                        prf_index: req.prf_index
+                        prf_index: req.prf_index,
+                        rob: req.rob
                         `ifdef atomic
                         , atomic_fn: req.atomic_fn
                         , is_atomic: req.is_atomic
@@ -542,7 +543,7 @@ package nb_dcache;
       	`logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
 				if(resp_from_tlb.trap) begin	//Access fault
 					rg_cache_busy<= True;
-					rg_access_fault_response<= tuple2(resp_from_tlb.exception, core_req.prf_index);
+					rg_access_fault_response<= tuple3(resp_from_tlb.exception, core_req.prf_index, core_req.rob);
 				end
 				else begin	//Access is valid
           Bool lv_sc_pass= True;
@@ -576,7 +577,7 @@ package nb_dcache;
         `ifdef atomic
           else begin
             rg_sc_fail<= True;
-					  rg_access_fault_response<= tuple2(defaultValue, core_req.prf_index);
+					  rg_access_fault_response<= tuple3(defaultValue, core_req.prf_index, core_req.rob);
             rg_cache_busy<= True;
           end
         `endif
@@ -594,6 +595,7 @@ package nb_dcache;
     tpl_1(rg_access_fault_response)!=defaultValue && rg_cache_busy);
 			wr_resp_to_core<= Resp_to_core {data: ?,
 																			prf_index: tpl_2(rg_access_fault_response),
+                                      rob: tpl_3(rg_access_fault_response),
 																			exception: tpl_1(rg_access_fault_response) };
 			rg_cache_busy<= False;
 			rg_access_fault_response<= tuple2(defaultValue, ?);
@@ -603,6 +605,7 @@ package nb_dcache;
     rule rl_sc_fail_response_to_core(!wr_is_mshr_resp_to_core && rg_sc_fail && !rg_fence && rg_cache_busy);
 			wr_resp_to_core<= Resp_to_core {data: 'd1,
 																			prf_index: tpl_2(rg_access_fault_response),
+                                      rob: tpl_3(rg_access_fault_response),
 																			exception: defaultValue };
       rg_sc_fail<= False;
       rg_cache_busy<= False;
@@ -673,6 +676,7 @@ package nb_dcache;
         if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
 					wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
 																					 			prf_index: req.prf_index,
+                                                rob: req.rob,
 																					 			exception: No_exception };
       		repl.update_set(set_index, hit_way);	//Update the replacement bits on a hit
       		`logLevel( dcache, 2, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
@@ -701,6 +705,7 @@ package nb_dcache;
           if(req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif ) begin
 						wr_sram_resp_to_core<= Resp_to_core { data: ?,
 																	  							prf_index: req.prf_index,
+                                                  rob: req.rob,
 																	  							exception: No_exception };
 					end
 				end
@@ -732,6 +737,7 @@ package nb_dcache;
       end
 			wr_sram_resp_to_core<= Resp_to_core { data: cache_data, //TODO check if correct for atomics
 														  							prf_index: req.prf_index,
+                                            rob: req.rob,
 														  							exception: No_exception };
     endrule
   `endif
@@ -782,6 +788,7 @@ package nb_dcache;
 				if(send_resp && !wr_is_mshr_resp_to_core) begin
 					wr_stage2_fb_resp_to_core<= Resp_to_core { data: data_to_core,
 																		 								 prf_index: req.prf_index,
+                                                     rob: req.rob,
 																		 								 exception: No_exception };
 				end
 				//else do nothing
@@ -812,6 +819,7 @@ package nb_dcache;
 						`logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
 						wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
 																			 	 							 prf_index: req.prf_index,
+                                                       rob: req.rob,
 																			 	 							 exception: No_exception };
 					end
 				end
@@ -971,6 +979,7 @@ package nb_dcache;
         `endif
 					wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
 																					      prf_index: req_from_mshr.prf_index,
+                                                rob: req_from_mshr.rob,
 																					      exception: No_exception };
 					wr_is_mshr_resp_to_core<= True;
 				end
@@ -1180,6 +1189,7 @@ package nb_dcache;
       rg_io_req_sent<= False;
 			wr_resp_to_core<= Resp_to_core { data: resp.data,
 																	     prf_index: ff_io_info.first.prf_index,
+                                       rob: ff_io_info.first.rob,
 																	     exception: No_exception };
     endrule
 
