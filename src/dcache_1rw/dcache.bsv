@@ -1079,7 +1079,7 @@ dataline ))
       let {sb_valid, sb_entry} <- storebuffer.mav_store_to_commit;
       Bit#(TDiv#(linewidth,8)) mask = sb_entry.size[1 : 0] == 0?'b1 :
                                       sb_entry.size[1 : 0] == 1?'b11 :
-                                      sb_entry.size[1 : 0] == 2?'b1111 : '1;
+                                      sb_entry.size[1 : 0] == 2?'b1111 : 'b11111111;
 
       Bit#(TAdd#(wordbits, blockbits)) block_offset=
                                     {sb_entry.addr[v_blockbits + v_wordbits - 1:0]};
