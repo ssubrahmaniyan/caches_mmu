@@ -767,7 +767,7 @@ dataline ))
       if(!pa_response.tlbmiss)
     `endif
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
-      if(req.access!=0 `ifdef supervisor && !pa_response.tlbmiss `endif )begin
+      if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         Bit#(TLog#(fbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:rg_fbhead;
         `ifdef atomic
           if(req.access == 2)
