@@ -267,8 +267,14 @@ package icache;
     Bool fb_full = (all(isTrue, readVReg(v_fb_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
     Bool fb_empty=!(any(isTrue, readVReg(v_fb_valid)));
-//    Bool fill_oppurtunity = (!ff_core_request.notEmpty ) && !fb_empty &&
-//         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_latest_index);
+    // ------------------------------------------------------------------------------------------//
+
+    // -------- oppurtunistic filling related structures --------------------------------------//
+    /*doc:wire: this is a boolean wire which indicates is a req is being taken by the cache from the
+     * core */
+    Wire#(Bool) wr_takingrequest <- mkDWire(False);
+    Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
+         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req);
     // ------------------------------------------------------------------------------------------//
     
 
@@ -712,6 +718,7 @@ package icache;
         end
         `logLevel( icache, 0, $format("[%2d]ICACHE: Receiving request: ",id,fshow(req)))
         `logLevel( icache, 0, $format("[%2d]ICACHE: set:%d",id,set_index))
+        wr_takingrequest <= True;
       endmethod
     endinterface;
     method Action ma_cache_enable(Bool c);

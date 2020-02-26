@@ -339,8 +339,18 @@ package dcache;
     Bool fb_full = (all(isTrue, readVReg(v_fb_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
     Bool fb_empty=!(any(isTrue, readVReg(v_fb_valid)));
-//    Bool fill_oppurtunity = (!ff_core_request.notEmpty ) && !fb_empty &&
-//         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_latest_index);
+    // ------------------------------------------------------------------------------------------//
+
+    // -------- oppurtunistic filling related structures --------------------------------------//
+    /*doc:wire: this is a boolean wire which indicates is a req is being taken by the cache from the
+     * core */
+    Wire#(Bool) wr_takingrequest <- mkDWire(False);
+    /*doc:wire: boolean wire indicating that a store is under progress*/
+    Wire#(Bool) wr_store_in_progress <- mkDWire(False);
+    Bit#(TLog#(sets)) fillindex = v_fb_addr[rg_fbtail][v_setbits + v_blockbits + v_wordbits - 1:
+                                                                          v_blockbits + v_wordbits];
+    Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
+         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req) && !wr_store_in_progress;
     // ------------------------------------------------------------------------------------------//
 
     // ----------------------------- structures for fence operation -----------------------------//
@@ -768,6 +778,7 @@ dataline ))
     `endif
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
       if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
+        wr_store_in_progress <= True;
         Bit#(TLog#(fbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:rg_fbhead;
         `ifdef atomic
           if(req.access == 2)
@@ -918,7 +929,7 @@ dataline ))
     5. If the line being filled in the RAM is not dirty, then the FB line simply ovrwrites the
     line in one = cycle. The latest request from the core is replayed if the replacement was to
     the same index.*/
-    rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && sb_empty && !fb_empty
+    rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || fill_oppurtunity) && sb_empty && !fb_empty
         && !wr_allocating_storebuffer  && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay);
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Release rule firing",id))
       let addr = v_fb_addr[rg_fbtail];
@@ -1042,6 +1053,7 @@ dataline ))
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
+        wr_takingrequest <= True;
       endmethod
     endinterface;
     method Action ma_cache_enable(Bool c);
