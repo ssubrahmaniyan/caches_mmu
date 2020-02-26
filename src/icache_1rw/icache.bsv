@@ -273,6 +273,8 @@ package icache;
     /*doc:wire: this is a boolean wire which indicates is a req is being taken by the cache from the
      * core */
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
+    Bit#(TLog#(sets)) fillindex = v_fb_addr[rg_fbtail][v_setbits + v_blockbits + v_wordbits - 1:
+                                                                          v_blockbits + v_wordbits];
     Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req);
     // ------------------------------------------------------------------------------------------//
