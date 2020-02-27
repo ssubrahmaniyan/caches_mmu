@@ -158,7 +158,7 @@ package imem;
   `endif
 `ifdef perfmonitors
   `ifdef icache
-    method mv_icache_perf_counters = icache.perf_counters;
+    method mv_icache_perf_counters = icache.mv_perf_counters;
   `endif
   `ifdef supervisor
     method mv_itlb_perf_counters = itlb.mv_perf_counters;
