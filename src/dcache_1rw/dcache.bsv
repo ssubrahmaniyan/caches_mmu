@@ -24,7 +24,133 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Author: Neel Gala
 Email id: neelgala@gmail.com
-Details:
+*/
+/*doc:overview:
+
+Working Principle
+-----------------
+
+A request from the core is enqueued into a request fifo (``ff_core_request``). On a hit within the 
+cache, the required word is enqueued into the response fifo (``ff_core_response``) which is read by 
+the core. On a miss, a read request for the line is sent to the fabric via the 
+``ff_read_mem_request`` and simultaneously an entry in the fill-buffer is allotted to capture the 
+fabric response. The responses from the fabric are enqueued in the ``ff_read_mem_response`` fifo. 
+When a dirty line needs to be evicted, a write request for that line is enqueued into 
+``ff_write_mem_request`` fifo and the response of this write is captured in ``ff_write_mem_response`` 
+fifo.
+
+Serving core requests
+^^^^^^^^^^^^^^^^^^^^^
+
+A core request can only be enqueued in ``ff_core_request`` fifo if the following conditions are true :- 
+
+1. Fill-buffer is not full.
+2. Core is ready to receive a response or deq the previous response
+3. Fence operation is not in progress.
+4. A replay of SRAM tag and data request (for a previous request) is not happening 
+   (its necessity is discussed in later sections).
+
+The reason for point 1 and 2 being, once either of the two structures are full, a hit or a miss 
+cannot be processed further. In this situation, if there is one outstanding request already 
+present in ``ff_core_request``, enqueuing one more request would overwrite the SRAM tag and data 
+values of the previous one. When tag matching resumes, incorrect tag would be used leading to 
+incorrect behaviour.
+
+Once a request is enqueued into the ``ff_core_request`` fifo, a tag and data read request is sent to 
+the SRAMs simultaneously. In the next cycle, if there isn't a pending request and fill-buffer & 
+ff_core_response are not full, the tag field of the request is compared with the tags stored in 
+the SRAMs (tag field of all the ways for particular set) and the fill-buffer 
+(tag field of all the entries). 
+
+A hit occurs in following scenarios :- 1. Tag matches in SRAM 2. Tag matches in fill-buffer and 
+also the requested word is present. There might be a case where tag matches in fill-buffer but the 
+word is not present as the line is still getting filled by the fabric. In that case we keep 
+polling on the fill-buffer until there's a **word-hit**. Please note, that a tag-hit can occur 
+either in the SRAM or the fill-buffer and never both. Assertions to check this have been put in 
+place. A miss occurs when tag match fails in both the SRAM and the fill-buffer. Now following 
+scenarios can occur :-
+
+1. **For a Load request**: if it's a hit, the requested word is enqueued in ``ff_core_response`` 
+   fifo in the same cycle as the tag-match. When it's a hit in the FB, before enqueuing the response, 
+   we check if there is a pending store to the same word, if so we enqueue the updated word 
+   accordingly. Since, the SRAMs are not updated with stores immediately, the store-buffer is 
+   looked up only in the case of a fill-buffer hit.
+
+2. **For a Load request**: If it's a miss, the address (after making it word aligned) is 
+   enqueued into the ``ff_read_mem_request`` fifo to be sent to fabric. Simultaneously, a 
+   fill-buffer entry is assigned to capture the line requested from the fabric. Once the 
+   requested word is captured in the fill-buffer (while rest of the line is still getting filled), 
+   it is enqueued into the ``ff_core_response`` to be sent to core and the entry in ``ff_core_request`` 
+   is dequeued. We are now ready to service the subsequent request in the next cycle.
+
+3. **For a store request**: If it's a hit in the fill-buffer, a store buffer entry is allotted to 
+   store the data to be written and response is enqueued in the ``ff_core_response`` fifo 
+   (response being that it is store hit). If it's a hit in the SRAM, in addition to performing 
+   actions that of a fill-buffer hit, the line is copied into the fill-buffer (since all stores 
+   are performed here) while making it invalid in the SRAM.
+
+4. **For a store request**: If it's a miss, request would be sent to fabric as was when 
+   load miss occurred. Once the requested word is captured in the fill-buffer, the actions that 
+   follow are similar to those of store hit in fill-buffer.
+
+5. **For atomic requests**: The control is similar to that store-requests apart from the fact 
+   that the updated word undergoes arithmetic op before being written in the store-buffer.
+
+Release from fill-buffer
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The necessary condition for a release of a line from fill-buffer and its updation into SRAM is 
+that the line itself is valid and all the words in the line are present and updated by store-buffer 
+if necessary. If there is any pending store in the store buffer, the line won't be released. 
+Given this is true, following conditions would initiate a release :- 
+
+1. **Fill-buffer is full**. A release is necessary in this case since no more requests can be 
+   taken and it can stall the pipe. While the release happens, suppose there is an entry already 
+   present in the request fifo which is to the line being released. The tag and data for that 
+   entry have already been read and would be used to check hit/miss. The SRAM tag matching would 
+   take place with a stale value and would result in a miss. It would also be a miss in fill-buffer 
+   since the line would already have been released. To prevent this incorrect behaviour, we need to 
+   replay the SRAM tag and data requests (now it would be a hit in SRAM).
+
+2. **Opportunistic fill**: if the fill-buffer is not full but there is no request being enqueued 
+   in a particular cycle (this does not mean ``ff_core_request`` is empty). Given this, if there is 
+   an entry in ``ff_core_request`` to the line being released, we prevent the release for not 
+   wanting to replay the SRAM read request (described in point 1).
+
+Now given the release can actually take place, following scenarios would arise :-
+
+1. If the line in the SRAM being evicted is not dirty, then we can directly put a write request 
+   (of the line being released) to the SRAM along with updation of the SRAM dirty and valid bits 
+   accordingly.
+2. If the line being replaced is dirty, we need to write it back to fabric. So first we put a read 
+   request to SRAM for the dirty line, in the next cycle we enqueue this line in the 
+   ``ff_write_mem_request`` for it to be written back in fabric while also putting a SRAM write 
+   request for line being released.
+
+Once a release is done from the fill-buffer, that particular entry in the fill-buffer is 
+invalidated and thus is available for new allocation on a miss or a store-hit.
+
+The fill-buffer is implemented as a circular-buffer with head and tail pointer-registers.
+
+Fence operation
+^^^^^^^^^^^^^^^
+
+A cache-flush operation is initiated when the core presents a fence instruction. A fence operation 
+can only start if following conditions are met:
+
+1. the entire fill-buffer is empty (i.e. all lines are updated in the SRAM).
+2. there are not pending write-backs to fabric 
+3. the store-buffer is empty.
+
+In case of the D-Cache, the fence operation is a single cycle operation if the global-dirty bit 
+is clear, where all the lines are invalidated and the dirty bits of each line are cleared as well. 
+If the global-dirty bit is set, the fence operation in the D-Cache traverses through each set and 
+identifies which lines need to the written back to the fabric. Traversing a set, requires 
+traversing each of the way and checking if a write-back is required. A set is ignored 
+if there are no valid dirty lines in the set. At the end of each set traversal, the valid and 
+dirty bits of the entire set are cleared. The fence operation in the D-Cache is only over when the 
+last set has been completely traversed. Until this point, not new requests are entertained from the 
+core-side.
 
 --------------------------------------------------------------------------------------------------
 */
@@ -75,20 +201,20 @@ package dcache;
                         numeric type tbanks,
                         numeric type buswidth
                            );
-    interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) core_req;
-    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(DCache_mem_readreq#(paddr)) read_mem_req;
-    interface Put#(DCache_mem_readresp#(buswidth)) read_mem_resp;
-    method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) write_mem_req;
-    method Action write_mem_req_deq;
-    interface Put#(DCache_mem_writeresp) write_mem_resp;
+    interface Put#(DCache_core_request#(vaddr,TMul#(wordsize,8),esize)) put_core_req;
+    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) get_core_resp;
+    interface Get#(DCache_mem_readreq#(paddr)) get_read_mem_req;
+    interface Put#(DCache_mem_readresp#(buswidth)) put_read_mem_resp;
+    method DCache_mem_writereq#(paddr, TMul#(blocksize, TMul#(wordsize, 8))) mv_write_mem_req;
+    method Action ma_write_mem_req_deq;
+    interface Put#(DCache_mem_writeresp) put_write_mem_resp;
   `ifdef supervisor
-    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) ptw_resp;
-    interface Put#(DTLB_core_response#(paddr)) mav_pa_from_tlb;
-    interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) hold_req;
+    interface Get#(DMem_core_response#(TMul#(wordsize,8),esize)) get_ptw_resp;
+    interface Put#(DTLB_core_response#(paddr)) put_pa_from_tlb;
+    interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) get_hold_req;
   `endif
   `ifdef perfmonitors
-    method Bit#(13) perf_counters;
+    method Bit#(13) mv_perf_counters;
   `endif
     method Action ma_cache_enable(Bool c);
     method Bool mv_storebuffer_empty;
@@ -276,10 +402,10 @@ package dcache;
 
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
-    Reg#(Bool) rg_fence_stall <- mkRegA(False);
+    Reg#(Bool) rg_fence_stall <- mkReg(False);
 
     /*doc:reg: When tru indicates that a miss is being catered to*/
-    Reg#(Bool) rg_handling_miss <- mkRegA(False);
+    Reg#(Bool) rg_handling_miss <- mkReg(False);
 
     /*doc:reg: */
     Reg#(Bit#(1)) rg_wEpoch <- mkReg(0);
@@ -364,17 +490,17 @@ package dcache;
 
     // ----------------------------- structures for fence operation -----------------------------//
     /*doc:reg: this register selects the way for performing a fence operation */
-    Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkRegA(0);
+    Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkReg(0);
     /*doc:reg: this register selects the set for performing a fence operation */
-    Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkRegA(0);
+    Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkReg(0);
     /*doc:reg: this register when true indicates that a fence operation has caused a writeback to
      * the memory and the response has not been received yet.*/
-    Reg#(Bool) rg_fence_pending <- mkRegA(False);
+    Reg#(Bool) rg_fence_pending <- mkReg(False);
     /*doc:reg: This register when true indicates that a there exists alteast one dirty line within
      * the data cache */
-    Reg#(Bool) rg_globaldirty <- mkRegA(False);
+    Reg#(Bool) rg_globaldirty <- mkReg(False);
     /*doc:reg:*/
-    Reg#(Bool) rg_fenceinit <- mkRegA(True);
+    Reg#(Bool) rg_fenceinit <- mkReg(True);
     // ------------------------------------------------------------------------------------------//
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -440,11 +566,11 @@ package dcache;
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
-    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
 
     /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
      * 'way' number of bits in each entry*/
-    Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkRegA(0));
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1rw#(sets, tagbits, tbanks) bram_tag [v_ways];
 
@@ -1036,7 +1162,7 @@ dataline ))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
 
-    interface core_req=interface Put
+    interface put_core_req=interface Put
       method Action put(DCache_core_request#(vaddr,respwidth,esize) req)if( ff_core_response.notFull &&
                             !rg_fence_stall && !fb_full && !rg_performing_replay);
       `ifdef perfmonitors
@@ -1067,22 +1193,22 @@ dataline ))
       wr_cache_enable <= c;
     endmethod
 
-    interface read_mem_req = toGet(ff_read_mem_request);
-    interface read_mem_resp = toPut(ff_read_mem_response);
-    interface core_resp = toGet(ff_core_response);
-    method write_mem_req = ff_write_mem_request.first;
-    method Action write_mem_req_deq;
+    interface get_read_mem_req = toGet(ff_read_mem_request);
+    interface put_read_mem_resp = toPut(ff_read_mem_response);
+    interface get_core_resp = toGet(ff_core_response);
+    method mv_write_mem_req = ff_write_mem_request.first;
+    method Action ma_write_mem_req_deq;
       ff_write_mem_request.deq;
     endmethod
-    interface write_mem_resp = toPut(ff_write_mem_response);
+    interface put_write_mem_resp = toPut(ff_write_mem_response);
     // TODO
   `ifdef supervisor
-    interface ptw_resp = toGet(ff_ptw_response);
-    interface mav_pa_from_tlb = toPut(ff_from_tlb);
-    interface hold_req = toGet(ff_hold_request);
+    interface get_ptw_resp = toGet(ff_ptw_response);
+    interface put_pa_from_tlb = toPut(ff_from_tlb);
+    interface get_hold_req = toGet(ff_hold_request);
   `endif
     `ifdef perfmonitors
-      method perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access
+      method mv_perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access
                             , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss ,
                               wr_total_write_miss , wr_total_atomic_miss , wr_total_read_fb_hits,
                               wr_total_write_fb_hits, wr_total_atomic_fb_hits,
