@@ -349,7 +349,16 @@ package dcache;
     Wire#(Bool) wr_store_in_progress <- mkDWire(False);
     Bit#(TLog#(sets)) fillindex = v_fb_addr[rg_fbtail][v_setbits + v_blockbits + v_wordbits - 1:
                                                                           v_blockbits + v_wordbits];
-    Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest) && !fb_empty &&
+    /*doc:var: This variable indicates if there is an oppurtunity to perform a release from the
+     fill-buffer to the RAMS. This takes advantage of the fact that the cache is idle is not being
+     used by the core. The conditions under which an oppurtunity occurs is if all the following
+     conditions are met:
+       1. there is not core-request pending
+       2. The core is not generating any request in the current cycle
+       3. Store-buffer is not being allocated in the current cycle
+       4. The set being released to is not the most recent set accessed by the core.
+    */
+    Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest)  &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req) && !wr_store_in_progress;
     // ------------------------------------------------------------------------------------------//
 
@@ -459,15 +468,15 @@ package dcache;
 
     /*doc:rule: */
     rule rl_print_stats;
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d FEB:%b",
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d FEB:%b",
       id, fb_full, fb_empty, rg_fbhead, rg_fbtail, &(v_fb_enables[rg_fbtail])))
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: sb_full:%b sb_empty:%b ",
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: sb_full:%b sb_empty:%b ",
                                     id,sb_full, sb_empty))
     endrule
     /*doc:rule: rule that fences the cache by invalidating all the lines*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty &&
                                       sb_empty && !rg_fence_pending && !rg_performing_replay) ;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE : Fence operation in progress",id))
+      `logLevel( dcache, 1, $format("[%2d]DCACHE : Fence operation in progress",id))
 
       let lv_curr_way = rg_fence_way;
       let lv_curr_set = rg_fence_set;
@@ -483,7 +492,7 @@ package dcache;
       Bit#(paddr) final_address={tag, rg_fence_set, zeros};
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
 Dirty:%b Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address,
 dataline ))
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
@@ -550,7 +559,7 @@ dataline ))
       Bool lv_access_fault = pa_response.trap;
       Bit#(`causesize) lv_cause = lv_access_fault? pa_response.cause:
                                   req.access == 0?`Load_access_fault:`Store_access_fault;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
+      `logLevel( dcache, 1, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
     `else
       Bit#(TSub#(vaddr,paddr)) upper_bits=truncateLSB(req.address);
       Bit#(paddr) phyaddr = truncate(req.address);
@@ -592,10 +601,10 @@ dataline ))
     `ifdef ASSERT
       dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the cache");
     `endif
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM For Req:",id,(hit_tag),fshow(req)))
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM Hit:%b set:%d tag:%h",id,hit_tag,set_index,
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b set:%d tag:%h",id,hit_tag,set_index,
                                     request_tag))
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM Response:",id, fshow(lv_response)))
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Response:",id, fshow(lv_response)))
     endrule
 
     /*doc:rule: This rule will check if the requested word is present in the fill-buffer or not*/
@@ -757,7 +766,7 @@ dataline ))
       rg_handling_miss <= False;
 
       // -- allocate store-buffer for stores/atomic ops
-      if(req.access != 0 && onehot_hit[2]==1) begin
+      if(req.access != 0 && wr_ram_state == Hit && !wr_fault) begin
         if(rg_fbhead == fromInteger(v_fbsize-1))
           rg_fbhead <=0;
         else
@@ -776,7 +785,7 @@ dataline ))
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
       if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
         Bit#(TLog#(fbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:rg_fbhead;
@@ -811,8 +820,6 @@ dataline ))
       let burst_size = lv_io_req?v_wordbits:valueOf(TLog#(TDiv#(buswidth,8)));
       let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
       // allocate a pending req which points to the new fb entry that is allotted.
-      // TODO: in case of coherence this entry should point to an existing entry is only permission
-      // upgrades are demanded
        // align the address to be line-address aligned
       phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount;
       ff_read_mem_request.enq(DCache_mem_readreq{  address   : phyaddr,
