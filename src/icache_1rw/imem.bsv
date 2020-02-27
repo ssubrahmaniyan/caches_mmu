@@ -66,17 +66,19 @@ package imem;
   endmodule
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(IMem_core_request#(`vaddr, `iesize )) core_req;
-    interface Get#(IMem_core_response#(TMul#(`iwords, 8), `iesize )) core_resp;
-    method Action cache_enable(Bool c);
-    interface Get#(ICache_mem_readreq#(`paddr)) read_mem_req;
-    interface Put#(ICache_mem_readresp#(`ibuswidth)) read_mem_resp;
-    method Bool cache_available;
+    interface Put#(IMem_core_request#(`vaddr, `iesize )) put_core_req;
+    interface Get#(IMem_core_response#(TMul#(`iwords, 8), `iesize )) get_core_resp;
+    method Action ma_cache_enable(Bool c);
+    interface Get#(ICache_mem_readreq#(`paddr)) get_read_mem_req;
+    interface Put#(ICache_mem_readresp#(`ibuswidth)) put_read_mem_resp;
+  `ifdef icache
+    method Bool mv_cache_available;
+  `endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
-    interface Get#(PTWalk_tlb_request#(`vaddr)) request_to_ptw;
-    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
+    interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) put_response_frm_ptw;
     /*doc:method: method to receive the current satp csr from the core*/
     method Action ma_satp_from_csr (Bit#(`vaddr) s);
 
@@ -121,37 +123,39 @@ package imem;
     let icache <- mkicache_inst(id);
   `ifdef supervisor
     Ifc_fa_itlb itlb <- mkfa_itlb(id);
-    mkConnection(itlb.core_response, icache.mav_pa_from_tlb);
+    mkConnection(itlb.get_core_response, icache.put_pa_from_tlb);
   `endif
-    interface core_req = interface Put
+    interface put_core_req = interface Put
       method Action put (IMem_core_request#(`vaddr, `iesize ) r);
       `ifdef supervisor
         if(!r.sfence)
-            icache.core_req.put(get_cache_packet(r));
+            icache.put_core_req.put(get_cache_packet(r));
         if(!r.fence)
-            itlb.core_request.put(get_tlb_packet(r));
+            itlb.put_core_request.put(get_tlb_packet(r));
       `else
-        icache.core_req.put(get_cache_packet(r));
+        icache.put_core_req.put(get_cache_packet(r));
       `endif
       endmethod
     endinterface;
-    interface core_resp = icache.core_resp;
-    interface read_mem_req = icache.read_mem_req;
-    interface read_mem_resp = icache.read_mem_resp;
-    method Action cache_enable (Bool c);
+    interface get_core_resp = icache.get_core_resp;
+    interface get_read_mem_req = icache.get_read_mem_req;
+    interface put_read_mem_resp = icache.put_read_mem_resp;
+    method Action ma_cache_enable (Bool c);
       icache.ma_cache_enable(c);
     endmethod
-      method cache_available = icache.mv_cache_available;
-`ifdef supervisor
-    interface request_to_ptw = itlb.request_to_ptw;
-    interface response_frm_ptw = itlb.response_frm_ptw;
+  `ifdef icache
+    method mv_cache_available = icache.mv_cache_available;
+  `endif
+  `ifdef supervisor
+    interface get_request_to_ptw = itlb.get_request_to_ptw;
+    interface put_response_frm_ptw = itlb.put_response_frm_ptw;
     method ma_satp_from_csr = itlb.ma_satp_from_csr;
     method ma_curr_priv = itlb.ma_curr_priv;
     `ifdef pmp
       method ma_pmp_cfg = itlb.ma_pmp_cfg;
       method ma_pmp_addr = itlb.ma_pmp_addr;
     `endif
-`endif
+  `endif
 `ifdef perfmonitors
   `ifdef icache
     method mv_icache_perf_counters = icache.perf_counters;

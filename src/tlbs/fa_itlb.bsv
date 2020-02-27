@@ -49,11 +49,11 @@ package fa_itlb;
 
   interface Ifc_fa_itlb;
 
-    interface Put#(ITLB_core_request#(`vaddr)) core_request;
-    interface Get#(ITLB_core_response#(`paddr)) core_response;
+    interface Put#(ITLB_core_request#(`vaddr)) put_core_request;
+    interface Get#(ITLB_core_response#(`paddr)) get_core_response;
 
-    interface Get#(PTWalk_tlb_request#(`vaddr)) request_to_ptw;
-    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
+    interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
+    interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) put_response_frm_ptw;
 
     /*doc:method: method to receive the current satp csr from the core*/
     method Action ma_satp_from_csr (Bit#(`vaddr) s);
@@ -124,7 +124,7 @@ package fa_itlb;
       rg_replace <= 0;
     endrule
 
-    interface core_request = interface Put
+    interface put_core_request = interface Put
       method Action put (ITLB_core_request#(`vaddr) req) if(!rg_sfence && !rg_tlb_miss);
 
         `logLevel( tlb, 0, $format("[%2d]ITLB: received req: ",hartid,fshow(req)))
@@ -214,7 +214,7 @@ package fa_itlb;
       endmethod
     endinterface;
 
-    interface response_frm_ptw = interface Put
+    interface put_response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
         let core_req = rg_miss_queue;
         Bit#(12) page_offset = core_req[11 : 0];
@@ -256,9 +256,9 @@ package fa_itlb;
       endmethod
     endinterface;
 
-    interface core_response = toGet(ff_core_respone);
+    interface get_core_response = toGet(ff_core_respone);
 
-    interface request_to_ptw = toGet(ff_request_to_ptw);
+    interface get_request_to_ptw = toGet(ff_request_to_ptw);
 
     method Action ma_satp_from_csr (Bit#(`vaddr) s);
       wr_satp <= s;

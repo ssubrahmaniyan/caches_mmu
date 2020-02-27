@@ -73,15 +73,15 @@ package icache;
                         numeric type tbanks,
                         numeric type buswidth
                            );
-    interface Put#(ICache_core_request#(vaddr,esize)) core_req;
-    interface Get#(IMem_core_response#(TMul#(wordsize,8),esize)) core_resp;
-    interface Get#(ICache_mem_readreq#(paddr)) read_mem_req;
-    interface Put#(ICache_mem_readresp#(buswidth)) read_mem_resp;
+    interface Put#(ICache_core_request#(vaddr,esize)) put_core_req;
+    interface Get#(IMem_core_response#(TMul#(wordsize,8),esize)) get_core_resp;
+    interface Get#(ICache_mem_readreq#(paddr)) get_read_mem_req;
+    interface Put#(ICache_mem_readresp#(buswidth)) put_read_mem_resp;
   `ifdef supervisor
-    interface Put#(ITLB_core_response#(paddr)) mav_pa_from_tlb;
+    interface Put#(ITLB_core_response#(paddr)) put_pa_from_tlb;
   `endif
   `ifdef perfmonitors
-    method Bit#(5) perf_counters;
+    method Bit#(5) mv_perf_counters;
   `endif
     method Action ma_cache_enable(Bool c);
     method Bool mv_cache_available;
@@ -703,7 +703,7 @@ package icache;
       `logLevel( icache, 0, $format("[%2d]ICACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
 
-    interface core_req=interface Put
+    interface put_core_req=interface Put
       method Action put(ICache_core_request#(vaddr,esize) req)if( ff_core_response.notFull &&
                             !rg_fence_stall && !fb_full && !rg_performing_replay);
       `ifdef perfmonitors
@@ -727,15 +727,15 @@ package icache;
       wr_cache_enable <= c;
     endmethod
 
-    interface read_mem_req = toGet(ff_read_mem_request);
-    interface read_mem_resp = toPut(ff_read_mem_response);
-    interface core_resp = toGet(ff_core_response);
+    interface get_read_mem_req = toGet(ff_read_mem_request);
+    interface put_read_mem_resp = toPut(ff_read_mem_response);
+    interface get_core_resp = toGet(ff_core_response);
     // TODO
   `ifdef supervisor
-    interface mav_pa_from_tlb = toPut(ff_from_tlb);
+    interface put_pa_from_tlb = toPut(ff_from_tlb);
   `endif
     `ifdef perfmonitors
-      method perf_counters = {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_misses,wr_total_access};
+      method mv_perf_counters = {wr_total_fbfills,wr_total_nc,wr_total_fb_hits,wr_total_cache_misses,wr_total_access};
     `endif
     //TODO
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull && 

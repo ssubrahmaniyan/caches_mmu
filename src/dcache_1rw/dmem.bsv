@@ -175,7 +175,7 @@ package dmem;
     method ma_perform_store = dcache.ma_perform_store;
     method mv_cacheable_store    =dcache.mv_cacheable_store;
     method mv_cache_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
-    method mv_commit_store_ready = dcache.mv_commit_store_ready;
+    method mv_commit_store_ready = `ifdef dcache dcache.mv_commit_store_ready `else True `endif ;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
 `ifdef supervisor
     interface get_ptw_resp = dcache.get_ptw_resp;
