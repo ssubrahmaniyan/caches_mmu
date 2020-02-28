@@ -49,11 +49,11 @@ package ptwalk_rv32;
     interface Put#(DMem_core_response#(TMul#(`dwords, 8),`desize) ) response_frm_cache;
     interface Put#(DCache_core_request#(32, 32, `desize)) hold_req;
     (*always_enabled, always_ready*)
-    interface Put#(Bit#(32)) satp_from_csr;
+    method Action ma_satp_from_csr (Bit#(32) satp);
     (*always_enabled, always_ready*)
-    interface Put#(Bit#(32)) mstatus_from_csr;
+    method Action ma_mstatus_from_csr (Bit#(32) mstatus);
     (*always_enabled, always_ready*)
-    interface Put#(Bit#(2)) curr_priv;
+    method Action ma_curr_priv (Bit#(2) curr_priv);
   endinterface
 
   typedef enum {ReSendReq, WaitForMemory, GeneratePTE} State deriving(Bits,Eq,FShow);
@@ -274,23 +274,17 @@ package ptwalk_rv32;
 
     interface response_frm_cache  = toPut(ff_memory_response);
 
-    interface satp_from_csr=interface Put
-      method Action put (Bit#(32) satp);
-        wr_satp<=satp;
-      endmethod
-    endinterface;
+    method Action ma_satp_from_csr (Bit#(32) satp);
+      wr_satp <= satp;
+    endmethod
 
-    interface curr_priv = interface Put
-      method Action put (Bit#(2) priv);
-        wr_priv<=priv;
-      endmethod
-    endinterface;
+    method Action ma_curr_priv (Bit#(2) priv);
+      wr_priv <= priv;
+    endmethod
 
-    interface mstatus_from_csr=interface Put
-      method Action put (Bit#(32) mstatus);
-        wr_mstatus<=mstatus;
-      endmethod
-    endinterface;
+    method Action ma_mstatus_from_csr (Bit#(32) mstatus);
+      wr_mstatus <= mstatus;
+    endmethod
   endmodule
 
   (*synthesize*)
