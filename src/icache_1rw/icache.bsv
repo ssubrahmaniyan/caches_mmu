@@ -309,10 +309,10 @@ package icache;
 
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
-    Reg#(Bool) rg_fence_stall <- mkRegA(False);
+    Reg#(Bool) rg_fence_stall <- mkReg(False);
 
     /*doc:reg: When tru indicates that a miss is being catered to*/
-    Reg#(Bool) rg_handling_miss <- mkRegA(False);
+    Reg#(Bool) rg_handling_miss <- mkReg(False);
 
     //------------------------- Fill buffer data structures -------------------------------------//
    
@@ -412,7 +412,7 @@ package icache;
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
      'way' number of bits in each entry*/
-    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1rw#(sets, tagbits, tbanks) bram_tag [v_ways];
