@@ -177,7 +177,6 @@ package dcache;
   import common_tlb_types:: * ;
 
   typedef struct{
-    Bit#(addr)  phyaddr;
     Bit#(besize) init_enable;
     Bit#(TLog#(fbsize)) fbindex;
     Bool io_request;
@@ -383,7 +382,7 @@ package dcache;
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(DCache_mem_readresp#(buswidth)) ff_read_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo stores the eviction request to be written back*/
-    FIFOF#(DCache_mem_writereq#(paddr, linewidth)) ff_write_mem_request <- mkSizedFIFOF(2);
+    FIFOF#(DCache_mem_writereq#(paddr, linewidth)) ff_write_mem_request <- mkSizedFIFOF(1);
     /*doc:fifo: this fifo stores the write response from an eviction or a io write req*/
     FIFOF#(DCache_mem_writeresp) ff_write_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
@@ -973,7 +972,7 @@ dataline ))
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
-      let pend_req = Pending_req{phyaddr: phyaddr, init_enable:fn_init_enable(word_index),
+      let pend_req = Pending_req{init_enable:fn_init_enable(word_index),
                                 io_request: lv_io_req, fbindex: lv_alotted_fb};
       ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
