@@ -28,6 +28,97 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
+/*doc:overview:
+
+Working Principle
+-----------------
+
+A request from the core is enqueued into a request fifo (``ff_core_request``). On a hit within the 
+cache, the required word is enqueued into the response fifo (``ff_core_response``) which is read by 
+the core. On a miss, a read request for the line is sent to the fabric via the 
+``ff_read_mem_request`` and simultaneously an entry in the fill-buffer is allotted to capture the 
+fabric response. The responses from the fabric are enqueued in the ``ff_read_mem_response`` fifo. 
+
+Serving core requests
+^^^^^^^^^^^^^^^^^^^^^
+
+A core request can only be enqueued in ``ff_core_request`` fifo if the following conditions are true :- 
+
+1. Fill-buffer is not full.
+2. Core is ready to receive a response or deq the previous response
+3. Fence operation is not in progress.
+4. A replay of SRAM tag and data request (for a previous request) is not happening 
+   (its necessity is discussed in later sections).
+
+The reason for point 1 and 2 being, once either of the two structures are full, a hit or a miss 
+cannot be processed further. In this situation, if there is one outstanding request already 
+present in ``ff_core_request``, enqueuing one more request would overwrite the SRAM tag and data 
+values of the previous one. When tag matching resumes, incorrect tag would be used leading to 
+incorrect behaviour.
+
+Once a request is enqueued into the ``ff_core_request`` fifo, a tag and data read request is sent to 
+the SRAMs simultaneously. In the next cycle, if there isn't a pending request and fill-buffer & 
+ff_core_response are not full, the tag field of the request is compared with the tags stored in 
+the SRAMs (tag field of all the ways for particular set) and the fill-buffer 
+(tag field of all the entries). 
+
+A hit occurs in following scenarios :- 1. Tag matches in SRAM 2. Tag matches in fill-buffer and 
+also the requested word is present. There might be a case where tag matches in fill-buffer but the 
+word is not present as the line is still getting filled by the fabric. In that case we keep 
+polling on the fill-buffer until there's a **word-hit**. Please note, that a tag-hit can occur 
+either in the SRAM or the fill-buffer and never both. Assertions to check this have been put in 
+place. A miss occurs when tag match fails in both the SRAM and the fill-buffer. Now following 
+scenarios can occur :-
+
+1. **For a Read request**: if it's a hit, the requested word is enqueued in ``ff_core_response`` 
+   fifo in the same cycle as the tag-match.
+
+2. **For a Read request**: If it's a miss, the address (after making it word aligned) is 
+   enqueued into the ``ff_read_mem_request`` fifo to be sent to fabric. Simultaneously, a 
+   fill-buffer entry is assigned to capture the line requested from the fabric. Once the 
+   requested word is captured in the fill-buffer (while rest of the line is still getting filled), 
+   it is enqueued into the ``ff_core_response`` to be sent to core and the entry in ``ff_core_request`` 
+   is dequeued. We are now ready to service the subsequent request in the next cycle.
+
+Release from fill-buffer
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The necessary condition for a release of a line from fill-buffer and its updation into SRAM is 
+that the line itself is valid and all the words in the line are present. 
+
+1. **Fill-buffer is full**. A release is necessary in this case since no more requests can be 
+   taken and it can stall the pipe. While the release happens, suppose there is an entry already 
+   present in the request fifo which is to the line being released. The tag and data for that 
+   entry have already been read and would be used to check hit/miss. The SRAM tag matching would 
+   take place with a stale value and would result in a miss. It would also be a miss in fill-buffer 
+   since the line would already have been released. To prevent this incorrect behaviour, we need to 
+   replay the SRAM tag and data requests (now it would be a hit in SRAM).
+
+2. **Opportunistic fill**: if the fill-buffer is not full but there is no request being enqueued 
+   in a particular cycle (this does not mean ``ff_core_request`` is empty). Given this, if there is 
+   an entry in ``ff_core_request`` to the line being released, we prevent the release for not 
+   wanting to replay the SRAM read request (described in point 1).
+
+We can directly put a write request (of the line being released) to the SRAM along with updation 
+of the SRAM valid bits accordingly.
+Once a release is done from the fill-buffer, that particular entry in the fill-buffer is 
+invalidated and thus is available for new allocation on a miss.
+
+The fill-buffer is implemented as a circular-buffer with head and tail pointer-registers.
+
+Fence operation
+^^^^^^^^^^^^^^^
+
+A cache-flush operation is initiated when the core presents a fence instruction. A fence operation 
+can only start if following conditions are met:
+
+1. the entire fill-buffer is empty (i.e. all lines are updated in the SRAM).
+
+Here the fence is a single-cycle operation which resets all the valid bits to 0 (which are
+implemented as registers) and also resets the replacement policies.
+
+--------------------------------------------------------------------------------------------------
+*/
 package icache;
   `include "Logger.bsv"
   import FIFO :: * ;
@@ -177,14 +268,14 @@ package icache;
     endfunction
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-     * request made by the core */
+    request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
     
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-     * request made by the core */
+    request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
       Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
         32: 'hF;
@@ -242,22 +333,21 @@ package icache;
     /*doc:reg: register pointing to the next entry being released from the fillbuffer*/
     Reg#(Bit#(TLog#(fbsize)))                       rg_fbtail     <- mkReg(0);
     /*doc:reg: temporary register holding the WE for the data to be updated in the fillbuffer from
-    * the memory response*/
+    the memory response*/
     Reg#(Bit#(TDiv#(linewidth,8)))                  rg_temp_enable<- mkReg(0);
     /*doc:reg: this register indicates the read-phase of the release sequence*/
     Reg#(Bool) rg_release_readphase <- mkDReg(False);
 
     /*doc:reg: This register indicates that the bram inputs are being re-driven by those provided
-    * from the core in the most recent request. This happens because as the release from the
-    * fillbuffer happens it is possible that a dirty ways needs to be read out. This will change the
-    * output of the brams as compared to what the core requested. Thus the core request needs to be
-    * replayed on these again */
+    from the core in the most recent request. This can happen because there has been a replacement
+    of a line to a set which is also being accessed by the core. Thus the core request needs to be
+    replayed on these again */
     Reg#(Bool) rg_performing_replay <- mkReg(False);
     /*doc:reg: this register holds the index of the most recent request performed by the core*/
     Reg#(Bit#(setbits)) rg_recent_req <- mkReg(0);
     /*doc:reg: this register indicates that the line corresponding to the current request to the
-    * core is already persent however, the necessary is not present. This doesn't generate a miss
-    * and thus rg_miss_handling cannot be used here. Hence the need for this register*/
+    core is already persent however, the necessary is not present. This doesn't generate a miss
+    and thus rg_miss_handling cannot be used here. Hence the need for this register*/
     Reg#(Bool) rg_polling_mode <- mkReg(False);
     
     Bit#(tagbits) writetag = truncateLSB(v_fb_addr[rg_fbtail]);
@@ -271,7 +361,7 @@ package icache;
 
     // -------- oppurtunistic filling related structures --------------------------------------//
     /*doc:wire: this is a boolean wire which indicates is a req is being taken by the cache from the
-     * core */
+    core */
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     Bit#(TLog#(sets)) fillindex = v_fb_addr[rg_fbtail][v_setbits + v_blockbits + v_wordbits - 1:
                                                                           v_blockbits + v_wordbits];
@@ -291,11 +381,11 @@ package icache;
     /*doc:wire: this wire holds the response from the RAM in case of a hit in the RAMs*/
     Wire#(IMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
     /*doc:wire: in case of a hit in the ram, this wire holds the information of which way was a hit.
-    * This is used for replacement purposes only.*/
+    This is used for replacement purposes only.*/
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
     /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
-     * caused a hit. This is necessary since an eviction from the same set should not affect the
-     * replacement policy if a hit to the same set has occurred in the same cycle */
+    caused a hit. This is necessary since an eviction from the same set should not affect the
+    replacement policy if a hit to the same set has occurred in the same cycle */
     Wire#(Maybe#(Bit#(setbits))) wr_ram_hitset <- mkDWire(tagged Invalid);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
@@ -321,7 +411,7 @@ package icache;
   `endif
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
-     * 'way' number of bits in each entry*/
+     'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkRegA(0));
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
@@ -466,11 +556,7 @@ package icache;
     endrule
 
     /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
-     fill-buffer or if there was an error in the request. Since we are re-using the
-    ff_write_mem_response fifo to send out cacheable and MMIO ops, it is necessary that we make sure
-    that this fifo is not Full before responding back to the core. If it is not empty then the core
-    could initiate a commit-store which could get dropped since the method performing the cannot
-    fire since the fifo is full and thus the store being dropped.*/
+    fill-buffer or if there was an error in the request. */
     rule rl_response_to_core(!ff_core_request.first.fence &&
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || 
                         wr_fb_state == Hit));
@@ -524,8 +610,8 @@ package icache;
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
-     * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
-     * be a miss in both the SRAMs and the FB and thus need to be checked only here */
+    Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
+    be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
                                 !rg_handling_miss && ! ff_core_request.first.fence && 
                                 ff_pending_req.notFull );
@@ -589,8 +675,8 @@ package icache;
     endrule
 
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
-    * has been received the entire line and tag are written in to the BRAM and the fill buffer is
-    * released in the next cycle*/
+    has been received the entire line and tag are written in to the BRAM and the fill buffer is
+    released in the next cycle*/
     rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
@@ -642,12 +728,7 @@ package icache;
     requested by the core (present in the ff_core_request). Writing this line would cause a
     replay of the latest request. This would cause another cycle delay which would eventually be
     a hit in the cache RAMS.
-    4. If while filling the RAM, it is found that the line being filled is dirty then a read
-    request for that line is sent. In the next cycle the read line is sent to memory and the line
-    from the FB is written into the RAM. Also in the next cycle a read - request for the latest
-    read from the core is replayed again.
-    5. If the line being filled in the RAM is not dirty, then the FB line simply ovrwrites the
-    line in one = cycle. The latest request from the core is replayed if the replacement was to
+    4. The latest request from the core is replayed if the replacement was to
     the same index.*/
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall) && !fb_empty
         && (&v_fb_enables[rg_fbtail]==1) && !rg_performing_replay);

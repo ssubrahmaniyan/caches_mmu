@@ -326,14 +326,14 @@ package dcache;
     endcase;
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-     * request made by the core */
+    request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-     * request made by the core */
+    request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
       Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
         32: 'hF;
@@ -431,34 +431,34 @@ package dcache;
     /*doc:reg: register pointing to the next entry being released from the fillbuffer*/
     Reg#(Bit#(TLog#(fbsize)))                       rg_fbtail     <- mkReg(0);
     /*doc:reg: temporary register holding the WE for the data to be updated in the fillbuffer from
-    * the memory response*/
+    the memory response*/
     Reg#(Bit#(TDiv#(linewidth,8)))                  rg_temp_enable<- mkReg(0);
     /*doc:reg: this register indicates the read-phase of the release sequence*/
     Reg#(Bool) rg_release_readphase <- mkDReg(False);
 
     /*doc:reg: This register indicates that the bram inputs are being re-driven by those provided
-    * from the core in the most recent request. This happens because as the release from the
-    * fillbuffer happens it is possible that a dirty ways needs to be read out. This will change the
-    * output of the brams as compared to what the core requested. Thus the core request needs to be
-    * replayed on these again */
+    from the core in the most recent request. This happens because as the release from the
+    fillbuffer happens it is possible that a dirty ways needs to be read out. This will change the
+    output of the brams as compared to what the core requested. Thus the core request needs to be
+    replayed on these again */
     Reg#(Bool) rg_performing_replay <- mkReg(False);
     /*doc:reg: this register holds the index of the most recent request performed by the core*/
     Reg#(Bit#(setbits)) rg_recent_req <- mkReg(0);
     /*doc:reg: this register indicates that the line corresponding to the current request to the
-    * core is already persent however, the necessary is not present. This doesn't generate a miss
-    * and thus rg_miss_handling cannot be used here. Hence the need for this register*/
+    core is already persent however, the necessary is not present. This doesn't generate a miss
+    and thus rg_miss_handling cannot be used here. Hence the need for this register*/
     Reg#(Bool) rg_polling_mode <- mkReg(False);
 
     /*doc:var: Following is a global variable holding the latest tag to be released into the RAMs
-     * form the fill-buffer*/
+    form the fill-buffer*/
     Bit#(tagbits) writetag = truncateLSB(v_fb_addr[rg_fbtail]);
     /*doc:var: Following is a global variable holding the latest dataline to be released into the RAMs
-     * form the fill-buffer*/
+    form the fill-buffer*/
     Bit#(linewidth) writedata = v_fb_data[rg_fbtail];
 
     /*doc:wire: in case of a hit in fb this wire will hold the index of the fb which was a hit. This
-    * value is used to indicate the storebuffer which fb entry it needs to update when committing
-    * the store*/
+    value is used to indicate the storebuffer which fb entry it needs to update when committing
+    the store*/
     Wire#(Bit#(TLog#(fbsize))) wr_fb_hitindex <- mkDWire(?);
 
     /*doc:var: variable indicating the fillbuffer is full*/
@@ -469,20 +469,20 @@ package dcache;
 
     // -------- oppurtunistic filling related structures --------------------------------------//
     /*doc:wire: this is a boolean wire which indicates is a req is being taken by the cache from the
-     * core */
+    core */
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
     /*doc:wire: boolean wire indicating that a store is under progress*/
     Wire#(Bool) wr_store_in_progress <- mkDWire(False);
     Bit#(TLog#(sets)) fillindex = v_fb_addr[rg_fbtail][v_setbits + v_blockbits + v_wordbits - 1:
                                                                           v_blockbits + v_wordbits];
     /*doc:var: This variable indicates if there is an oppurtunity to perform a release from the
-     fill-buffer to the RAMS. This takes advantage of the fact that the cache is idle is not being
-     used by the core. The conditions under which an oppurtunity occurs is if all the following
-     conditions are met:
-       1. there is not core-request pending
-       2. The core is not generating any request in the current cycle
-       3. Store-buffer is not being allocated in the current cycle
-       4. The set being released to is not the most recent set accessed by the core.
+    fill-buffer to the RAMS. This takes advantage of the fact that the cache is idle is not being
+    used by the core. The conditions under which an oppurtunity occurs is if all the following
+    conditions are met:
+      1. there is not core-request pending
+      2. The core is not generating any request in the current cycle
+      3. Store-buffer is not being allocated in the current cycle
+      4. The set being released to is not the most recent set accessed by the core.
     */
     Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest)  &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req) && !wr_store_in_progress;
@@ -494,10 +494,10 @@ package dcache;
     /*doc:reg: this register selects the set for performing a fence operation */
     Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkReg(0);
     /*doc:reg: this register when true indicates that a fence operation has caused a writeback to
-     * the memory and the response has not been received yet.*/
+     the memory and the response has not been received yet.*/
     Reg#(Bool) rg_fence_pending <- mkReg(False);
     /*doc:reg: This register when true indicates that a there exists alteast one dirty line within
-     * the data cache */
+     the data cache */
     Reg#(Bool) rg_globaldirty <- mkReg(False);
     /*doc:reg:*/
     Reg#(Bool) rg_fenceinit <- mkReg(True);
@@ -514,14 +514,14 @@ package dcache;
     /*doc:wire: this wire holds the response from the RAM in case of a hit in the RAMs*/
     Wire#(DMem_core_response#(respwidth,esize)) wr_ram_response <- mkDWire(?);
     /*doc:wire: in case of a hit in the ram, this wire holds the information of which way was a hit.
-    * This is used for replacement purposes only.*/
+    This is used for replacement purposes only.*/
     Wire#(Bit#(TLog#(ways))) wr_ram_hitway <-mkDWire(0);
     /*doc:wire: in case of a store-hit in the RAM, the hit line needs to be transfered to the FB.
-     * This wire holds that hit line*/
+    This wire holds that hit line*/
     Wire#(Bit#(linewidth)) wr_ram_hitline <- mkDWire(?);
     /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
-     * caused a hit. This is necessary since an eviction from the same set should not affect the
-     * replacement policy if a hit to the same set has occurred in the same cycle */
+    caused a hit. This is necessary since an eviction from the same set should not affect the
+    replacement policy if a hit to the same set has occurred in the same cycle */
     Wire#(Maybe#(Bit#(setbits))) wr_ram_hitset <- mkDWire(tagged Invalid);
 
     /*doc:wire: this wire indicates if there was a hit or miss on Fllbuffer.*/
@@ -565,11 +565,11 @@ package dcache;
 
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
-     * 'way' number of bits in each entry*/
+    'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
 
     /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
-     * 'way' number of bits in each entry*/
+    'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1rw#(sets, tagbits, tbanks) bram_tag [v_ways];
@@ -669,7 +669,7 @@ dataline ))
     endrule
 
     /*doc:rule: whether the write response is for a fence or is for eviction it has to be evicted.
-     * Hence this has been decoupled from the previous rule - which is meant only for fence*/
+     Hence this has been decoupled from the previous rule - which is meant only for fence*/
     rule rl_deq_write_response;
       ff_write_mem_response.deq;
     endrule
@@ -793,7 +793,7 @@ dataline ))
     endrule
 
     /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
-     fill-buffer or if there was an error in the request. Since we are re-using the
+    fill-buffer or if there was an error in the request. Since we are re-using the
     ff_write_mem_response fifo to send out cacheable and MMIO ops, it is necessary that we make sure
     that this fifo is not Full before responding back to the core. If it is not empty then the core
     could initiate a commit-store which could get dropped since the method performing the cannot
@@ -927,8 +927,8 @@ dataline ))
     endrule
 
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
-     * Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
-     * be a miss in both the SRAMs and the FB and thus need to be checked only here */
+    Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
+    be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
                                 !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence &&
                                 ff_pending_req.notFull );
@@ -1001,8 +1001,8 @@ dataline ))
     endrule
 
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
-    * has been received the entire line and tag are written in to the BRAM and the fill buffer is
-    * released in the next cycle*/
+    has been received the entire line and tag are written in to the BRAM and the fill buffer is
+    released in the next cycle*/
     rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
@@ -1201,7 +1201,6 @@ dataline ))
       ff_write_mem_request.deq;
     endmethod
     interface put_write_mem_resp = toPut(ff_write_mem_response);
-    // TODO
   `ifdef supervisor
     interface get_ptw_resp = toGet(ff_ptw_response);
     interface put_pa_from_tlb = toPut(ff_from_tlb);
@@ -1214,7 +1213,6 @@ dataline ))
                               wr_total_write_fb_hits, wr_total_atomic_fb_hits,
                               wr_total_fb_releases, wr_total_evictions };
     `endif
-    //TODO
     method mv_storebuffer_empty = storebuffer.mv_sb_empty;
     method mv_cacheable_store = storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
