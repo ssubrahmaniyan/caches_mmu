@@ -472,10 +472,17 @@ package icache;
         dataword[i] = truncate(bram_data[i].read_response >> block_offset);
         lines[i] = bram_data[i].read_response;
       end
+      Bit#(respwidth) response_word = ?;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
+        if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
+          hit_tag[i] = 1;
+          response_word = dataword[i];
+        end
       end
-      Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
+//      for (Integer i = 0; i< v_ways; i = i + 1) begin
+//        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
+//      end
+//      Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
 
       let lv_response = IMem_core_response{word:lv_access_fault? truncate(req.address):response_word, 
                                           trap: lv_access_fault, cause: lv_cause, epochs: req.epochs};
@@ -524,13 +531,23 @@ package icache;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_respwords[i] = truncate(v_fb_data[i] >> block_offset);
       end
-
+      Bit#(respwidth) lv_response_word = ?;
+      Bit#(1) lv_response_err = 0;
+      Bit#(TDiv#(linewidth,8)) lv_fb_enable = ?;
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
-        lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
+        if((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i])begin
+          lv_hit[i] = 1;
+          lv_response_err = v_fb_err[i];
+          lv_response_word = lv_respwords[i];
+          lv_fb_enable = v_fb_enables[i];
+        end
       end
-      Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
-      Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
-      Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
+      //for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+      //  lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
+      //end
+      //Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
+      //Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
+      //Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
       let lv_response = IMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
       `logLevel( icache, 1, $format("[%2d]ICACHE: FB: processing Req: ",id,fshow(req)))

@@ -702,6 +702,13 @@ dataline ))
         dataword[i] = truncate(bram_data[i].read_response >> block_offset);
         lines[i] = bram_data[i].read_response;
       end
+//      Bit#(respwidth) response_word = ?;
+//      for (Integer i = 0; i< v_ways; i = i + 1) begin
+//        if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
+//          hit_tag[i] = 1;
+//          response_word = dataword[i];
+//        end
+//      end
       for (Integer i = 0; i< v_ways; i = i + 1) begin
         hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
       end
@@ -756,6 +763,17 @@ dataline ))
         lv_respwords[i] = truncate(v_fb_data[i] >> block_offset);
       end
 
+      //Bit#(respwidth) lv_response_word = ?;
+      //Bit#(1) lv_response_err = 0;
+      //Bit#(TDiv#(linewidth,8)) lv_fb_enable = ?;
+      //for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+      //  if((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i])begin
+      //    lv_hit[i] = 1;
+      //    lv_response_err = v_fb_err[i];
+      //    lv_response_word = lv_respwords[i];
+      //    lv_fb_enable = v_fb_enables[i];
+      //  end
+      //end
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
       end
@@ -859,8 +877,7 @@ dataline ))
       Bit#(1) lv_sign =case(req.size[1:0])
           'b00: lv_response.word[7];
           'b01: lv_response.word[15];
-          'b10: lv_response.word[31];
-          default: truncateLSB(lv_response.word);
+          default: lv_response.word[31];
         endcase;
       // manipulate the sign based on the request of the core
       lv_sign = lv_sign & ~req.size[2];
