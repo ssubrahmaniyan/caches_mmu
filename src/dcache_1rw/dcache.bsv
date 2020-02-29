@@ -576,8 +576,8 @@ package dcache;
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1rw#(sets, linewidth, dbanks) bram_data[v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
-      bram_tag[i]  <- mkmem_config1rw(False,"single");
-      bram_data[i] <- mkmem_config1rw(False,"single");
+      bram_tag[i]  <- mkmem_config1rw(False);
+      bram_data[i] <- mkmem_config1rw(False);
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
