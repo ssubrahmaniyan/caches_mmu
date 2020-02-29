@@ -4,8 +4,9 @@ include Makefile.inc
 
 BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
-BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(DIR)
+BSVINCDIR:= .:%/Libraries:$(DIR)
 BSVOUTDIR:=./bin
+BLUESPECDIR:=/hw_tools/bluespec/open_bsc/lib/
 
 define_macros += -D Addr_space=25
 ifeq ($(ECC_TEST), enable)
@@ -42,13 +43,6 @@ override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCK
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
 								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)
-
-ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout
-else
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout -verilog-filter ${TOOLS_DIR}/shakti-tools/insert_license.sh
-  VERILOGLICENSE:= cp ${TOOLS_DIR}/shakti-tools/IITM_LICENSE.txt ./verilog
-endif
 
 verilate_fast := OPT_SLOW="-O3" OPT_FAST="-O3"
 VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x-initial fast \
@@ -88,10 +82,8 @@ generate_verilog:
   $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) $(VERILOG_FILTER) \
   -p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
 	@echo "old_define_macros = $(define_macros)" > vars
+	@cp common_verilog/*.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog.Vivado/RegFile.v ./verilog/  
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BELoad.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BE.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/FIFO2.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/FIFO1.v ./verilog/
 	@cp ${BLUESPECDIR}/Verilog/FIFO10.v ./verilog/

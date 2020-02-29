@@ -9,11 +9,11 @@ ATOMIC=disable
 DCACHE=enable
 DSETS=128
 DWORDS=8
-DBLOCKS=1
-DWAYS=1
-DESIZE=2
+DBLOCKS=4
+DWAYS=4
+DESIZE=1
 DSBSIZE=2
-DFBSIZE=2
+DFBSIZE=8
 DREPL=PLRU
 DRESET=1
 DDBANKS=1
@@ -26,8 +26,8 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
-TOP_MODULE:=mkdmem_tb
+TOP_MODULE:=mkdmem
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
-TOP_DIR:= ./
-TOP_FILE:= dmem_tb.bsv
+TOP_DIR:= ../
+TOP_FILE:= dmem.bsv
 
