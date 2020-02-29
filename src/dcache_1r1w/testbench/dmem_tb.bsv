@@ -29,7 +29,7 @@ Details:
 package dmem_tb;
 
   import dmem::*;
-  import cache_types::*;
+  import dcache_types::*;
   import mem_config::*;
   import GetPut::*;
   import FIFOF::*;
@@ -41,7 +41,6 @@ package dmem_tb;
   import Vector::*;
   import Connectable::*;
   import test_icache::*;
-  import globals :: * ;
   `include "Logger.bsv"
 
 
@@ -57,7 +56,7 @@ package dmem_tb;
  // (*preempts="write_mem_nc_resp,write_mem_resp"*)
   module mkdmem_tb(Empty);
 
-  let dmem <- mkdmem();
+  let dmem <- mkdmem(0);
   let testcache<- mktest();
 
   RegFile#(Bit#(18), Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ))) stim <- mkRegFileFullLoad("test.mem");
@@ -77,16 +76,20 @@ package dmem_tb;
 
   `ifdef perfmonitors
   Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
+
+  rule rl_nop;
+  `logLevel( tb, 0, $format("\n\n"))
+  endrule
   
   rule performance_counters;
-    Bit#(9) incr = dmem.mv_dcache_perf_counters;
+    Bit#(13) incr = dmem.mv_dcache_perf_counters;
     for(Integer i=0;i<5;i=i+1)
       rg_counters[i]<=rg_counters[i]+zeroExtend(incr[i]);
   endrule
   `endif
 
   rule enable_disable_cache;
-    dmem.cache_enable(True);
+    dmem.ma_cache_enable(True);
   endrule
 
 `ifdef supervisor
@@ -100,7 +103,7 @@ package dmem_tb;
   Wire#(Bool) wr_cache_avail <- mkWire();
 
   rule check_cache_avail;
-    wr_cache_avail <= dmem.cache_available;
+    wr_cache_avail <= dmem.mv_cache_available;
   endrule
 
   rule core_req(wr_cache_avail);
@@ -116,11 +119,10 @@ package dmem_tb;
       Bit#(`paddr) address = truncate(req);
       Bit#(TAdd#(`paddr ,  8)) request = truncate(req);
       Bit#(TMul#(`dwords, 8)) writedata=truncateLSB(req);
-      `logLevel( tb, 0, $format("TB: Req form Stim: ",fshow(req)))
-
+      `logLevel( tb, 0, $format("TB: Req from Stimulus: ",fshow(req)))
       if(request!=0) begin // // not end of simulation
         if(request!='1 && delay==0) begin
-          dmem.core_req.put(DMem_request{address:zeroExtend(address),
+          dmem.put_core_req.put(DMem_request{address:zeroExtend(address),
 							      fence : unpack(fence),
 							      epochs: 0, 
 							      access: truncate(readwrite), 
@@ -136,8 +138,8 @@ package dmem_tb;
         end
         index<=index+1;
       end
-      if((delay==0) || request[35:0]=='1)begin // if not a fence instruction
-        `logLevel( tb, 0, $format("TB: Enquiing request: %h",req))
+      if(delay==0  || (&request[31:0]) == 1 )begin // if not a fence instruction
+        `logLevel( tb, 0, $format("TB: Enquing request: %h",req))
         ff_req.enq(req);
       end
     end
@@ -159,7 +161,7 @@ package dmem_tb;
 
 
   rule core_resp(ff_req.first[35:0]!='1);
-    let resp <- dmem.core_resp.get();
+    let resp <- dmem.get_core_resp.get();
     let req = ff_req.first;
     ff_req.deq();
     Bit#(8) control = req[`paddr + 7: `paddr ];
@@ -195,11 +197,11 @@ package dmem_tb;
   endrule
 
   rule rl_perform_store (rg_do_perform_store);
-        let complete<-dmem.perform_store(0);
+    dmem.ma_perform_store(0);
   endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid);
-    let req<- dmem.read_mem_req.get;
+    let req<- dmem.get_read_mem_req.get;
     read_mem_req<=tagged Valid req;
     `logLevel( tb, 0, $format("TB: Memory Read request: ",fshow(req)))
   endrule
@@ -214,7 +216,8 @@ package dmem_tb;
       rg_read_burst_count<=rg_read_burst_count+1;
       read_mem_req <= tagged Valid (DCache_mem_readreq{address : (axi4burst_addrgen(rd_req.burst_len,rd_req.burst_size,2,rd_req.address)),
 						       burst_len : rd_req.burst_len,
-						       burst_size : rd_req.burst_size}); // parameterize
+						       burst_size : rd_req.burst_size,
+						       io         : rd_req.io}); // parameterize
     end
     let v_wordbits = valueOf(TLog#(`dwords));
     Bit#(19) index = truncate(rd_req.address>>v_wordbits);
@@ -222,7 +225,7 @@ package dmem_tb;
     Bit#(TLog#(TDiv#(`dbuswidth,8))) zeros = 0;
     Bit#(TMul#(2,TLog#(TDiv#(`dbuswidth,8)))) shift={rd_req.address[v_wordbits-1:0],zeros};
     dat = dat >> shift;
-    dmem.read_mem_resp.put(DCache_mem_readresp{data : dat,
+    dmem.put_read_mem_resp.put(DCache_mem_readresp{data : dat,
 						   last : (rg_read_burst_count==rd_req.burst_len),
                                                                                         err:False});
     `logLevel( tb, 0, $format("TB: Memory Read index: %d responding with: %h ",index,dat))

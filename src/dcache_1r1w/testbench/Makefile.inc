@@ -10,10 +10,10 @@ DCACHE=enable
 DSETS=128
 DWORDS=8
 DBLOCKS=4
-DWAYS=2
+DWAYS=4
 DESIZE=2
 DSBSIZE=2
-DREPL=PLRU
+DREPL=0
 DRESET=1
 DDBANKS=1
 DTBANKS=1
@@ -23,10 +23,10 @@ ECC_TEST=disable
 
 THREADS=1
 COVERAGE=line
-TRACE=disable
+TRACE=enable
 
 TOP_MODULE:=mkdmem_tb
-DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../:../../tlbs/
+DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
 TOP_DIR:= ./
 TOP_FILE:= dmem_tb.bsv
 

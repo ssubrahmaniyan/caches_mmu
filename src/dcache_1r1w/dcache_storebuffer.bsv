@@ -28,13 +28,14 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package storebuffer;
+package dcache_storebuffer;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;
   import Vector :: * ; 
   import BUtils :: * ;
+  import ConfigReg :: * ;
 
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
@@ -77,10 +78,12 @@ package storebuffer;
     Bit#(f) fbindex;
     Bit#(d) mask;
     Bool    io;
+    Bit#(2) size;
   } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
     deriving(Bits, FShow, Eq);
 
-  module mk_storebuffer(Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
+  module mk_storebuffer#(parameter Bit#(32) id)
+    (Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
     provisos( Log#(wordsize,wordbits),
               Mul#(wordsize,8,dataword),
               Add#(b__, wordbits, TMul#(wordbits, 2)),
@@ -93,7 +96,7 @@ package storebuffer;
     
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
-    Vector#(sbsize, Reg#(Bool)) v_sb_valid <- replicateM(mkReg(False));
+    Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
     /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
      * to the cache*/
     Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
@@ -129,8 +132,10 @@ package storebuffer;
       for (Integer i = 0; i<valueOf(sbsize); i = i + 1) begin
         data_values[i] = storemask[i] & data_values[i];
       end
-
-      return tuple2(fold(fn_OR,storemask),fold(fn_OR,data_values));
+      Bit#(3) zeros = 0;
+      Bit#(TAdd#(wordbits,3)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
+  
+      return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
 
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
@@ -142,33 +147,38 @@ package storebuffer;
         'b10 : duplicate(data[31 : 0]);
         default : data;
       endcase;
-      Bit#(wordbits) zeros = 0;
-      Bit#(TMul#(wordbits,2)) shiftamt = {address[v_wordbits - 1:0], zeros};
+      Bit#(3) zeros = 0;
+      Bit#(TAdd#(wordbits,3)) shiftamt = {address[v_wordbits - 1:0], zeros};
       Bit#(dataword) temp =  size == 0?'hff:
                              size == 1?'hffff:
                              size == 2?'hffffffff : '1;
 
       Bit#(dataword) storemask = temp << shiftamt;
       v_sb_valid[rg_tail] <= True;
-      v_sb_meta[rg_tail] <= Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
-                                      io: io, mask: storemask};
+      let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
+                                      io: io, mask: storemask, size:truncate(size)};
+      v_sb_meta[rg_tail] <= _s;
       rg_tail <= rg_tail + 1;
+      `logLevel( storebuffer, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
+                                          fshow(_s)))
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
     method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
+      v_sb_valid[rg_head] <= False;
+      v_sb_meta[rg_head] <= unpack(0);
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
-    method mv_cacheable_store = v_sb_meta[rg_head].io;
+    method mv_cacheable_store = !v_sb_meta[rg_head].io;
   endmodule
 
-  (*synthesize*)
-  module mksb_instance(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, 1));
-    let ifc();
-    mk_storebuffer _temp(ifc);
-    return ifc;
-  endmodule
+//  (*synthesize*)
+//  module mksb_instance(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, 1));
+//    let ifc();
+//    mk_storebuffer#(0) _temp(ifc);
+//    return ifc;
+//  endmodule
 endpackage
 

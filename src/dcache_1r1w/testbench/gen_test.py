@@ -69,7 +69,7 @@ def write_to_file(addr,readwrite, size, sign, delaycycle, fencecycle):
     elif readwrite == 'atomic':
       rw=int(format(2,'#04b'),2)
     else:
-      rw=int(format(0,'#04b'),2)
+      rw=int(format(3,'#04b'),2)
 
     if delaycycle == 'delay':
       d=0b1
@@ -116,7 +116,7 @@ def test1():
       entrycount=entrycount+1
       address=address+word_size
     
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
+    write_to_file(maxaddr,'nop',dword,unsigned,delay,fence)
     entrycount=entrycount+1
     return 0
 
@@ -361,17 +361,11 @@ def test10():
     
     address=4096+(word_size*block_size*sets) # request to old line 2, should be a miss
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
-        entrycount=entrycount+1
-    if repl=="RROBIN" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
 
     address=4096+(word_size*block_size*sets*(ways-1)) # request to old line 0, should be a miss 
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
-        entrycount=entrycount+1
-    if repl=="RROBIN" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -440,12 +434,8 @@ def test12():
     address=4096 # 2 hits to line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     entrycount=entrycount+1
-    if repl=="PLRU":
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
-      entrycount=entrycount+1
-    elif repl=="RROBIN":
-      write_to_file(address,read,word,unsigned,nodelay,nofence)
-      entrycount=entrycount+1
+    write_to_file(address,read,word,unsigned,nodelay,nofence)
+    entrycount=entrycount+1
 
    
     address=4096+(word_size*block_size) # miss to make lb write back to cache
@@ -454,10 +444,7 @@ def test12():
 
     address=4096 # request to old line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
-        entrycount=entrycount+1
-    if repl=="RROBIN" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -497,10 +484,7 @@ def test13():
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line 3
-    if repl=="PLRU" :
-        entrycount=entrycount+1
-    if repl=="RROBIN" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -833,9 +817,11 @@ def random_read():
     entrycount=entrycount+1
 
     for i in range(256000):
-        address = int(random.randrange(0, maxaddr, 4))
+#maxaddr=262143
+        address = int(random.randrange(0, 262143, 4))
         access_size = random.choice([byte,hword,word])
         sign = random.choice([signed,unsigned])
+        access = random.choice([read,write])
         write_to_file(address, read, access_size, sign, nodelay, nofence)
         entrycount = entrycount + 1
     
@@ -851,23 +837,23 @@ test5()
 #test6() 
 test7()
 test8()
-test9()
-test10()
-test11()
-test12()
-test13()
-test14a()
-test14b()
-test15()
+#test9()
+#test10()
+#test11()
+#test12()
+#test13()
+#test14a()
+#test14b()
+#test15()
 #test16()
 #test17()
 #test18()
 #test19()
 #test20()
 #test21()
-random_read()
+#random_read()
 
-write_to_file(0,endsim,byte,signed,nodelay,nofence)
+write_to_file(0,read,byte,signed,nodelay,nofence)
 entrycount=entrycount+1
 print("Total Entries in Test: "+str(entrycount))
 while entrycount<262144:
