@@ -6,7 +6,8 @@ BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
 BSVINCDIR:= .:%/Libraries:$(DIR)
 BSVOUTDIR:=./bin
-BLUESPECDIR:=/hw_tools/bluespec/open_bsc/lib/
+BSC_DIR:=$(shell which bsc)
+BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
 
 define_macros += -D Addr_space=25
 ifeq ($(ECC_TEST), enable)
@@ -79,22 +80,21 @@ generate_verilog:
 	@mkdir -p $(BSVBUILDDIR); 
 	@mkdir -p $(VERILOGDIR); 
 	bsc -check-assert -show-module-use -suppress-warnings S0015 -u -verilog -show-schedule -sched-dot +RTS -K40000M -RTS -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR)\
-  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) $(VERILOG_FILTER) \
+  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \
   -p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
 	@echo "old_define_macros = $(define_macros)" > vars
-	@cp common_verilog/*.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/RegFile.v ./verilog/  
-	@cp ${BLUESPECDIR}/Verilog/FIFO2.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO10.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RevertReg.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO20.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFOL1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SyncFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/Counter.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SizedFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RegFileLoad.v ./verilog/
-	@$(VERILOGLICENSE)
+	@cp common_verilog/*.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/../Verilog.Vivado/RegFile.v $(VERILOGDIR)  
+	@cp ${BSC_VDIR}/FIFO2.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO10.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RevertReg.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO20.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFOL1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SyncFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/Counter.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SizedFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RegFileLoad.v $(VERILOGDIR)
 
 .PHONY: link_vcs
 link_vcs: ## Generate simulation executable using Synopsys VCS
