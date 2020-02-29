@@ -245,7 +245,7 @@ package dcache;
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
   module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable),
-                  parameter String alg, parameter Bit#(32) id)
+                  parameter Integer alg, parameter Bit#(32) id)
                   (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, fbsize,
                                 esize, dbanks, tbanks, buswidth))
     provisos(
@@ -847,7 +847,7 @@ dataline ))
 
       if(wr_ram_state == Hit && !wr_fault) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from SRAM",id))
-        if(alg == "PLRU") begin
+        if(alg == 2) begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line);
           wr_ram_hitset <= tagged Valid set_index;
         end
@@ -1149,7 +1149,7 @@ dataline ))
 
           // --- update the replacement policy ------------//
           if(&v_reg_valid[set_index] == 1) begin
-            if(alg != "PLRU" )
+            if(alg != 2 )
               replacement.update_set(set_index,waynum);
             else begin
               if(wr_ram_hitset matches tagged Valid .i &&& i == set_index) begin

@@ -190,7 +190,7 @@ package icache;
   (*conflict_free="rl_response_to_core,rl_fill_from_memory"*)
   (*conflict_free="rl_response_to_core,rl_release_from_fillbuffer"*)
   module mkicache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable), 
-                  parameter String alg, parameter Bit#(32) id)
+                  parameter Integer alg, parameter Bit#(32) id)
                   (Ifc_icache#(wordsize, blocksize, sets, ways, paddr, vaddr, fbsize,
                                 esize, dbanks, tbanks, buswidth))
     provisos(
@@ -604,7 +604,7 @@ package icache;
 
       if(wr_ram_state == Hit && !wr_fault ) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from SRAM",id))
-        if(alg == "PLRU") begin
+        if(alg == 2) begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line); 
           wr_ram_hitset <= tagged Valid set_index;
         end
@@ -771,7 +771,7 @@ package icache;
 
         // --- update the replacement policy ------------//
         if(&v_reg_valid[set_index] == 1) begin
-          if(alg != "PLRU" )
+          if(alg != 2 )
             replacement.update_set(set_index,waynum);
           else begin
             if(wr_ram_hitset matches tagged Valid .i &&& i == set_index) begin

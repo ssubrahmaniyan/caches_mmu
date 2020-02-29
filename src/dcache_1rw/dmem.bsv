@@ -57,7 +57,7 @@ package dmem;
                               `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `dbuswidth ));
     let ifc();
   `ifdef dcache
-    mkdcache#(isIO,"RROBIN",id) _temp(ifc);
+    mkdcache#(isIO,`drepl,id) _temp(ifc);
   `else
     mknull_dcache _temp(ifc);
   `endif

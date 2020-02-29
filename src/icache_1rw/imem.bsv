@@ -58,7 +58,7 @@ package imem;
                               `ifdef ECC `vaddr, 1, `endif `idbanks, `itbanks, `ibuswidth ));
     let ifc();
   `ifdef icache
-    mkicache#(isIO,"RROBIN",id) _temp(ifc);
+    mkicache#(isIO,`irepl,id) _temp(ifc);
   `else
     mknull_icache _temp(ifc);
   `endif

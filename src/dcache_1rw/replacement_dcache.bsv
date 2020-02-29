@@ -40,13 +40,13 @@ package replacement_dcache;
     method Action reset_repl;
   endinterface
 
-  module mkreplace#(String alg)(Ifc_replace#(sets,ways))
+  module mkreplace#(parameter Integer alg)(Ifc_replace#(sets,ways))
     provisos(Add#(a__, TLog#(ways), 4));
 
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
-    staticAssert(alg=="RANDOM" || alg=="RROBIN" || alg=="PLRU","Invalid replacement Algorithm");
-    if(alg == "RANDOM")begin
+    staticAssert(alg==0 || alg==1 || alg==2,"Invalid replacement Algorithm");
+    if(alg == 0)begin // RANDOM
       LFSR#(Bit#(4)) random <- mkLFSR_4();
       Reg#(Bool) rg_init <- mkReg(True);
       rule initialize_lfsr(rg_init);
@@ -85,7 +85,7 @@ package replacement_dcache;
         random.seed(1);
       endmethod
     end
-    else if(alg=="RROBIN")begin
+    else if(alg== 1)begin // RRBIN
       Vector#(sets,Reg#(Bit#(TLog#(ways)))) v_count <- replicateM(mkReg(fromInteger(v_ways-1)));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
@@ -119,7 +119,7 @@ package replacement_dcache;
           v_count[i]<=fromInteger(v_ways-1);
       endmethod
     end
-    else if(alg=="PLRU")begin
+    else if(alg== 2)begin // PLRU
       Vector#(sets,Reg#(Bit#(TSub#(ways,1)))) v_count <- replicateM(mkReg(5));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
