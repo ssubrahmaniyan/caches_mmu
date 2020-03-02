@@ -68,10 +68,81 @@ package mem_config;
   import Assert::*;
   import bram_1rw::*;
   import bram_1r1w::*;
+  import bram_2rw :: * ;
+  
+  interface Ifc_mem_config2rw#( numeric type n_entries, numeric type datawidth, numeric type banks);
+    interface Ifc_mem_config1rw#(n_entries, datawidth, banks) p1;
+    interface Ifc_mem_config1rw#(n_entries, datawidth, banks) p2;
+  endinterface
+  
+  module mkmem_config2rw#(parameter Bool ramreg, parameter String porttype)
+                                                  (Ifc_mem_config2rw#(n_entries, datawidth,  banks))
+    provisos(
+             Div#(datawidth, banks, bpb), 
+             Mul#(bpb, banks, datawidth),
+             Add#(a__, bpb, datawidth)
+    );
+    Integer bits_per_bank=valueOf(bpb);
+    
+    staticAssert(porttype=="double","Only supported porttypes are: single");
+
+    Ifc_bram_2rw#(TLog#(n_entries), bpb, n_entries) ram_single [valueOf(banks)];
+    Reg#(Bit#(bpb)) rg_output_p1[valueOf(banks)][2];
+    Reg#(Bit#(bpb)) rg_output_p2[valueOf(banks)][2];
+    for(Integer i=0;i<valueOf(banks);i=i+1) begin
+      ram_single[i]<-mkbram_2rw;
+      rg_output_p1[i] <- mkCReg(2,0);
+      rg_output_p2[i] <- mkCReg(2,0);
+    end
+
+    for(Integer i=0;i<valueOf(banks);i=i+1)begin
+      rule capture_output_p1(!ramreg);
+        rg_output_p1[i][0]<=ram_single[i].response_a;
+      endrule
+      rule capture_output_reg_p1(ramreg);
+        rg_output_p1[i][1]<=ram_single[i].response_a;
+      endrule
+      rule capture_output_p2(!ramreg);
+        rg_output_p2[i][0]<=ram_single[i].response_b;
+      endrule
+      rule capture_output_reg_p2(ramreg);
+        rg_output_p2[i][1]<=ram_single[i].response_b;
+      endrule
+    end
+
+    interface p1 = interface Ifc_mem_config1rw
+      method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
+        for(Integer i=0;i<valueOf(banks);i=i+1) begin
+          ram_single[i].request_a(we, index, data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
+        end
+      endmethod
+      method Bit#(datawidth) read_response;
+        Bit#(datawidth) data_resp=0;
+        for(Integer i=0;i<valueOf(banks);i=i+1)begin
+          data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output_p1[i][1];
+        end
+        return data_resp;
+      endmethod
+    endinterface;
+    interface p2 = interface Ifc_mem_config1rw
+      method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
+        for(Integer i=0;i<valueOf(banks);i=i+1) begin
+          ram_single[i].request_b(we, index, data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
+        end
+      endmethod
+      method Bit#(datawidth) read_response;
+        Bit#(datawidth) data_resp=0;
+        for(Integer i=0;i<valueOf(banks);i=i+1)begin
+          data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output_p2[i][1];
+        end
+        return data_resp;
+      endmethod
+    endinterface;
+  endmodule
   
   interface Ifc_mem_config1rw#( numeric type n_entries, numeric type datawidth, numeric type banks);
     method Action request(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
-    method ActionValue#(Bit#(datawidth)) read_response;
+    method Bit#(datawidth) read_response;
   endinterface
   
   module mkmem_config1rw#(parameter Bool ramreg, parameter String porttype)
@@ -106,7 +177,7 @@ package mem_config;
         ram_single[i].request(we, index, data[i*bits_per_bank+bits_per_bank-1:i*bits_per_bank]);
       end
     endmethod
-    method ActionValue#(Bit#(datawidth)) read_response;
+    method Bit#(datawidth) read_response;
       Bit#(datawidth) data_resp=0;
       for(Integer i=0;i<valueOf(banks);i=i+1)begin
         data_resp[i*bits_per_bank+bits_per_bank-1 : i*bits_per_bank]=rg_output[i][1];
