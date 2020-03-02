@@ -77,12 +77,6 @@ package dcache;
     Bool io_request;
   } Pending_req#(numeric type addr, numeric type besize) deriving(Bits, Eq, FShow);
 
-  typedef struct{
-    Bit#(1) valid;
-    Bit#(1) dirty;
-    Bit#(d) tag;
-  } TagEntry#(numeric type d) deriving (Bits, Eq, FShow);
-
   interface Ifc_dcache#(numeric type wordsize,
                         numeric type blocksize,
                         numeric type sets,
@@ -275,48 +269,50 @@ package dcache;
 
     /*doc:reg: register when True indicates a fence is in progress and thus will prevent taking any
      new requests from the core*/
-    Reg#(Bool) rg_fence_stall <- mkRegA(False);
+    Reg#(Bool) rg_fence_stall <- mkReg(False);
 
     /*doc:reg: When tru indicates that a miss is being catered to*/
-    Reg#(Bool) rg_handling_miss <- mkRegA(False);
+    Reg#(Bool) rg_handling_miss <- mkReg(False);
 
     //------------------------- Fill buffer data structures -------------------------------------//
     /*doc:reg: this register holds the incoming line from the memory on a miss request*/
-    Reg#(Bit#(linewidth)) rg_fb_linedata <- mkRegA(0);
+    Reg#(Bit#(linewidth)) rg_fb_linedata <- mkReg(0);
 
     /*doc:reg: this register indicates if the current line being filled in the FB had an error from
     * the memory*/
-    Reg#(Bool) rg_fb_err <- mkRegA(False);
+    Reg#(Bool) rg_fb_err <- mkReg(False);
 
     /*doc:reg: This register holds information if the fill-buffer is dirty or not*/
-    Reg#(Bit#(1)) rg_fb_dirty <- mkRegA(0);
+    Reg#(Bit#(1)) rg_fb_dirty <- mkReg(0);
 
     /*doc:reg: this register holds the currently available bytes within the fill-buffer that can be
      * used to respond back to core*/
-    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkRegA(0);
+    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable <- mkReg(0);
 
     /*doc:reg:This register holds the next set of byte-enables that the response from the memory is
     * supposed to fill in the fill-buffer*/
-    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkRegA(0);
+    Reg#(Bit#(TDiv#(linewidth,8))) rg_fb_enable_temp <- mkReg(0);
 
     /*doc:reg: This register when True indicates that the fill-buffer line has been filled and
     * updated in the ram and thus the fill-buffer entries must be released and reset.*/
     Reg#(Bool) rg_fb_release <- mkDRegA(False);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(ways))) rg_release_way <- mkReg(0);
     // ------------------------------------------------------------------------------------------//
     
     // ----------------------------- structures for fence operation -----------------------------//
     /*doc:reg: this register selects the way for performing a fence operation */
-    Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkRegA(0);
+    Reg#(Bit#(TLog#(ways))) rg_fence_way <- mkReg(0);
     /*doc:reg: this register selects the set for performing a fence operation */
-    Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkRegA(0);
+    Reg#(Bit#(TLog#(sets))) rg_fence_set <- mkReg(0);
     /*doc:reg: this register when true indicates that a fence operation has caused a writeback to
      * the memory and the response has not been received yet.*/
-    Reg#(Bool) rg_fence_pending <- mkRegA(False);
+    Reg#(Bool) rg_fence_pending <- mkReg(False);
     /*doc:reg: This register when true indicates that a there exists alteast one dirty line within
      * the data cache */
-    Reg#(Bool) rg_globaldirty <- mkRegA(False);
+    Reg#(Bool) rg_globaldirty <- mkReg(False);
     /*doc:reg:*/
-    Reg#(Bool) rg_fenceinit <- mkRegA(True);
+    Reg#(Bool) rg_fenceinit <- mkReg(True);
     // ------------------------------------------------------------------------------------------//
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -335,11 +331,6 @@ package dcache;
     /*doc:wire: in case of a store-hit in the RAM, the hit line needs to be transfered to the FB.
     This wire holds that hit line*/
     Wire#(Bit#(linewidth)) wr_ram_hitline <- mkDWire(?);
-
-    /*doc:wire: holds the valid bits of the current set accessed in the RAMs*/
-    Wire#(Bit#(ways)) wr_curr_valids <- mkDWire(0);
-    /*doc:wire: holds the dirty bits of the current set accessed in the RAMs*/
-    Wire#(Bit#(ways)) wr_curr_dirtys <- mkDWire(0);
     /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
     caused a hit. This is necessary since an eviction from the same set should not affect the
     replacement policy if a hit to the same set has occurred in the same cycle */
@@ -379,24 +370,24 @@ package dcache;
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
     'way' number of bits in each entry*/
-//    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
-//    
-//    /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
-//    'way' number of bits in each entry*/
-//    Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_valid <- replicateM(mkReg(0));
+    
+    /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
+    'way' number of bits in each entry*/
+    Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
     
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
-    Ifc_mem_config1r1w#(sets, SizeOf#(TagEntry#(tagbits)), tbanks) bram_tag [v_ways];
+    Ifc_mem_config1r1w#(sets, tagbits, tbanks) bram_tag [v_ways];
 
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Ifc_mem_config1r1w#(sets, linewidth, dbanks) bram_data[v_ways];
     for (Integer i = 0; i<v_ways; i = i + 1) begin
-      bram_tag[i]  <- mkmem_config1r1w(False);
-      bram_data[i] <- mkmem_config1r1w(False);
+      bram_tag[i]  <- mkmem_config1r1w(False, True);
+      bram_data[i] <- mkmem_config1r1w(False, True);
     end
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
-    Ifc_storebuffer#(paddr, wordsize, esize, sbsize, 1) storebuffer <- mk_storebuffer(id);
+    Ifc_storebuffer#(paddr, wordsize, esize, sbsize) storebuffer <- mk_storebuffer(id);
 
     // --------------------------- Rule operations ------------------------------------- //
 
@@ -413,12 +404,11 @@ package dcache;
       // done to avoid additional provisos for this combination
       Bit#(TSub#(paddr, TAdd#(tagbits, setbits))) zeros = 'd0;
 
-      TagEntry#(tagbits) tag_entry = unpack(bram_tag[rg_fence_way].read_response);
-      Bit#(tagbits) tag = tag_entry.tag;
+      Bit#(tagbits) tag = bram_tag[rg_fence_way].read_response;
       Bit#(linewidth) dataline = bram_data[rg_fence_way].read_response;
       Bit#(paddr) final_address={tag, rg_fence_set, zeros};
-      Bit#(1) lv_dirty = tag_entry.dirty;
-      Bit#(1) lv_valid = tag_entry.valid;
+      Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
+      Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
       if(rg_globaldirty)
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b Dirty:%b \
  Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address, dataline ))
@@ -437,13 +427,16 @@ package dcache;
 
       bram_data[lv_next_way].read(lv_next_set);
       bram_tag[lv_next_way].read(lv_next_set);
-      bram_tag[lv_curr_way].write(1,lv_curr_set,unpack(0));
 
       rg_fence_way <= lv_next_way;
       rg_fence_set <= lv_next_set;
       if((lv_curr_way == fromInteger(v_ways - 1) && lv_curr_set == fromInteger(v_sets - 1))
               || !rg_globaldirty) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence: Clearing all Valid Bits",id))
+        for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
+          v_reg_valid[i] <= 0 ;
+          v_reg_dirty[i] <= 0 ;
+        end
         rg_globaldirty <= False;
         rg_fence_stall <= False;
         ff_core_request.deq;
@@ -475,31 +468,21 @@ package dcache;
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       Vector#(ways, Bit#(respwidth)) dataword;
-      Vector#(ways, TagEntry#(tagbits)) tag_entries;
-      Vector#(ways, Bit#(tagbits)) tags;
-      Bit#(ways) valids;
-      Bit#(ways) dirtys;
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
         dataword[i] = truncate(bram_data[i].read_response >> block_offset);
-        tag_entries[i] = unpack(bram_tag[i].read_response);
-        tags[i] = tag_entries[i].tag;
-        valids[i] = tag_entries[i].valid;
-        dirtys[i] = tag_entries[i].dirty;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM Lines[%2d]: tag:%h", id, i, 
-                                     tags[i], fshow(bram_data[i].read_response)))
+                                     bram_tag[i].read_response, fshow(bram_data[i].read_response)))
       end
       Bit#(respwidth) response_word = ?;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        if(valids[i] == 1 && tags[i] == request_tag) begin
+        if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
           hit_tag[i] = 1;
           response_word = dataword[i];
-       end
       end
-      wr_curr_valids <= valids;
-      wr_curr_dirtys <= dirtys;
+      end
 //      for (Integer i = 0; i< v_ways; i = i + 1) begin
-//        hit_tag[i] = pack(valids[i] == 1 && tags[i] == request_tag);
+//        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
 //      end
 //      Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
 
@@ -519,7 +502,7 @@ package dcache;
         wr_ram_state <= Miss;
       end
     `ifdef ASSERT
-      dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the cache");
+      dynamicAssert(countOnes(hit_tag) <= 1,"DCACHE: More than one way is a hit in the RAM");
     `endif
       `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM: reqTag:%h set_index:%d",id,request_tag, set_index))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: RAM: Hit:%b For Req:",id,(hit_tag),fshow(req)))
@@ -728,21 +711,21 @@ package dcache;
       Bit#(TDiv#(linewidth,8)) lv_current_enable = rg_fb_enable == 0? pending_req.init_enable:
                                                                     rg_fb_enable_temp;
       Bit#(linewidth) lv_new_word = duplicate(response.data);
-      TagEntry#(tagbits) lv_write_tag = TagEntry{tag:truncateLSB(pending_req.phyaddr),
-                                                 valid: 1,
-                                                 dirty: 0 }; // TODO fix dirty handling
+      Bit#(tagbits) lv_write_tag = truncateLSB(pending_req.phyaddr);
       Bit#(TAdd#(TLog#(TDiv#(linewidth,8)),1)) rotate_amount =
                                                 (fromInteger(valueOf(TDiv#(buswidth,8))));
 
       let lv_fb_linedata = updateDataWithMask(rg_fb_linedata, lv_new_word, lv_current_enable);
       if(response.last) begin
-        let waynum<-replacement.line_replace(set_index, wr_curr_valids,wr_curr_dirtys);
+        let waynum<-replacement.line_replace(set_index, v_reg_valid[set_index],
+                                                                          v_reg_dirty[set_index]);
         replacement.update_set(set_index,waynum);
         rg_fb_release <= True;
-        bram_tag[waynum].write(1,set_index,pack(lv_write_tag));
+        rg_release_way <= waynum;
+        bram_tag[waynum].write(1,set_index,lv_write_tag);
         bram_data[waynum].write(1,set_index,lv_fb_linedata);
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Writing set:%d tag:%h way:%d",id,
-                                                    set_index,lv_write_tag.tag,waynum))
+                                                                    set_index,lv_write_tag,waynum))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Writing data:%h",id,lv_fb_linedata))
       end
       else begin
@@ -771,12 +754,15 @@ package dcache;
 
     /*doc:rule: hold the fillbuffer for an extra cycle since the write to the BRAM is only available
     * in the next cycle. This rule will also re-initialize all the fb related registers*/
-    rule rl_delay_fb_release(rg_fb_release && !ff_pending_req.first.io_request);
+    rule rl_delay_fb_release(rg_fb_release && !ff_pending_req.first.io_request &&
+                                                                          ff_pending_req.notEmpty);
       rg_fb_enable <= 0;
       rg_fb_enable_temp <= 0;
       rg_fb_linedata <= 0;
       rg_fb_err <= False;
       ff_pending_req.deq;
+      Bit#(setbits) set_index=ff_pending_req.first.phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      v_reg_valid[set_index][rg_release_way]<= 1'b1;
       `logLevel( dcache, 1, $format("[%2d]DCACHE: Releasing FB. Addr:",id,fshow(ff_pending_req.first)))
     endrule
 

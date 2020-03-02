@@ -101,11 +101,16 @@ package replacement_dcache;
           end
           return temp;
         end
-        else begin // if any line empty then send that
+        else begin // if all lines are valid
           Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(dirty[i]==0)begin
-              temp=truncate(i);
+          if(|dirty == 0) begin// all lines non-dirty
+            temp = readVReg(v_count)[index];
+          end
+          else begin
+            for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
+              if(dirty[i]==0)begin
+                temp=truncate(i);
+              end
             end
           end
           return temp;

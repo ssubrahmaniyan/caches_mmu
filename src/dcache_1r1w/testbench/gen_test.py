@@ -308,7 +308,7 @@ def test9():
     entrycount=entrycount+1
 
     address=4096
-    for i in range(ways+ways+ways+1):
+    for i in range(200):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
       address=address+(word_size*block_size*sets)
@@ -837,14 +837,14 @@ test5()
 #test6() 
 test7()
 test8()
-#test9()
-#test10()
-#test11()
-#test12()
-#test13()
-#test14a()
-#test14b()
-#test15()
+test9()
+test10()
+test11()
+test12()
+test13()
+test14a()
+test14b()
+test15()
 #test16()
 #test17()
 #test18()

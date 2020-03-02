@@ -40,14 +40,13 @@ package dcache_storebuffer;
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
                               numeric type esize,
-                              numeric type sbsize, 
-                              numeric type fbsize);
+                              numeric type sbsize );
 
     method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data, 
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io);
-    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+            Bit#(esize) epochs, Bit#(2) size, Bool io);
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize))) 
                                                                             mav_store_to_commit;
     method Bool mv_sb_full;
     method Bool mv_sb_empty;
@@ -66,7 +65,6 @@ package dcache_storebuffer;
   addr: address as requested by the core
   data: as presented by the core to the cache
   epoch: the epoch bits as presented by the core to the cache
-  fbindex: the index of the fillbuffer that this store is to be effected on
   mask: all bits one in this field indicate the bits that will be affected by the corresponding
   store
   io: boolean value indicating if the store is to the cache or an MMIO
@@ -75,15 +73,14 @@ package dcache_storebuffer;
     Bit#(a) addr;
     Bit#(d) data;
     Bit#(e) epoch;
-    Bit#(f) fbindex;
     Bit#(d) mask;
     Bool    io;
     Bit#(2) size;
-  } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
+  } Storebuffer#(numeric type a, numeric type d, numeric type e) 
     deriving(Bits, FShow, Eq);
 
   module mk_storebuffer#(parameter Bit#(32) id)
-    (Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
+    (Ifc_storebuffer#(addr, wordsize, esize, sbsize))
     provisos( Log#(wordsize,wordbits),
               Mul#(wordsize,8,dataword),
               Add#(b__, wordbits, TMul#(wordbits, 2)),
@@ -99,7 +96,7 @@ package dcache_storebuffer;
     Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
     /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
      * to the cache*/
-    Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
+    Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize))) v_sb_meta 
                                                                     <- replicateM(mkReg(unpack(0)));
 
     /*doc:reg: Register to point to the head of the store buffers. Points to the entry that needs to
@@ -139,7 +136,7 @@ package dcache_storebuffer;
     endmethod
 
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io) if(!sb_full);
+            Bit#(esize) epochs, Bit#(2) size, Bool io) if(!sb_full);
 
       data = case (size[1 : 0])
         'b00 : duplicate(data[7 : 0]);
@@ -155,7 +152,7 @@ package dcache_storebuffer;
 
       Bit#(dataword) storemask = temp << shiftamt;
       v_sb_valid[rg_tail] <= True;
-      let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
+      let _s = Storebuffer{addr:address, data: data, epoch: epochs, 
                                       io: io, mask: storemask, size:truncate(size)};
       v_sb_meta[rg_tail] <= _s;
       rg_tail <= rg_tail + 1;
@@ -164,7 +161,7 @@ package dcache_storebuffer;
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
-    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize))) 
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
       v_sb_valid[rg_head] <= False;
