@@ -1,0 +1,8 @@
+common_verilog
+common_bsv
+sim_main.h
+vars
+test.mem
+data.mem
+coverage.dat
+logs

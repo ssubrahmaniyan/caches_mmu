@@ -4,13 +4,12 @@ include Makefile.inc
 
 BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
-BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(DIR)
+BSVINCDIR:= .:%/Libraries:$(DIR)
 BSVOUTDIR:=./bin
+BSC_DIR:=$(shell which bsc)
+BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
 
 define_macros += -D Addr_space=25
-ifeq ($(ITIM), enable)
-	override define_macros += -D itim
-endif
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
@@ -20,8 +19,8 @@ endif
 ifeq ($(ATOMIC), enable)
   override define_macros += -D atomic=True
 endif
-ifeq ($(ICACHE), enable)
-  override define_macros += -D ifence=True -D icache=True
+ifeq ($(DCACHE), enable)
+  override define_macros += -D dcache=True
 endif
 
 ifneq ($(SUPERVISOR),  none)
@@ -38,25 +37,21 @@ ifeq ($(TRACE), enable)
   trace := --trace
 endif
 
-override define_macros += -D ASSERT=True -D iwords=$(IWORDS) -D iblocks=$(IBLOCKS) -D iways=$(IWAYS) \
-								-D isets=$(ISETS) -D ifbsize=$(IFBSIZE) -D irepl=$(IREPL) -D icachereset=$(IRESET) \
-								-D iesize=$(IESIZE) -D idbanks=$(IDBANKS) -D itbanks=$(ITBANKS) \
+override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCKS) -D dways=$(DWAYS) \
+								-D dsets=$(DSETS) -D drepl=$(DREPL) -D dcachereset=$(DRESET) -D dsbsize=$(DSBSIZE)\
+								-D dfbsize=$(DFBSIZE)\
+								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
-								-D simulate=True -D itlbsize=$(ITLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(XLEN) -D itim_banks=$(ITIM_BANKS)
-
-ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout
-else
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout -verilog-filter ${TOOLS_DIR}/shakti-tools/insert_license.sh
-  VERILOGLICENSE:= cp ${TOOLS_DIR}/shakti-tools/IITM_LICENSE.txt ./verilog
-endif
+								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
+								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)
 
 verilate_fast := OPT_SLOW="-O3" OPT_FAST="-O3"
 VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x-initial fast \
 --noassert --cc $(TOP_MODULE).v sim_main.cpp --bbox-sys -Wno-STMTDLY -Wno-UNOPTFLAT -Wno-WIDTH \
 -Wno-lint -Wno-COMBDLY -Wno-INITIALDLY --autoflush $(coverage) $(trace) --threads $(THREADS) \
 -DBSV_RESET_FIFO_HEAD -DBSV_RESET_FIFO_ARRAY -DVERBOSE --output-split 20000 --output-split-ctrace 10000
+
+VCS_MACROS = +define+BSV_RESET_FIFO_HEAD=True +define+BSV_RESET_FIFO_ARRAY=True +define+BSV_ASYNC_RESET +define+VERBOSE
 
 define presim_config
 	python3 gen_test.py
@@ -84,25 +79,32 @@ generate_verilog:
 	@echo Compiling $(TOP_MODULE) in verilog ...
 	@mkdir -p $(BSVBUILDDIR); 
 	@mkdir -p $(VERILOGDIR); 
-	bsc -suppress-warnings S0015 -u -verilog -show-schedule -sched-dot +RTS -K40000M -RTS -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR)\
-  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) $(VERILOG_FILTER) \
+	bsc -check-assert -show-module-use -suppress-warnings S0015 -u -verilog -show-schedule -sched-dot +RTS -K40000M -RTS -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR)\
+  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \
   -p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
 	@echo "old_define_macros = $(define_macros)" > vars
-	@cp ${BLUESPECDIR}/Verilog.Vivado/RegFile.v ./verilog/  
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BELoad.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BE.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO2.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO10.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RevertReg.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO20.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFOL1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SyncFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/Counter.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SizedFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RegFileLoad.v ./verilog/
-	@$(VERILOGLICENSE)
+	@cp common_verilog/*.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/../Verilog.Vivado/RegFile.v $(VERILOGDIR)  
+	@cp ${BSC_VDIR}/FIFO2.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO10.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RevertReg.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO20.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFOL1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SyncFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/Counter.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SizedFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RegFileLoad.v $(VERILOGDIR)
+
+.PHONY: link_vcs
+link_vcs: ## Generate simulation executable using Synopsys VCS
+	@rm -rf $(BSVOUTDIR)
+	@mkdir -p $(BSVOUTDIR)
+	vcs -gui -LDFLAGS -Wl,--no-as-needed -l vcs_compile.log -sverilog +vpi +v2k -lca +define+TOP=$(TOP_MODULE) $(VCS_MACROS) \
+	+define+BSV_TIMESCALE=1ns/1ps +cli+4 +libext+.v +notimingcheck \
+	-y $(VERILOGDIR)/ -y common_verilog/ \
+	${BLUESPECDIR}/Verilog/main.v -o out
+	@mv csrc out* $(BSVOUTDIR)
 
 .PHONY: link_verilator
 link_verilator: 
