@@ -320,7 +320,8 @@ package dcache;
           Mul#(TDiv#(paritysize_per_line, ebanks), ebanks, paritysize_per_line),
           Add#(ad__, TDiv#(paritysize_per_line, ebanks), paritysize_per_line),
           Add#(ae__, paritysize_per_response, paritysize_per_line),
-          Add#(af__, paritysize, paritysize_per_line)
+          Add#(af__, paritysize, paritysize_per_line),
+          Add#(ag__, paritysize, paritysize_per_response)
         `endif
 
     );
@@ -1400,6 +1401,23 @@ dataline ))
       mask = mask<<block_offset;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: BE:%h blockoffset:%d",id,mask,block_offset))
+    `ifdef dcache_ecc
+      Bit#(respwidth) lv_fb_word = truncate(v_fb_data[sb_entry.fbindex] >> {block_offset,3'd0})  ;
+      Bit#(respwidth) masked_data = lv_fb_word&~sb_entry.mask | sb_entry.data&sb_entry.mask;
+      Bit#(paritysize_per_response) temp_mask_ecc = '1;
+      Bit#(paritysize_per_line) mask_ecc = zeroExtend(temp_mask_ecc);
+      Bit#(TAdd#(TLog#(paritysize_per_response),blockbits)) block_offset_ecc =
+                                                sb_entry.addr[v_blockbits+v_wordbits-1:v_wordbits];
+      mask_ecc = mask_ecc << (block_offset_ecc *fromInteger(v_paritysize_per_response));
+      Bit#(ecc_size) ecc_word = 0;
+      Bit#(paritysize) ecc_encoded_parity = 0;
+      Bit#(paritysize_per_response) ecc_encoded_parity_word_store = 0;
+      for (Integer i=0; i < v_ecc_per_response; i=i+1) begin
+        ecc_word = masked_data[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size]; // bug fix
+        ecc_encoded_parity = ecc_hamming_encode(ecc_word);
+        ecc_encoded_parity_word_store[i * v_paritysize+ v_paritysize -1: i*v_paritysize] = ecc_encoded_parity;
+      end
+    `endif
       if(sb_entry.epoch == currepoch) begin
         if(sb_entry.io) begin
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Store to NC Addr:%h",id,sb_entry.addr))
@@ -1418,8 +1436,13 @@ dataline ))
           end
           else begin
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Store to Available line",id))
-            v_fb_data[sb_entry.fbindex] <= updateDataWithMask(v_fb_data[sb_entry.fbindex],
+            let lv_fbline = updateDataWithMask(v_fb_data[sb_entry.fbindex],
                                                               duplicate(sb_entry.data), mask);
+            v_fb_data[sb_entry.fbindex] <= lv_fbline;
+          `ifdef dcache_ecc
+	          v_fb_ecc[sb_entry.fbindex]<= (mask_ecc&duplicate(ecc_encoded_parity_word_store)) | 
+	                             (~mask_ecc&v_fb_ecc[sb_entry.fbindex]);
+          `endif
           end
           v_fb_dirty[sb_entry.fbindex] <= 1'b1;
           rg_globaldirty <= True;
