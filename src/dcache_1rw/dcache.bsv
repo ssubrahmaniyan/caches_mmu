@@ -175,6 +175,10 @@ package dcache;
   import mem_config :: * ;
   import dcache_storebuffer :: * ;
   import common_tlb_types:: * ;
+`ifdef dcache_ecc
+  import ecc_hamming :: * ;
+`endif
+  
 
   typedef struct{
     Bit#(besize) init_enable;
@@ -192,7 +196,7 @@ package dcache;
                         numeric type sbsize,
                         numeric type fbsize,
                         numeric type esize,
-                      `ifdef ECC
+                      `ifdef dcache_ecc
                         numeric type ecc_wordsize,
                         numeric type ebanks,
                       `endif
@@ -1146,18 +1150,23 @@ dataline ))
  v_fb_dirty[rg_fbtail]))
           if(rg_release_readphase || set_index == rg_recent_req )
             rg_performing_replay <= True;
+          // ------------------ replacement policy updates -------------------------------------//
+          Bool alldirty =  (&v_reg_valid[set_index] == 1 && &v_reg_dirty[set_index] == 1);
+          Bool nonedirty = (&v_reg_valid[set_index] == 1 && |v_reg_dirty[set_index] == 0);
+          Bool update_req = alldirty || nonedirty;
 
-          // --- update the replacement policy ------------//
-          if(&v_reg_valid[set_index] == 1) begin
-            if(alg != 2 )
-              replacement.update_set(set_index,waynum);
-            else begin
-              if(wr_ram_hitset matches tagged Valid .i &&& i == set_index) begin
-              end
-              else
-                replacement.update_set(set_index,waynum);
-            end
+          if(alg == 1) begin// RR
+            if(update_req) 
+              replacement.update_set(set_index, waynum);
           end
+          else if(alg == 2) begin // PLRU
+            if(wr_ram_hitset matches tagged Valid .i &&& i == set_index) begin
+            end
+            else
+              replacement.update_set(set_index,waynum);
+          end
+          else if (alg == 0) // RANDOM
+            replacement.update_set(set_index,waynum);
           // ---------------------------------------------------//
         end
       end

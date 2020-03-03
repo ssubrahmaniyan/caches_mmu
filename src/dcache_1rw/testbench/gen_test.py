@@ -308,7 +308,7 @@ def test9():
     entrycount=entrycount+1
 
     address=4096
-    for i in range(ways+ways+ways+1):
+    for i in range(200):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
       address=address+(word_size*block_size*sets)
@@ -826,6 +826,22 @@ def test21():
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
     return 0
+# this test creates a thrashing scenario on the same set. Total requests =
+# 200 write requests
+def test22():
+    global entrycount
+    
+    write_to_file(0,read,word,unsigned,nodelay,fence)
+    entrycount=entrycount+1
+
+    address=4096
+    for i in range(200):
+      write_to_file(address,write,word,unsigned,nodelay,nofence)
+      entrycount=entrycount+1
+      address=address+(word_size*block_size*sets)
+    
+    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
+    entrycount=entrycount+1
 
 def random_read():
     global entrycount
@@ -867,6 +883,7 @@ test18()
 test19()
 test20()
 test21()
+test22()
 random_read()
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence)

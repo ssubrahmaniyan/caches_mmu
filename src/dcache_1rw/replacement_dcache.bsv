@@ -89,25 +89,25 @@ package replacement_dcache;
       Vector#(sets,Reg#(Bit#(TLog#(ways)))) v_count <- replicateM(mkReg(fromInteger(v_ways-1)));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
-        if (&(valid)==1 && &(dirty)==1)begin // if all lines are valid choose one to randomly replace
+
+        Bool alldirty =  (&valid == 1 && &dirty == 1);
+        Bool somedirty = (&valid == 1 && &dirty != 1);
+        Bool nonedirty = (&valid == 1 && |dirty == 0);
+
+        Bit#(TLog#(ways)) temp=fromInteger(v_ways-1);
+        if(alldirty || nonedirty) begin // all lines are valid and dirty
           return readVReg(v_count)[index];
         end
-        else if(&(valid)!=1) begin // if any line empty then send that
-          Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(valid[i]==0)begin
-              temp=truncate(i);
-            end
-          end
+        else if (somedirty) begin // all lines valid but not all dirty
+          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1)
+            if(dirty[i]==0)
+              temp = truncate(i);
           return temp;
         end
-        else begin // if any line empty then send that
-          Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(dirty[i]==0)begin
-              temp=truncate(i);
-            end
-          end
+        else begin // some lines are invalid
+          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1)
+            if(valid[i]==0)
+              temp =  truncate(i);
           return temp;
         end
       endmethod
