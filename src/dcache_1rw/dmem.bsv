@@ -53,11 +53,11 @@ package dmem;
 
   (*synthesize*)
   module mkdcache_inst#(parameter Bit#(32) id)(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
-                                                      `dsbsize, `dfbsize, `desize ,
-                              `ifdef ECC `vaddr, 1, `endif `ddbanks, `dtbanks, `dbuswidth ));
+                              `dsbsize, `dfbsize, `desize ,`ddbanks, `dtbanks, `dbuswidth 
+                          `ifdef dcache_ecc ,`vaddr, 1 `endif ));
     let ifc();
   `ifdef dcache
-    mkdcache#(isIO,`drepl,id) _temp(ifc);
+    mkdcache#(isIO,`drepl,id, unpack(`dcache_ecc_cause_reuse)) _temp(ifc);
   `else
     mknull_dcache _temp(ifc);
   `endif
