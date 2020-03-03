@@ -361,16 +361,16 @@ def test10():
     
     address=4096+(word_size*block_size*sets) # request to old line 2, should be a miss
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
+    if repl=="2" :
         entrycount=entrycount+1
-    if repl=="RROBIN" :
+    if repl=="1" :
         entrycount=entrycount+1
 
     address=4096+(word_size*block_size*sets*(ways-1)) # request to old line 0, should be a miss 
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
+    if repl=="2" :
         entrycount=entrycount+1
-    if repl=="RROBIN" :
+    if repl=="1" :
         entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
@@ -440,10 +440,10 @@ def test12():
     address=4096 # 2 hits to line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     entrycount=entrycount+1
-    if repl=="PLRU":
+    if repl=="2":
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
-    elif repl=="RROBIN":
+    elif repl=="1":
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
 
@@ -454,9 +454,9 @@ def test12():
 
     address=4096 # request to old line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="PLRU" :
+    if repl=="2" :
         entrycount=entrycount+1
-    if repl=="RROBIN" :
+    if repl=="1" :
         entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
@@ -497,9 +497,9 @@ def test13():
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line 3
-    if repl=="PLRU" :
+    if repl=="2" :
         entrycount=entrycount+1
-    if repl=="RROBIN" :
+    if repl=="1" :
         entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)

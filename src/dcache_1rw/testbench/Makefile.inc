@@ -14,7 +14,7 @@ DWAYS=4
 DESIZE=1
 DSBSIZE=2
 DFBSIZE=8
-DREPL=PLRU
+DREPL=2
 DRESET=1
 DDBANKS=1
 DTBANKS=1
@@ -26,8 +26,8 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
-TOP_MODULE:=mkdmem
+TOP_MODULE:=mkdmem_tb
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
-TOP_DIR:= ../
-TOP_FILE:= dmem.bsv
+TOP_DIR:= ./
+TOP_FILE:= dmem_tb.bsv
 
