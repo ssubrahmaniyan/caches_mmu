@@ -43,8 +43,8 @@ override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCK
 								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH) -D dcache_ecc_cause=$(ECC_CAUSE)\
-								-D dcache_ecc_cause_reuse=0
+								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)\
+								-D dcache_onehot=$(ONE_HOT)
 
 verilate_fast := OPT_SLOW="-O3" OPT_FAST="-O3"
 VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x-initial fast \

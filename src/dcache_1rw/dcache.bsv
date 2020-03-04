@@ -253,8 +253,7 @@ package dcache;
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
   module mkdcache#(function Bool isNonCacheable(Bit#(paddr) addr, Bool cacheable),
-                  parameter Integer alg, parameter Bit#(32) id
-                `ifdef dcache_ecc ,parameter Bool reuse_ecc_cause `endif )
+                  parameter Integer alg, parameter Bit#(32) id, parameter Bool param_onehot)
                   (Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, fbsize,
                                 esize, dbanks, tbanks, buswidth
                             `ifdef dcache_ecc ,ecc_size, ebanks `endif ))
@@ -648,19 +647,17 @@ package dcache;
     'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
-    Ifc_mem_config1rw#(sets, tagbits, tbanks) bram_tag [v_ways];
+    Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, tbanks)) bram_tag 
+                            <- replicateM(mkmem_config1rw(False));
 
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
-    Ifc_mem_config1rw#(sets, linewidth, dbanks) bram_data[v_ways];
-    for (Integer i = 0; i<v_ways; i = i + 1) begin
-      bram_tag[i]  <- mkmem_config1rw(False);
-      bram_data[i] <- mkmem_config1rw(False);
-    end
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, dbanks)) bram_data
+                            <- replicateM(mkmem_config1rw(False));
+
     Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
   `ifdef dcache_ecc
-    Ifc_mem_config1rw#(sets, paritysize_per_line, ebanks) bram_ecc [v_ways]; // ecc array
-    for (Integer i = 0; i<v_ways; i = i + 1)
-      bram_ecc[i]  <- mkmem_config1rw(False);
+    Vector#(ways, Ifc_mem_config1rw#(sets, paritysize_per_line, ebanks)) bram_ecc // ecc array
+                            <- replicateM(mkmem_config1rw(False));
   `endif
 
     // --------------------- Store buffer related structures ----------------------------------//
@@ -786,6 +783,7 @@ dataline ))
 
       Vector#(ways, Bit#(respwidth)) dataword;
       Vector#(ways, Bit#(linewidth)) lines;
+      Bit#(respwidth) response_word = ?;
     `ifdef dcache_ecc
       Vector#(ways, Bit#(paritysize_per_response)) parity;
       Vector#(ways, Bit#(paritysize_per_line)) paritylines;
@@ -803,22 +801,26 @@ dataline ))
                                                         fromInteger(v_paritysize_per_response)));
       `endif
       end
-
-      Bit#(respwidth) response_word = ?;
-      for (Integer i = 0; i< v_ways; i = i + 1) begin
-        if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
-          hit_tag[i] = 1;
-          response_word = dataword[i];
-        `ifdef dcache_ecc
-          response_parity = parity[i];
-        `endif
+      if( !param_onehot ) begin
+        for (Integer i = 0; i< v_ways; i = i + 1) begin
+          if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
+            hit_tag[i] = 1;
+            response_word = dataword[i];
+          `ifdef dcache_ecc
+            response_parity = parity[i];
+          `endif
+          end
         end
       end
-//      for (Integer i = 0; i< v_ways; i = i + 1) begin
-//        hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
-//      end
-//      Bit#(respwidth) response_word=select(dataword, unpack(hit_tag));
-//      Bit#(paritysize_per_response) response_parity=select(parity,unpack(hit_tag));
+      else begin
+        for (Integer i = 0; i< v_ways; i = i + 1) begin
+          hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
+        end
+        response_word=select(dataword, unpack(hit_tag));
+      `ifdef dcache_ecc
+        response_parity=select(parity,unpack(hit_tag));
+      `endif
+      end
 
     `ifdef dcache_ecc
       Bit#(ecc_size) lv_ecc_word;
@@ -831,7 +833,6 @@ dataline ))
         // generate a trap only if there is no access fault from tlb/vaddr and there is a hit in the
         // RAM
         if (ecc_trap && !lv_access_fault && |hit_tag == 1) begin
-          lv_cause = reuse_ecc_cause? lv_cause: `dcache_ecc_cause ;
           lv_access_fault = True;
         end
         else
@@ -907,24 +908,31 @@ dataline ))
       Bit#(respwidth) lv_response_word = ?;
       Bit#(1) lv_response_err = 0;
       Bit#(TDiv#(linewidth,8)) lv_fb_enable = ?;
-      for (Integer i = 0; i<v_fbsize; i = i + 1) begin
-        if((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i])begin
-          lv_hit[i] = 1;
-          lv_response_err = v_fb_err[i];
-          lv_response_word = lv_respwords[i];
-          lv_fb_enable = v_fb_enables[i];
-        `ifdef dcache_ecc
-          lv_response_parity = lv_parity[i];
-        `endif
+
+      if( !param_onehot ) begin
+        for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+          if((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i])begin
+            lv_hit[i] = 1;
+            lv_response_err = v_fb_err[i];
+            lv_response_word = lv_respwords[i];
+            lv_fb_enable = v_fb_enables[i];
+          `ifdef dcache_ecc
+            lv_response_parity = lv_parity[i];
+          `endif
+          end
         end
       end
-      //for (Integer i = 0; i<v_fbsize; i = i + 1) begin
-      //  lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
-      //end
-      //Bit#(respwidth) lv_response_word = select(lv_respwords, unpack(lv_hit));
-      //Bit#(paritysize_per_response) lv_response_parity = selec(lv_parity,unpack(lv_hit));
-      //Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
-      //Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
+      else begin
+        for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+          lv_hit[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_valid[i]);
+        end
+        lv_response_word = select(lv_respwords, unpack(lv_hit));
+        lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
+        lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
+      `ifdef dcache_ecc
+        lv_response_parity = select(lv_parity,unpack(lv_hit));
+      `endif
+      end
     `ifdef dcache_ecc
       `logLevel( dcache, 2, $format("[%2d]DCACHE: FB: lv_parity:%h lv_response_word:%h", id,
                                                             lv_response_parity, lv_response_word))
@@ -940,7 +948,6 @@ dataline ))
         // generate a trap only if there is no access fault in the fb, it is not a NC request and it
         // is a hit in the FB
         if (ecc_trap && !unpack(lv_response_err) && !lv_io_req && |lv_hit == 1) begin
-          lv_cause = reuse_ecc_cause ? lv_cause: `dcache_ecc_cause ;
           lv_response_err = 1;
         end
         else
