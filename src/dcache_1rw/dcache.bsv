@@ -290,7 +290,8 @@ package dcache;
           Mul#(TMul#(wordsize, 8), z__, linewidth),
           Mul#(aa__, 8, linewidth),
           Add#(ab__, TLog#(fbsize), TLog#(TAdd#(1, fbsize))),
-           Div#(linewidth, 8, aa__),
+          Div#(linewidth, 8, aa__),
+          Add#(ac__, wordbits, paddr),
         `ifdef ASSERT
           Add#(1, n__, TLog#(TAdd#(1, ways))),
         `endif
@@ -325,14 +326,15 @@ package dcache;
           Mul#(ecc_per_busresp, paritysize, paritysize_per_busresp),
 
           // required by bsc
-          Add#(ac__, ecc_size, respwidth),
-          Mul#(TDiv#(paritysize_per_line, ebanks), ebanks, paritysize_per_line),
-          Add#(ad__, TDiv#(paritysize_per_line, ebanks), paritysize_per_line),
-          Add#(ae__, paritysize_per_response, paritysize_per_line),
+          Add#(ad__, paritysize, paritysize_per_response),
+          Add#(ae__, paritysize, paritysize_per_busresp),
           Add#(af__, paritysize, paritysize_per_line),
-          Add#(ag__, paritysize, paritysize_per_response),
-          Mul#(paritysize_per_busresp, ah__, paritysize_per_line),
-          Add#(ai__, paritysize, paritysize_per_busresp)
+          Add#(ag__, TLog#(paritysize_per_line), TAdd#(1, paritysize)),
+          Add#(ah__, paritysize_per_response, paritysize_per_line),
+          Add#(ai__, TDiv#(paritysize_per_line, ebanks), paritysize_per_line),
+          Mul#(paritysize_per_busresp, aj__, paritysize_per_line),
+          Add#(ak__, ecc_size, respwidth),
+          Mul#(TDiv#(paritysize_per_line, ebanks), ebanks, paritysize_per_line)
 
         `endif
 
@@ -377,6 +379,15 @@ package dcache;
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
       return write_enable;
     endfunction
+  `ifdef dcache_ecc
+    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
+    request made by the core */
+    function Bit#(paritysize_per_line) fn_init_ecc_mask(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
+      Bit#(paritysize) mask = '1;
+      Bit#(paritysize_per_line) line_mask = zeroExtend(mask) << ({4'b0,word_index}*fromInteger(v_paritysize));
+      return line_mask;
+    endfunction
+  `endif
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
     request made by the core */
@@ -659,7 +670,11 @@ package dcache;
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
-
+  `ifdef dcache_ecc
+    /*doc:wire: */
+    Wire#(Bit#(paritysize_per_line)) wr_ecc_store_mask <- mkDWire(0);
+    Wire#(Bit#(paritysize_per_line)) wr_ecc_store_data <- mkDWire(0);
+  `endif
     // --------------------------- Rule operations ------------------------------------- //
 
     /*doc:rule: */
@@ -762,7 +777,10 @@ dataline ))
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
     `endif
-      Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset={phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {phyaddr[v_blockbits+v_wordbits-1:v_wordbits],
+                                                        zeros};
+      Bit#(wordbits) word_offset = truncate(phyaddr);
       Bit#(tagbits) request_tag = phyaddr[v_paddr-1:v_paddr-v_tagbits];
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
@@ -821,6 +839,7 @@ dataline ))
       end
     `endif
 
+      response_word = response_word >> {word_offset,3'b0};
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
                                           cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
@@ -864,8 +883,10 @@ dataline ))
       Bit#(blockbits) word_index = truncate(phyaddr >> v_wordbits);
       let required_enable = fn_enable(word_index);
       Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
-      Bit#(TAdd#(3,TAdd#(wordbits,blockbits)))block_offset =
-                                                      {phyaddr[v_blockbits+v_wordbits-1:0],3'b0};
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(TAdd#(TLog#(respwidth), blockbits)) block_offset = {phyaddr[v_blockbits+v_wordbits-1:v_wordbits],
+                                                        zeros};
+      Bit#(wordbits) word_offset = truncate(phyaddr);
     `ifdef dcache_ecc
       Vector#(fbsize, Bit#(paritysize_per_response)) lv_parity;
       Bit#(paritysize_per_response) lv_response_parity = ?;
@@ -905,6 +926,8 @@ dataline ))
       //Bit#(1) lv_response_err = select(readVReg(v_fb_err),unpack(lv_hit));
       //Bit#(TDiv#(linewidth,8)) lv_fb_enable = select(readVReg(v_fb_enables),unpack(lv_hit));
     `ifdef dcache_ecc
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: FB: lv_parity:%h lv_response_word:%h", id,
+                                                            lv_response_parity, lv_response_word))
       Bit#(ecc_size) lv_ecc_word;
       Bit#(paritysize) lv_ecc_enc;
       for (Integer i = 0; i< v_ecc_per_response; i = i + 1) begin
@@ -912,6 +935,8 @@ dataline ))
         lv_ecc_enc = lv_response_parity[i*v_paritysize+v_paritysize-1:i*v_paritysize];
         let {corrected_word, decoded_parity, ecc_trap} = ecc_hamming_decode_correct(lv_ecc_word,
                                                               lv_ecc_enc,0);
+        `logLevel( dcache, 2, $format("[%2d]DCACHE: FB: ECCWORD:%h ECCPARITY:%h DECPARITY:%h", id, 
+                lv_ecc_word, lv_ecc_enc, decoded_parity))
         // generate a trap only if there is no access fault in the fb, it is not a NC request and it
         // is a hit in the FB
         if (ecc_trap && !unpack(lv_response_err) && !lv_io_req && |lv_hit == 1) begin
@@ -922,16 +947,18 @@ dataline ))
           lv_response_word[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size] = corrected_word;
       end
     `endif
+      lv_response_word = lv_response_word >> {word_offset,3'b0};
       wr_fb_hitindex <= truncate(pack(countZerosLSB(lv_hit)));
       let lv_response = DMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           cause: lv_cause, epochs: req.epochs};
-      `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: processing Req: ",id,fshow(req)))
+      `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: block_offset:%d processing Req: ", id,
+                                    block_offset, fshow(req)))
       if(lv_io_req && req.access != 0) begin
         wr_fb_state <= Hit;
         `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Detected NC Write",id))
       end
       else if(|lv_hit == 1 )begin
-        `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Hit in Line for Addr:%h",id,phyaddr))
+        `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Hit in Line:%b for Addr:%h",id, lv_hit, phyaddr))
         if((required_enable & lv_fb_enable) !=0)begin
           wr_fb_state <= Hit;
           wr_fb_response <= lv_response;
@@ -969,6 +996,7 @@ dataline ))
       Bit#(paddr) phyaddr = truncate(req.address);
     `endif
       Bit#(setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+      Bit#(wordbits) word_offset = truncate(phyaddr);
       DMem_core_response#(respwidth,esize) lv_response;
 
       let {storemask, storedata} <- storebuffer.mav_check_sb_hit(phyaddr);
@@ -1014,7 +1042,6 @@ dataline ))
       end
 
       lv_response.word = (storemask & storedata) | (~storemask & lv_response.word);
-
       // capture the sign bit of the response to the core
       Bit#(1) lv_sign =case(req.size[1:0])
           'b00: lv_response.word[7];
@@ -1104,14 +1131,14 @@ dataline ))
       Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index= truncate(phyaddr>>lv_busbits);
       let lv_io_req = isNonCacheable(phyaddr, wr_cache_enable);
       let burst_len = lv_io_req?0:(v_blocksize/valueOf(TDiv#(buswidth,respwidth)))-1;
-      let burst_size = lv_io_req?v_wordbits:valueOf(TLog#(TDiv#(buswidth,8)));
+      Bit#(3) burst_size = lv_io_req?zeroExtend(req.size[1:0]):fromInteger(valueOf(TLog#(TDiv#(buswidth,8))));
       let shift_amount = valueOf(TLog#(TDiv#(buswidth,8)));
       // allocate a pending req which points to the new fb entry that is allotted.
        // align the address to be line-address aligned
       phyaddr= lv_io_req?phyaddr:(phyaddr>>shift_amount)<<shift_amount;
       ff_read_mem_request.enq(DCache_mem_readreq{  address   : phyaddr,
                                                   burst_len  : fromInteger(burst_len),
-                                                  burst_size : fromInteger(burst_size),
+                                                  burst_size : burst_size,
                                                   io: lv_io_req
                                               });
       rg_handling_miss <= True;
@@ -1131,12 +1158,15 @@ dataline ))
           v_fb_dirty[rg_fbhead] <= 0;
           v_fb_enables[rg_fbhead] <= 0;
           v_fb_err[rg_fbhead] <= 0;
+        `ifdef dcache_ecc
+          v_fb_ecc[rg_fbhead] <= 0;
+        `endif
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
       let pend_req = Pending_req{init_enable:fn_init_enable(word_index),
                                 io_request: lv_io_req, fbindex: lv_alotted_fb
-                                `ifdef dcache_ecc ,init_ecc_enable: 'b11111111 `endif }; // TODO
+                              `ifdef dcache_ecc ,init_ecc_enable: fn_init_ecc_mask(word_index) `endif }; // TODO
       ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
@@ -1168,7 +1198,7 @@ dataline ))
     rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Processing:",id,fshow(pending_req)))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FILL:  Processing:",id,fshow(pending_req)))
       ff_read_mem_response.deq;
 
       let fbindex = pending_req.fbindex;
@@ -1198,11 +1228,20 @@ dataline ))
       end
   
       let lv_fb_ecc = v_fb_ecc[fbindex]&~lv_ecc_mask| lv_ecc_mask & duplicate(ecc_mem_parity);
+      lv_fb_ecc = lv_fb_ecc & ~wr_ecc_store_mask | wr_ecc_store_mask & wr_ecc_store_data;
       v_fb_ecc[fbindex] <= lv_fb_ecc;
+      Bit#(TAdd#(1,paritysize)) rotate_amount_ecc= fromInteger(v_paritysize);
+      rg_temp_ecc_mask <= rotateBitsBy(lv_ecc_mask,unpack(truncate(rotate_amount_ecc)));
+
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: FILL:  ecc_mask:%h parity:%h v_fb_ecc:%h", id, lv_ecc_mask,
+                    ecc_mem_parity, lv_fb_ecc))
+      `logLevel( dcache , 2, $format("[%2d]DCACHE: FILL: ecc_store_mask:%h ecc_store_data:%h",id,
+                                      wr_ecc_store_mask, wr_ecc_store_data))
+
     `endif
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: current_enable:%h store_en:%h",id,
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FILL: current_enable:%h store_en:%h",id,
                                                               lv_current_enable,wr_store_be))
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Response from Memory:",id,fshow(response)))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FILL: Response from Memory:",id,fshow(response)))
       if(response.last)
         ff_pending_req.deq;
     endrule
@@ -1284,6 +1323,13 @@ dataline ))
           `endif
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set_index:%d tag:%h\
  data:%h", id,lv_evict_address,set_index,tag,data))
+          /* Bit#(paritysize_per_line) lv_fb_parity=0;
+          for (Integer i = 0; i<v_ecc_per_line; i = i + 1) begin
+            Bit#(ecc_size) lv_inp = lv_fb_linedata[i*v_ecc_size+v_ecc_size-1:v_ecc_size*i];
+            Bit#(paritysize) lv_temp = ecc_hamming_encode(lv_inp);
+            lv_fb_parity[i*v_paritysize+v_paritysize-1:v_paritysize*i] = lv_temp;
+          end
+          v_fb_ecc[fbindex] <= lv_fb_parity; */
             ff_write_mem_request.enq(DCache_mem_writereq{address:lv_evict_address,
                                                   burst_len:fromInteger(valueOf(blocksize)-1),
                                                   burst_size:fromInteger(valueOf(TLog#(wordsize))),
@@ -1426,7 +1472,9 @@ dataline ))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: BE:%h blockoffset:%d",id,mask,block_offset))
     `ifdef dcache_ecc
-      Bit#(respwidth) lv_fb_word = truncate(v_fb_data[sb_entry.fbindex] >> {block_offset,3'd0})  ;
+      Bit#(blockbits) lv_boffset = sb_entry.addr[v_blockbits + v_wordbits - 1:v_wordbits];
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(respwidth) lv_fb_word = truncate(v_fb_data[sb_entry.fbindex] >> {lv_boffset,zeros})  ;
       Bit#(respwidth) masked_data = lv_fb_word&~sb_entry.mask | sb_entry.data&sb_entry.mask;
       Bit#(paritysize_per_response) temp_mask_ecc = '1;
       Bit#(ecc_size) ecc_inp = 0;
@@ -1457,6 +1505,10 @@ dataline ))
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Store to Pending line",id))
             wr_store_be<= mask;
             wr_store_data <= duplicate(sb_entry.data);
+          `ifdef dcache_ecc
+            wr_ecc_store_mask <= mask_ecc;
+            wr_ecc_store_data <= duplicate(ecc_parity);
+          `endif
           end
           else begin
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Store to Available line",id))

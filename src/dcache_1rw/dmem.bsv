@@ -57,7 +57,7 @@ package dmem;
                           `ifdef dcache_ecc ,`vaddr, 1 `endif ));
     let ifc();
   `ifdef dcache
-    mkdcache#(isIO,`drepl,id, unpack(`dcache_ecc_cause_reuse)) _temp(ifc);
+    mkdcache#(isIO,`drepl,id `ifdef dcache_ecc , unpack(`dcache_ecc_cause_reuse) `endif ) _temp(ifc);
   `else
     mknull_dcache _temp(ifc);
   `endif
