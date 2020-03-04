@@ -784,12 +784,14 @@ dataline ))
       Vector#(ways, Bit#(respwidth)) dataword;
       Vector#(ways, Bit#(linewidth)) lines;
       Bit#(respwidth) response_word = ?;
+      Bit#(linewidth) hit_line = ?;
     `ifdef dcache_ecc
       Vector#(ways, Bit#(paritysize_per_response)) parity;
       Vector#(ways, Bit#(paritysize_per_line)) paritylines;
       Bit#(paritysize_per_response) response_parity = ?;
       Bit#(TAdd#(TLog#(paritysize_per_response),blockbits)) block_offset_ecc =
                                                 phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      Bit#(paritysize_per_line) hit_parity_line = ?;
     `endif
       Bit#(ways) hit_tag =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -806,8 +808,10 @@ dataline ))
           if(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag) begin
             hit_tag[i] = 1;
             response_word = dataword[i];
+            hit_line = lines[i];
           `ifdef dcache_ecc
             response_parity = parity[i];
+            hit_parity_line = paritylines[i];
           `endif
           end
         end
@@ -817,8 +821,10 @@ dataline ))
           hit_tag[i] = pack(v_reg_valid[set_index][i] == 1 && bram_tag[i].read_response == request_tag);
         end
         response_word=select(dataword, unpack(hit_tag));
+        hit_line = select(lines, unpack(hit_tag));
       `ifdef dcache_ecc
         response_parity=select(parity,unpack(hit_tag));
+        hit_parity_line = select(paritylines, unpack(hit_tag));
       `endif
       end
 
@@ -845,9 +851,9 @@ dataline ))
                                           cause: lv_cause, epochs: req.epochs};
       wr_ram_response <= lv_response;
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_tag)));
-      wr_ram_hitline<=select(lines,unpack(hit_tag));
+      wr_ram_hitline<= hit_line;
     `ifdef dcache_ecc
-      wr_ram_parityline <= select(paritylines,unpack(hit_tag));
+      wr_ram_parityline <= hit_parity_line;
     `endif
 
       if(lv_access_fault ) begin
