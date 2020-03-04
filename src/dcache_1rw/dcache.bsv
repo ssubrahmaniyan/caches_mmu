@@ -1476,15 +1476,14 @@ dataline ))
       Bit#(TLog#(respwidth)) zeros = 0;
       Bit#(respwidth) lv_fb_word = truncate(v_fb_data[sb_entry.fbindex] >> {lv_boffset,zeros})  ;
       Bit#(respwidth) masked_data = lv_fb_word&~sb_entry.mask | sb_entry.data&sb_entry.mask;
-      Bit#(paritysize_per_response) temp_mask_ecc = '1;
-      Bit#(ecc_size) ecc_inp = 0;
-      Bit#(paritysize) lv_temp_parity = 0;
       Bit#(paritysize_per_response) ecc_parity = 0;
       for (Integer i=0; i < v_ecc_per_response; i=i+1) begin
-        ecc_inp = masked_data[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size]; // bug fix
-        lv_temp_parity = ecc_hamming_encode(ecc_inp);
+        Bit#(ecc_size) ecc_inp = masked_data[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size]; // bug fix
+        Bit#(paritysize) lv_temp_parity = ecc_hamming_encode(ecc_inp);
         ecc_parity[i * v_paritysize+ v_paritysize -1: i*v_paritysize] = lv_temp_parity;
       end
+      // -- generate the masks for the parity updates in the parity-line
+      Bit#(paritysize_per_response) temp_mask_ecc = '1;
       Bit#(paritysize_per_line) mask_ecc = zeroExtend(temp_mask_ecc);
       Bit#(TAdd#(TLog#(paritysize_per_response),blockbits)) block_offset_ecc =
                                                 sb_entry.addr[v_blockbits+v_wordbits-1:v_wordbits];
