@@ -334,8 +334,11 @@ package dcache;
           Mul#(paritysize_per_busresp, aj__, paritysize_per_line),
           Add#(ak__, ecc_size, respwidth),
           Mul#(TDiv#(paritysize_per_line, ebanks), ebanks, paritysize_per_line),
+          Add#(2, TLog#(tagbits), tag_paritysize),
 
-          Add#(2, TLog#(tagbits), tag_paritysize)
+          // new stuff
+          Add#(al__, 2, TMul#(2, dbanks)),
+          Add#(am__, 2, TMul#(2, tbanks))
         `endif
 
     );
@@ -651,6 +654,15 @@ package dcache;
     /*doc:reg: This is an array of the dirty bits. Each entry corresponds to a set and contains
     'way' number of bits in each entry*/
     Vector#(sets, Reg#(Bit#(ways))) v_reg_dirty <- replicateM(mkReg(0));
+  `ifdef dcache_ecc
+    /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
+    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, tagbits, tbanks)) bram_tag 
+                            <- replicateM(mkmem_config1rw_ecc(False));
+
+    /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
+    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, dbanks)) bram_data
+                            <- replicateM(mkmem_config1rw_ecc(False));
+  `else
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, tbanks)) bram_tag 
                             <- replicateM(mkmem_config1rw(False));
@@ -658,14 +670,8 @@ package dcache;
     /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, dbanks)) bram_data
                             <- replicateM(mkmem_config1rw(False));
-
-    Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
-  `ifdef dcache_ecc
-    Vector#(ways, Ifc_mem_config1rw#(sets, paritysize_per_line, ebanks)) bram_ecc_data // ecc array
-                            <- replicateM(mkmem_config1rw(False));
-    Vector#(ways, Ifc_mem_config1rw#(sets, tag_paritysize, 1)) bram_ecc_tag // ecc array
-                            <- replicateM(mkmem_config1rw(False));
   `endif
+    Ifc_replace#(sets,ways) replacement <- mkreplace(alg);
 
     // --------------------- Store buffer related structures ----------------------------------//
     Ifc_storebuffer#(paddr, wordsize, esize, sbsize, fbsize) storebuffer <- mk_storebuffer(id);
@@ -706,8 +712,8 @@ package dcache;
       // done to avoid additional provisos for this combination
       Bit#(TSub#(paddr, TAdd#(tagbits, setbits))) zeros = 'd0;
 
-      Bit#(tagbits) tag = bram_tag[rg_fence_way].read_response;
-      Bit#(linewidth) dataline = bram_data[rg_fence_way].read_response;
+      Bit#(tagbits) tag = truncateLSB(bram_tag[rg_fence_way].read_response);
+      Bit#(linewidth) dataline = truncateLSB(bram_data[rg_fence_way].read_response);
       Bit#(paddr) final_address={tag, rg_fence_set, zeros};
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
@@ -795,29 +801,20 @@ dataline ))
       Vector#(ways, Bit#(tagbits)) tags;
       Vector#(ways, Bit#(respwidth)) datawords;
       Vector#(ways, Bit#(linewidth)) lines;
+    `ifdef dcache_ecc
+      Vector#(ways, Bit#(TMul#(2,dbanks))) ecc_data;
+      Vector#(ways, Bit#(TMul#(2,tbanks))) ecc_tag;
+    `endif
       Bit#(respwidth) response_word = ?;
       Bit#(linewidth) hit_line = ?;
-    `ifdef dcache_ecc
-      Bit#(tagbits) hit_tag = ?;
-      Bit#(tag_paritysize) hit_tag_parity = ?;
-      Vector#(ways, Bit#(paritysize_per_response)) parity;
-      Vector#(ways, Bit#(paritysize_per_line)) paritylines;
-      Vector#(ways, Bit#(tag_paritysize)) tag_parity;
-      Bit#(paritysize_per_response) response_parity = ?;
-      Bit#(TAdd#(TLog#(paritysize_per_response),blockbits)) block_offset_ecc =
-                                                phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
-      Bit#(paritysize_per_line) hit_parity_line = ?;
-    `endif
       Bit#(ways) hit_vector =0;
       for (Integer i = 0; i< v_ways; i = i + 1) begin
-        datawords[i] = truncate(bram_data[i].read_response >> block_offset);
-        lines[i] = bram_data[i].read_response;
-        tags[i] = bram_tag[i].read_response;
+        lines[i] = truncateLSB(bram_data[i].read_response);
+        tags[i] = truncateLSB(bram_tag[i].read_response);
+        datawords[i] = truncate(lines[i] >> block_offset);
       `ifdef dcache_ecc
-        paritylines[i] = bram_ecc_data[i].read_response;
-        parity[i] = truncate(bram_ecc_data[i].read_response >> (block_offset_ecc *
-                                                        fromInteger(v_paritysize_per_response)));
-        tag_parity[i] = bram_ecc_tag[i].read_response;
+        ecc_data[i] = truncate(bram_data[i].read_response);
+        ecc_tag[i] = truncate(bram_tag[i].read_response);
       `endif
       end
       if( !param_onehot ) begin
@@ -826,12 +823,6 @@ dataline ))
             hit_vector[i] = 1;
             response_word = datawords[i];
             hit_line = lines[i];
-          `ifdef dcache_ecc
-            hit_tag = tags[i];
-            response_parity = parity[i];
-            hit_parity_line = paritylines[i];
-            hit_tag_parity = tag_parity[i];
-          `endif
           end
         end
       end
@@ -841,35 +832,7 @@ dataline ))
         end
         response_word=select(datawords, unpack(hit_vector));
         hit_line = select(lines, unpack(hit_vector));
-      `ifdef dcache_ecc
-        response_parity=select(parity,unpack(hit_vector));
-        hit_parity_line = select(paritylines, unpack(hit_vector));
-        hit_tag = select(tags, unpack(hit_vector));
-        hit_tag_parity = select(tag_parity, unpack(hit_vector));
-      `endif
       end
-
-    `ifdef dcache_ecc
-      Bool lv_data_ram_fault = False;
-      for (Integer i = 0; i< v_ecc_per_response; i = i + 1) begin
-        Bit#(ecc_size) lv_ecc_word = response_word[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
-        Bit#(paritysize) lv_ecc_enc = response_parity[i*v_paritysize+v_paritysize-1:i*v_paritysize];
-        let {corrected_word, decoded_parity, ecc_trap} = ecc_hamming_decode_correct(lv_ecc_word,
-                                                              lv_ecc_enc,0);
-        lv_data_ram_fault = lv_data_ram_fault || ecc_trap;
-        response_word[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size] = corrected_word;
-      end
-      let {tag_corrected, tag_dec_p, tag_ecc_trap} = ecc_hamming_decode_correct(hit_tag,
-                                                                  hit_tag_parity, 0);
-
-      // generate a trap only if there is no access fault from tlb/vaddr and there is a hit in the
-      // RAM
-      if ((lv_data_ram_fault||tag_ecc_trap) && !lv_access_fault && |hit_vector == 1) begin
-          lv_access_fault = True;
-      end
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM: tag:%h tagparity:%h trap:%b :%h",id, hit_tag,
-                      hit_tag_parity, tag_ecc_trap, ecc_hamming_encode(hit_tag)))
-    `endif
 
       response_word = response_word >> {word_offset,3'b0};
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
@@ -878,8 +841,8 @@ dataline ))
       wr_ram_hitway<=truncate(pack(countZerosLSB(hit_vector)));
       wr_ram_hitline<= hit_line;
     `ifdef dcache_ecc
-      wr_ram_parityline <= hit_parity_line;
-      wr_ram_paritytag <= hit_tag_parity;
+      wr_ram_parityline <= ?;//hit_parity_line;
+      wr_ram_paritytag <= ?;//hit_tag_parity;
     `endif
 
       if(lv_access_fault ) begin
@@ -1337,10 +1300,6 @@ dataline ))
           // out and then send to the next level
           bram_tag[waynum].request(0,set_index,writetag);
           bram_data[waynum].request(0,set_index,writedata);
-        `ifdef dcache_ecc
-          bram_ecc_data[waynum].request(0,set_index,write_ecc_data);
-          bram_ecc_tag[waynum].request(0,set_index,write_ecc_tag);
-        `endif
           rg_release_readphase <= True;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
@@ -1350,12 +1309,8 @@ dataline ))
           // enter here if either the entry being replaced is not dirty or if its dirty then it has
           // been read out of the ram in the previous cycle and is ready for eviction
           Bit#(TSub#(paddr,TAdd#(tagbits,setbits))) zeros = 0;
-          let tag = bram_tag[waynum].read_response;
-          let data = bram_data[waynum].read_response;
-        `ifdef dcache_ecc
-          let parity_data = bram_ecc_data[waynum].read_response;
-          let parity_tag = bram_ecc_tag[waynum].read_response;
-        `endif
+          Bit#(tagbits) tag = truncateLSB(bram_tag[waynum].read_response);
+          Bit#(linewidth) data = truncateLSB(bram_data[waynum].read_response);
           Bit#(paddr) lv_evict_address = {tag,set_index,zeros};
           Bit#(paddr) lv_release_address = {writetag,set_index,zeros};
           if(rg_release_readphase) begin
@@ -1375,7 +1330,7 @@ dataline ))
             ff_write_mem_request.enq(DCache_mem_writereq{address:lv_evict_address,
                                                   burst_len:fromInteger(valueOf(blocksize)-1),
                                                   burst_size:fromInteger(valueOf(TLog#(wordsize))),
-                                                  data: data,
+                                                  data: truncateLSB(data),
                                                   io: False
                                               });
           `ifdef perfmonitors
@@ -1390,12 +1345,6 @@ dataline ))
           v_reg_dirty[set_index][waynum]<=v_fb_dirty[rg_fbtail];
           bram_tag[waynum].request(1,set_index,writetag);
           bram_data[waynum].request(1,set_index,writedata);
-        `ifdef dcache_ecc
-          bram_ecc_data[waynum].request(1,set_index,write_ecc_data);
-          bram_ecc_tag[waynum].request(1,set_index,write_ecc_tag);
-          `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: TAG:%h TAGPARITY:%h",id,
-          writetag, write_ecc_tag))
-        `endif
           if(rg_fbtail == fromInteger(v_fbsize-1))
             rg_fbtail <=0;
           else
@@ -1438,10 +1387,6 @@ dataline ))
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         bram_tag[i].request(0,rg_recent_req,writetag);
         bram_data[i].request(0,rg_recent_req,writedata);
-      `ifdef dcache_ecc
-        bram_ecc_data[i].request(0,rg_recent_req,write_ecc_data);
-        bram_ecc_tag[i].request(0,rg_recent_req,write_ecc_tag);
-      `endif
       end
       rg_performing_replay <= False;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
@@ -1468,10 +1413,6 @@ dataline ))
         for(Integer i=0;i<v_ways;i=i+1)begin
           bram_data[i].request(0,set_index,writedata);
           bram_tag[i].request(0,set_index,writetag);
-        `ifdef dcache_ecc
-          bram_ecc_data[i].request(0,set_index,write_ecc_data);
-          bram_ecc_tag[i].request(1,set_index,write_ecc_tag);
-        `endif
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
