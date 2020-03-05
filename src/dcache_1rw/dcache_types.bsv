@@ -100,4 +100,10 @@ package dcache_types;
 // --------------------------- Common Structs ---------------------------------------------------//
   typedef enum {Hit=1, Miss=0, None=2} RespState deriving(Eq,Bits,FShow);
 // -------------------------------------------------------------------------------------------//
+`ifdef dcache_ecc
+  typedef struct{
+    Bit#(a) address;
+    Bit#(b) banks;
+  } ECC_fault_log#(numeric type a, numeric type b) deriving(Bits, FShow, Eq);
+`endif
 endpackage

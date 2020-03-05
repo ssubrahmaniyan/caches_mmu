@@ -218,6 +218,12 @@ package dcache;
     method Bool mv_cacheable_store;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
+  `ifdef dcache_ecc
+    method Maybe#(ECC_fault_log#(paddr, dbanks)) mv_sec_data;
+    method Maybe#(ECC_fault_log#(paddr, tbanks)) mv_sec_tag;
+    method Maybe#(ECC_fault_log#(paddr, dbanks)) mv_ded_data;
+    method Maybe#(ECC_fault_log#(paddr, tbanks)) mv_ded_tag;
+  `endif
   endinterface
 
 
@@ -295,13 +301,17 @@ package dcache;
           Add#(s__, wordbits, TMul#(wordbits, 2)),
           Add#(1, t__, sbsize),
           Mul#(16, v__, respwidth),
-          Mul#(32, w__, respwidth)
+          Mul#(32, w__, respwidth),
+          Add#(TLog#(sets), TSub#(paddr, TAdd#(tagbits, setbits)), _b)
 
         `ifdef dcache_ecc
           // required by bsc
           ,
           Add#(al__, 2, TMul#(2, dbanks)),
-          Add#(am__, 2, TMul#(2, tbanks))
+          Add#(am__, 2, TMul#(2, tbanks)),
+          Add#(tbanks, 0, 1)
+//          Add#(blocksize, 0, dbanks),
+//          Div#(linewidth, dbanks, respwidth)
         `endif
 
     );
@@ -504,14 +514,11 @@ package dcache;
     /*doc:reg: This register when true indicates that a there exists alteast one dirty line within
      the data cache */
     Reg#(Bool) rg_globaldirty <- mkReg(False);
-    /*doc:reg:*/
-    Reg#(Bool) rg_fenceinit <- mkReg(True);
     // ------------------------------------------------------------------------------------------//
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
-
     /*doc:wire: this wire indicates if there was a fault in the address or during translation*/
     Wire#(Bool) wr_fault <- mkDWire(False);
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
@@ -566,7 +573,13 @@ package dcache;
     /*doc:wire: wire to pulse on  hit in fill-buffer for write ops*/
     Wire#(Bit#(1)) wr_total_write_fb_hits <- mkDWire(0);
   `endif
-
+  `ifdef dcache_ecc
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_fault_log#(paddr,dbanks))) wr_sec_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_fault_log#(paddr,dbanks))) wr_ded_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_fault_log#(paddr,tbanks))) wr_sec_tag_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_fault_log#(paddr,tbanks))) wr_ded_tag_log <- mkDWire(tagged Invalid);
+  `endif
 
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
@@ -585,11 +598,9 @@ package dcache;
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, dbanks)) bram_data
                             <- replicateM(mkmem_config1rw_ecc(False));
   `else
-    /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, tbanks)) bram_tag 
                             <- replicateM(mkmem_config1rw(False));
 
-    /*doc:ram: This the data array which is dual ported has 'way' number of rams*/
     Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, dbanks)) bram_data
                             <- replicateM(mkmem_config1rw(False));
   `endif
@@ -597,15 +608,15 @@ package dcache;
 
     // --------------------- Store buffer related structures ----------------------------------//
     Ifc_storebuffer#(paddr, wordsize, esize, sbsize, fbsize) storebuffer <- mk_storebuffer(id);
+    /*doc:wire: holds the byte-enables for the store operation being performed*/
     Wire#(Bit#(TDiv#(linewidth,8))) wr_store_be <- mkDWire(0);
+    /*doc:wire: holds the data to be updated in the fill-buffer*/
     Wire#(Bit#(linewidth)) wr_store_data <- mkDWire(0);
     Bool sb_empty = storebuffer.mv_sb_empty;
     Bool sb_full = storebuffer.mv_sb_full;
+    /*doc:wire: when true indicates that a store-buffer entry is being allocated. This is used to
+     ensure that a release of the fill-buffer does not happen.*/
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
-
-    // ---------------------------- Configuration Registers -----------------------------//
-    
-
     // --------------------------- Rule operations ------------------------------------- //
 
     /*doc:rule: */
@@ -719,10 +730,11 @@ dataline ))
       Vector#(ways, Bit#(respwidth)) datawords;
       Vector#(ways, Bit#(linewidth)) lines;
     `ifdef dcache_ecc
-      Vector#(ways, Bit#(dbanks)) ecc_data_ded_fault;
       Vector#(ways, Bit#(tbanks)) ecc_tag_ded_fault;
-      Vector#(ways, Bit#(dbanks)) ecc_data_sec_fault;
       Vector#(ways, Bit#(tbanks)) ecc_tag_sec_fault;
+      Bit#(ways) data_bank_ded_fault = 0;
+      Bit#(ways) data_bank_sec_fault = 0;
+      Bit#(TLog#(dbanks)) bank_index = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
     `endif
       Bit#(respwidth) response_word = ?;
       Bit#(linewidth) hit_line = ?;
@@ -732,16 +744,18 @@ dataline ))
         tags[i] = truncateLSB(bram_tag[i].read_response);
         datawords[i] = truncate(lines[i] >> block_offset);
       `ifdef dcache_ecc
-        ecc_data_ded_fault[i] = truncate(bram_data[i].read_response);
-        ecc_data_sec_fault[i] = truncate(bram_data[i].read_response >> valueOf(dbanks));
+        Bit#(dbanks) ecc_data_ded_fault = truncate(bram_data[i].read_response);
+        Bit#(dbanks) ecc_data_sec_fault = truncate(bram_data[i].read_response >> valueOf(dbanks));
         ecc_tag_ded_fault[i] = truncate(bram_tag[i].read_response);
         ecc_tag_sec_fault[i] = truncate(bram_tag[i].read_response >> valueOf(tbanks));
+        data_bank_ded_fault[i] = ecc_data_ded_fault[i][bank_index];
+        data_bank_sec_fault[i] = ecc_data_sec_fault[i][bank_index];
       `endif
       end
       if( !param_onehot ) begin
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           if(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag 
-          `ifdef dcache_ecc && (ecc_data_ded_fault[i] == 0 && ecc_tag_ded_fault[i] == 0) `endif ) begin
+          `ifdef dcache_ecc && (ecc_tag_ded_fault[i] == 0) `endif ) begin
             hit_vector[i] = 1;
             response_word = datawords[i];
             hit_line = lines[i];
@@ -751,7 +765,7 @@ dataline ))
       else begin
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           hit_vector[i] = pack(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag
-          `ifdef dcache_ecc && (ecc_data_ded_fault[i] == 0 && ecc_tag_ded_fault[i] == 0) `endif );
+          `ifdef dcache_ecc && (ecc_tag_ded_fault[i] == 0) `endif );
         end
         response_word=select(datawords, unpack(hit_vector));
         hit_line = select(lines, unpack(hit_vector));
@@ -1349,6 +1363,12 @@ dataline ))
 
     endmethod
     method mv_commit_store_ready = ff_write_mem_request.notFull;
+  `ifdef dcache_ecc
+    method  mv_sec_data = wr_sec_data_log;
+    method  mv_sec_tag = wr_sec_tag_log;
+    method  mv_ded_data = wr_ded_data_log;
+    method  mv_ded_tag = wr_ded_tag_log;
+  `endif
   endmodule
 endpackage
 
