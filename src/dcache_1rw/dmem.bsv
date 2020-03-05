@@ -53,8 +53,7 @@ package dmem;
 
   (*synthesize*)
   module mkdcache_inst#(parameter Bit#(32) id)(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
-                              `dsbsize, `dfbsize, `desize ,`ddbanks, `dtbanks, `dbuswidth 
-                          `ifdef dcache_ecc ,`vaddr, 1 `endif ));
+                        `dsbsize, `dfbsize, `desize ,`ddbanks, `dtbanks, `dbuswidth ));
     let ifc();
   `ifdef dcache
     mkdcache#(isIO,`drepl,id, unpack(`dcache_onehot)) _temp(ifc);

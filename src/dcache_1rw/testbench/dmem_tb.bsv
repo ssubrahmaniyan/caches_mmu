@@ -74,13 +74,11 @@ package dmem_tb;
   FIFOF#(Bool) ff_perform_store <- mkUGSizedFIFOF(2);
 
   FIFOF#(Bit#(TAdd#(TAdd#(TMul#(`dwords, 8), 8), `paddr ) )) ff_req <- mkSizedFIFOF(32);
+  Reg#(Maybe#(DCache_mem_readreq#(32))) rg_read_mem_req_del <- mkReg(tagged Invalid);
+  Reg#(Maybe#(Bit#(`paddr))) wr_write_req <- mkReg(tagged Invalid);
 
   `ifdef perfmonitors
-  Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
-  
-  rule rl_nop;
-  `logLevel( tb, 0, $format("\n\n"))
-  endrule
+    Vector#(5,Reg#(Bit#(32))) rg_counters <- replicateM(mkReg(0));
   
   rule performance_counters;
     Bit#(13) incr = dmem.mv_dcache_perf_counters;
@@ -88,6 +86,11 @@ package dmem_tb;
       rg_counters[i]<=rg_counters[i]+zeroExtend(incr[i]);
   endrule
   `endif
+  
+  rule rl_nop;
+  `logLevel( tb, 0, $format("\n\n"))
+  endrule
+  
 
   rule enable_disable_cache;
     dmem.ma_cache_enable(True);
@@ -214,10 +217,24 @@ package dmem_tb;
     `logLevel( tb, 0, $format("TB: Performing STORE"))
   endrule
 
-  rule read_mem_request(read_mem_req matches tagged Invalid);
+  rule read_mem_request(read_mem_req matches tagged Invalid &&& rg_read_mem_req_del matches tagged
+                                                                                          Invalid);
     let req<- dmem.get_read_mem_req.get;
-    read_mem_req<=tagged Valid req;
+    Bool perform_req = True;
+    if(wr_write_req matches tagged Valid .waddr) begin
+      if((waddr>>(`dwords + `dblocks )) == (req.address>>(`dwords + `dblocks ) ))begin
+        rg_read_mem_req_del <= tagged Valid req;
+        perform_req = False;
+      end
+    end
+    if (perform_req)
+      read_mem_req<=tagged Valid req;
     `logLevel( tb, 0, $format("TB: Memory Read request: ",fshow(req)))
+  endrule
+
+  rule rl_send_delayed_read(rg_read_mem_req_del matches tagged Valid .req);
+    rg_read_mem_req_del <= tagged Invalid;
+    read_mem_req <= tagged Valid req;
   endrule
 
   rule read_mem_resp(read_mem_req matches tagged Valid .req);
@@ -249,6 +266,8 @@ package dmem_tb;
     let req = dmem.mv_write_mem_req_rd;
     dmem.ma_write_mem_req_deq;
     write_mem_req<=tagged Valid req;
+    if(req.burst_len != 0 )
+        wr_write_req <= tagged Valid req.address;
     `logLevel( tb, 0, $format("TB: Memory Write request",fshow(req)))
   endrule
 
@@ -259,6 +278,7 @@ package dmem_tb;
       rg_write_burst_count<=0;
       write_mem_req<=tagged Invalid;
       dmem.put_write_mem_resp.put(False);
+      wr_write_req <= tagged Invalid;
       `logLevel( tb, 0, $format("TB: Sending write response back"))
       `logLevel( tb, 0, $format("TB: write_mem_req is ",fshow(write_mem_req)))
     end
