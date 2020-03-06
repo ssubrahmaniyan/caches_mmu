@@ -232,7 +232,8 @@ package dmem_tb;
     `logLevel( tb, 0, $format("TB: Memory Read request: ",fshow(req)))
   endrule
 
-  rule rl_send_delayed_read(rg_read_mem_req_del matches tagged Valid .req);
+  rule rl_send_delayed_read(rg_read_mem_req_del matches tagged Valid .req &&& read_mem_req matches
+    tagged Invalid);
     rg_read_mem_req_del <= tagged Invalid;
     read_mem_req <= tagged Valid req;
   endrule

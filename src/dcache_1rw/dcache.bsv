@@ -219,10 +219,8 @@ package dcache;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
   `ifdef dcache_ecc
-    method Maybe#(ECC_fault_log#(paddr, dbanks)) mv_sec_data;
-    method Maybe#(ECC_fault_log#(paddr, tbanks)) mv_sec_tag;
-    method Maybe#(ECC_fault_log#(paddr, dbanks)) mv_ded_data;
-    method Maybe#(ECC_fault_log#(paddr, tbanks)) mv_ded_tag;
+    method Maybe#(ECC_dcache_data_ded#(paddr, ways, dbanks)) mv_ded_data;
+    method Maybe#(ECC_dcache_tag_ded#(paddr, ways)) mv_ded_tag;
   `endif
   endinterface
 
@@ -309,7 +307,9 @@ package dcache;
           ,
           Add#(al__, 2, TMul#(2, dbanks)),
           Add#(am__, 2, TMul#(2, tbanks)),
-          Add#(tbanks, 0, 1)
+          Add#(tbanks, 0, 1),
+          Add#(1, ae__, ways),
+          Add#(af__, dbanks, TMul#(ways, dbanks))
 //          Add#(blocksize, 0, dbanks),
 //          Div#(linewidth, dbanks, respwidth)
         `endif
@@ -329,6 +329,8 @@ package dcache;
     let v_blocksize=valueOf(blocksize);
     let v_respwidth=valueOf(respwidth);
     let v_fbsize = valueOf(fbsize);
+    let v_dbanks = valueOf(dbanks);
+    let v_tbanks = valueOf(tbanks);
     Integer lv_offset = case(valueOf(respwidth))
       32: 4;
       64: 8;
@@ -575,10 +577,11 @@ package dcache;
   `endif
   `ifdef dcache_ecc
     /*doc:wire: */
-    Wire#(Maybe#(ECC_fault_log#(paddr,dbanks))) wr_sec_data_log <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(ECC_fault_log#(paddr,dbanks))) wr_ded_data_log <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(ECC_fault_log#(paddr,tbanks))) wr_sec_tag_log <- mkDWire(tagged Invalid);
-    Wire#(Maybe#(ECC_fault_log#(paddr,tbanks))) wr_ded_tag_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_dcache_data_ded#(paddr,ways, dbanks))) wr_ded_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_dcache_tag_ded#(paddr,ways))) wr_ded_tag_log <- mkDWire(tagged Invalid);
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_dcache_sec#(paddr))) wr_sec_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_dcache_sec#(paddr))) wr_sec_tag_log <- mkDWire(tagged Invalid);
   `endif
 
     // ----------------------- Storage elements -------------------------------------------//
@@ -665,8 +668,8 @@ dataline ))
       if(v_ways > 1)
         lv_next_way = lv_curr_way + 1;
 
-      bram_data[lv_next_way].request(0,truncate(lv_next_set),writedata);
-      bram_tag[lv_next_way].request(0, truncate(lv_next_set),writetag);
+      bram_data[lv_next_way].request(0,truncate(lv_next_set),writedata, '1);
+      bram_tag[lv_next_way].request(0, truncate(lv_next_set),writetag, '1);
 
       if((lv_curr_way == fromInteger(v_ways - 1) && lv_next_set== fromInteger(v_sets))
               || !rg_globaldirty) begin
@@ -730,10 +733,11 @@ dataline ))
       Vector#(ways, Bit#(respwidth)) datawords;
       Vector#(ways, Bit#(linewidth)) lines;
     `ifdef dcache_ecc
-      Vector#(ways, Bit#(tbanks)) ecc_tag_ded_fault;
-      Vector#(ways, Bit#(tbanks)) ecc_tag_sec_fault;
-      Bit#(ways) data_bank_ded_fault = 0;
-      Bit#(ways) data_bank_sec_fault = 0;
+      Bit#(ways) ecc_tag_ded_fault;
+      Bit#(ways) ecc_tag_sec_fault;
+      Vector#(ways, Bit#(dbanks)) ecc_data_ded_fault ;
+      Bit#(ways) ecc_data_sec_fault;
+      Bit#(dbanks) ecc_data_ded = 0;
       Bit#(TLog#(dbanks)) bank_index = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
     `endif
       Bit#(respwidth) response_word = ?;
@@ -744,32 +748,68 @@ dataline ))
         tags[i] = truncateLSB(bram_tag[i].read_response);
         datawords[i] = truncate(lines[i] >> block_offset);
       `ifdef dcache_ecc
-        Bit#(dbanks) ecc_data_ded_fault = truncate(bram_data[i].read_response);
-        Bit#(dbanks) ecc_data_sec_fault = truncate(bram_data[i].read_response >> valueOf(dbanks));
+        ecc_data_ded_fault[i] = truncate(bram_data[i].read_response);
         ecc_tag_ded_fault[i] = truncate(bram_tag[i].read_response);
-        ecc_tag_sec_fault[i] = truncate(bram_tag[i].read_response >> valueOf(tbanks));
-        data_bank_ded_fault[i] = ecc_data_ded_fault[i][bank_index];
-        data_bank_sec_fault[i] = ecc_data_sec_fault[i][bank_index];
+        ecc_tag_sec_fault[i] = truncate(bram_tag[i].read_response >> v_tbanks);
+        Bit#(dbanks) _ecc_data_sec = truncate(bram_data[i].read_response >> v_dbanks);
+        ecc_data_sec_fault[i] = |_ecc_data_sec;
       `endif
       end
       if( !param_onehot ) begin
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          if(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag 
-          `ifdef dcache_ecc && (ecc_tag_ded_fault[i] == 0) `endif ) begin
+          if(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag ) begin
             hit_vector[i] = 1;
             response_word = datawords[i];
             hit_line = lines[i];
+          `ifdef dcache_ecc
+            ecc_data_ded = ecc_data_ded_fault[i];
+          `endif
           end
         end
       end
       else begin
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          hit_vector[i] = pack(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag
-          `ifdef dcache_ecc && (ecc_tag_ded_fault[i] == 0) `endif );
+          hit_vector[i] = pack(v_reg_valid[set_index][i] == 1 && tags[i] == request_tag );
         end
         response_word=select(datawords, unpack(hit_vector));
         hit_line = select(lines, unpack(hit_vector));
+      `ifdef dcache_ecc
+        ecc_data_ded = select(ecc_data_ded_fault, unpack(hit_vector));
+      `endif
       end
+
+      `ifdef dcache_ecc
+        // manage core-response
+        Bool lv_ecc_fault = False;
+        if( |hit_vector == 1) begin // hit
+          if (|ecc_data_ded == 1 ) begin // fault in data line
+            hit_vector = 0; // generate a miss instead
+          end
+        end
+        else begin // miss
+          if (|ecc_tag_ded_fault == 1) begin // error in the tags cause a miss
+            lv_ecc_fault = True;  // generate a fault
+          end
+        end
+
+        // generate log based signals
+        if( |ecc_tag_ded_fault == 1 )
+            wr_ded_tag_log <= tagged Valid ECC_dcache_tag_ded{address: phyaddr, 
+                                                            ways: ecc_tag_ded_fault};
+        Bit#(TMul#(ways,dbanks)) _temp = 0;
+        for (Integer i = 0; i<v_ways; i = i + 1) begin
+          _temp[i*v_dbanks+v_dbanks-1:v_dbanks*i] = ecc_data_ded_fault[i];
+        end
+        if(|_temp == 1)
+          wr_ded_data_log <= tagged Valid ECC_dcache_data_ded{address: phyaddr, 
+                                                              banks: _temp};
+        if (|ecc_tag_sec_fault == 1)
+          wr_sec_tag_log <= tagged Valid ECC_dcache_sec{address: phyaddr};
+
+        if (|ecc_data_sec_fault == 1)
+          wr_sec_data_log <= tagged Valid ECC_dcache_sec{address: phyaddr};
+        
+      `endif
 
       response_word = response_word >> {word_offset,3'b0};
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
@@ -1165,8 +1205,8 @@ dataline ))
                                                                         !rg_release_readphase)begin
           // enter here if the line to be replaced is valid and dirty. We thus need to first read it
           // out and then send to the next level
-          bram_tag[waynum].request(0,set_index,writetag);
-          bram_data[waynum].request(0,set_index,writedata);
+          bram_tag[waynum].request(0,set_index,writetag,'1);
+          bram_data[waynum].request(0,set_index,writedata,'1);
           rg_release_readphase <= True;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
@@ -1215,8 +1255,8 @@ dataline ))
         `endif
           v_reg_valid[set_index][waynum]<=1;
           v_reg_dirty[set_index][waynum]<=v_fb_dirty[rg_fbtail];
-          bram_tag[waynum].request(1,set_index,writetag);
-          bram_data[waynum].request(1,set_index,writedata);
+          bram_tag[waynum].request('1,set_index,writetag,'1);
+          bram_data[waynum].request('1,set_index,writedata,'1);
           if(rg_fbtail == fromInteger(v_fbsize-1))
             rg_fbtail <=0;
           else
@@ -1257,8 +1297,8 @@ dataline ))
     /*doc:rule: */
     rule rl_perform_replay(rg_performing_replay);
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        bram_tag[i].request(0,rg_recent_req,writetag);
-        bram_data[i].request(0,rg_recent_req,writedata);
+        bram_tag[i].request(0,rg_recent_req,writetag,'1);
+        bram_data[i].request(0,rg_recent_req,writedata,'1);
       end
       rg_performing_replay <= False;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
@@ -1283,8 +1323,8 @@ dataline ))
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
         for(Integer i=0;i<v_ways;i=i+1)begin
-          bram_data[i].request(0,set_index,writedata);
-          bram_tag[i].request(0,set_index,writetag);
+          bram_data[i].request(0,set_index,writedata,'1);
+          bram_tag[i].request(0,set_index,writetag,'1);
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
@@ -1364,8 +1404,6 @@ dataline ))
     endmethod
     method mv_commit_store_ready = ff_write_mem_request.notFull;
   `ifdef dcache_ecc
-    method  mv_sec_data = wr_sec_data_log;
-    method  mv_sec_tag = wr_sec_tag_log;
     method  mv_ded_data = wr_ded_data_log;
     method  mv_ded_tag = wr_ded_tag_log;
   `endif
