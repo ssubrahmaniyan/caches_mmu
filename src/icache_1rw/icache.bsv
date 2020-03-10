@@ -759,8 +759,8 @@ package icache;
                                     set_index, waynum,v_reg_valid[set_index][waynum]))
       if(v_fb_err[rg_fbtail] == 0)begin
         v_reg_valid[set_index][waynum]<=1;
-        bram_tag[waynum].request(1,set_index,writetag);
-        bram_data[waynum].request(1,set_index,writedata);
+        bram_tag[waynum].request(1,set_index,writetag, '1);
+        bram_data[waynum].request(1,set_index,writedata, '1);
         if(rg_fbtail == fromInteger(v_fbsize-1))
           rg_fbtail <=0;
         else
@@ -794,8 +794,8 @@ package icache;
     /*doc:rule: */
     rule rl_perform_replay(rg_performing_replay);
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        bram_tag[i].request(0,rg_recent_req,writetag);
-        bram_data[i].request(0,rg_recent_req,writedata);
+        bram_tag[i].request(0,rg_recent_req,writetag, '1);
+        bram_data[i].request(0,rg_recent_req,writedata, '1);
       end
       rg_performing_replay <= False;
       `logLevel( icache, 0, $format("[%2d]ICACHE: Replaying Req. Index:%d",id,rg_recent_req))
@@ -813,8 +813,8 @@ package icache;
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
         for(Integer i=0;i<v_ways;i=i+1)begin
-          bram_data[i].request(0,set_index,writedata);
-          bram_tag[i].request(0,set_index,writetag);
+          bram_data[i].request(0,set_index,writedata, '1);
+          bram_tag[i].request(0,set_index,writetag, '1);
         end
         `logLevel( icache, 0, $format("[%2d]ICACHE: Receiving request: ",id,fshow(req)))
         `logLevel( icache, 0, $format("[%2d]ICACHE: set:%d",id,set_index))
