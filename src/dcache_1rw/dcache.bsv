@@ -637,8 +637,8 @@ dataline ))
       if(v_ways > 1)
         lv_next_way = lv_curr_way + 1;
 
-      bram_data[lv_next_way].request(0,truncate(lv_next_set),writedata);
-      bram_tag[lv_next_way].request(0, truncate(lv_next_set),writetag);
+      bram_data[lv_next_way].request(0,truncate(lv_next_set),writedata, '1);
+      bram_tag[lv_next_way].request(0, truncate(lv_next_set),writetag, '1);
 
       if((lv_curr_way == fromInteger(v_ways - 1) && lv_next_set== fromInteger(v_sets))
               || !rg_globaldirty) begin
@@ -1096,8 +1096,8 @@ dataline ))
                                                                         !rg_release_readphase)begin
           // enter here if the line to be replaced is valid and dirty. We thus need to first read it
           // out and then send to the next level
-          bram_tag[waynum].request(0,set_index,writetag);
-          bram_data[waynum].request(0,set_index,writedata);
+          bram_tag[waynum].request(0,set_index,writetag, '1);
+          bram_data[waynum].request(0,set_index,writedata, '1);
           rg_release_readphase <= True;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
@@ -1134,8 +1134,8 @@ dataline ))
         `endif
           v_reg_valid[set_index][waynum]<=1;
           v_reg_dirty[set_index][waynum]<=v_fb_dirty[rg_fbtail];
-          bram_tag[waynum].request(1,set_index,writetag);
-          bram_data[waynum].request(1,set_index,writedata);
+          bram_tag[waynum].request(1,set_index,writetag, '1);
+          bram_data[waynum].request(1,set_index,writedata, '1);
           if(rg_fbtail == fromInteger(v_fbsize-1))
             rg_fbtail <=0;
           else
@@ -1171,8 +1171,8 @@ dataline ))
     /*doc:rule: */
     rule rl_perform_replay(rg_performing_replay);
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        bram_tag[i].request(0,rg_recent_req,writetag);
-        bram_data[i].request(0,rg_recent_req,writedata);
+        bram_tag[i].request(0,rg_recent_req,writetag, '1);
+        bram_data[i].request(0,rg_recent_req,writedata, '1);
       end
       rg_performing_replay <= False;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
@@ -1197,8 +1197,8 @@ dataline ))
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
         for(Integer i=0;i<v_ways;i=i+1)begin
-          bram_data[i].request(0,set_index,writedata);
-          bram_tag[i].request(0,set_index,writetag);
+          bram_data[i].request(0,set_index,writedata, '1);
+          bram_tag[i].request(0,set_index,writetag, '1);
         end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
