@@ -49,6 +49,15 @@ package dcache_lib;
     Bit#(ways)    waymask;
   } TagResponse#(numeric type ways) deriving(Bits, Eq, FShow);
 
+  typedef struct{
+    Bool line_sed;
+    Bool line_ded;
+    Bit#(TMul#(TMul#(w,8),b)) line;
+    Bool word_sed;
+    Bool word_ded;
+    Bit#(TMul#(8,w)) word;
+  } DataResponse#(numeric type b, numeric type w) deriving(Bits, Eq, FShow);
+
   interface Ifc_tagram#(numeric type sets, 
                         numeric type tagbits,
                         numeric type ways);
@@ -80,9 +89,6 @@ package dcache_lib;
                               Bit#(TLog#(sets)) index, 
                               Bit#(tagbits) tag, 
                               Bit#(TLog#(ways)) way);
-    `ifdef ASSERT
-      dynamicAssert(countOnes(way) <= 1,"TAGRAM: More than one way provided in inputs");
-    `endif
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_tags[i].request(0, index, tag, '1);
@@ -108,11 +114,103 @@ package dcache_lib;
     endmethod
   endmodule
 
-  /* (*synthesize*)
-  module mkinst(Ifc_tagram#(64, 20, 4));
+  interface Ifc_dataram#(numeric type wordsize,
+                         numeric type blocksize,
+                         numeric type sets,
+                         numeric type ways,
+                         numeric type banks);
+    /*doc:method: request method to initiate a read or write on the dataline. A read is latched on all
+    * ways. A write is peformed only on a single way.*/
+    method Action ma_request( Bool read_write, 
+                              Bit#(TLog#(sets)) index, 
+                              Bit#(TMul#(TMul#(wordsize, 8),blocksize)) dataline, 
+                              Bit#(TLog#(ways)) way,
+                              Bit#(banks) banks);
+
+    /*doc:method: This method will read the ram output from all ways. Compare with the input tag.
+     * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
+     * single-error or double-error detected while performing the read across all the ways. */
+    method DataResponse#(blocksize,wordsize) mv_read_response(
+                                              Bit#(TLog#(blocksize)) blocknum, 
+                                              Bit#(ways) wayselect );
+  endinterface
+
+  module mk_dataram(Ifc_dataram#(wordsize, blocksize, sets, ways, banks))
+      provisos(
+          Mul#(TMul#(wordsize,8),blocksize,linewidth),
+          Log#(wordsize, wordbits),
+          Log#(blocksize, blockbits),
+          Log#(sets, setbits),
+          Mul#(wordsize,8, respwidth),
+
+          // required by bsc
+          Add#(a__, respwidth, linewidth), // since the response is truncated version of line
+          Mul#(TDiv#(linewidth, banks), banks, linewidth), // from mem_config
+          Add#(a__, TDiv#(linewidth, banks), linewidth) // from mem_config
+      );
+    let v_wordsize = valueOf(wordsize);
+    let v_blocksize = valueOf(blocksize);
+    let v_sets = valueOf(sets);
+    let v_ways = valueOf(ways);
+    let v_banks = valueOf(banks);
+
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, banks)) v_data 
+                                                            <- replicateM(mkmem_config1rw(False));
+    method Action ma_request( Bool read_write, 
+                              Bit#(TLog#(sets)) index, 
+                              Bit#(linewidth) dataline, 
+                              Bit#(TLog#(ways)) way,
+                              Bit#(banks) banks);
+
+      if(!read_write)
+        for (Integer i = 0; i< v_ways; i = i + 1) begin
+          v_data[i].request(0, index, dataline, banks);
+        end
+      else
+        v_data[way].request(1, index, dataline, banks);
+    endmethod
+
+    method DataResponse#(blocksize,wordsize) mv_read_response(
+                                              Bit#(blockbits) blocknum, 
+                                              Bit#(ways) wayselect );
+      Vector#(ways, Bit#(respwidth)) lv_words = ?;
+      Vector#(ways, Bit#(linewidth)) lv_lines = ?;
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {blocknum,zeros};
+      Bit#(respwidth) lv_selected_word = ?;
+      Bit#(linewidth) lv_selected_line = ?;
+      for (Integer i = 0; i<v_ways; i = i + 1) begin
+        if (wayselect[i] == 1) begin
+          lv_selected_line = v_data[i].read_response;
+          lv_selected_word = truncate(lv_selected_line>> block_offset);
+        end
+      end
+      //for (Integer i = 0; i< v_ways ; i = i + 1) begin
+      //  lv_words[i] = truncate(v_data[i].read_response >> block_offset);
+      //  lv_lines[i] = v_data[i].read_response;
+      //end
+      //lv_selected_word = select(lv_words,unpack(wayselect));
+      //lv_selected_line = select(lv_lines,unpack(wayselect));
+
+      return DataResponse{word_sed: False, word_ded:False, word: lv_selected_word,
+                          line_sed: False, line_ded:False, line: lv_selected_line};
+
+    endmethod
+  endmodule
+
+  (*synthesize*)
+  module mkinst_tag(Ifc_tagram#(64, 20, 4));
     let ifc();
     mk_tagram _temp(ifc);
     return (ifc);
-  endmodule */
+  endmodule
+  (*synthesize*)
+  module mkinst_data(Ifc_dataram#(4, 4, 64, 4, 4));
+    let ifc();
+    mk_dataram _temp(ifc);
+    return (ifc);
+  endmodule
+
+
 endpackage
 
