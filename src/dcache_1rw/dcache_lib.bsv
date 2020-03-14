@@ -75,26 +75,36 @@ package dcache_lib;
     Bool word_hit;
   } PollingResponse#(numeric type w, numeric type f) deriving(Bits, FShow, Eq);
 
-  interface Ifc_tagram#(numeric type sets, 
-                        numeric type tagbits,
-                        numeric type ways);
+  interface Ifc_tagram#(numeric type wordsize,
+                        numeric type blocksize,
+                        numeric type sets,
+                        numeric type ways,
+                        numeric type paddr);
 
     /*doc:method: request method to initiate a read or write on the tags. A read is latched on all
     * ways. A write is peformed only on a single way.*/
     method Action ma_request( Bool read_write, 
                               Bit#(TLog#(sets)) index, 
-                              Bit#(tagbits) tag, 
+                              Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
 
     /*doc:method: This method will read the ram output from all ways. Compare with the input tag.
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
-    method TagResponse#(ways) mv_read_response(Bit#(tagbits) tag_in, 
-                                                        Bit#(TLog#(ways)) wayselect,
-                                                        Bool comp_select );    
+    method TagResponse#(ways) mv_read_response(Bit#(paddr) address_in, 
+                                               Bit#(TLog#(ways)) wayselect,
+                                               Bool comp_select );    
   endinterface
 
-  module mk_tagram(Ifc_tagram#(sets, tagbits, ways));
+  module mk_tagram(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
+    provisos(    
+          Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
+          Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
+          Log#(sets, setbits),           // setbits is the no. of bits used as index in BRAMs.
+          Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
+          Add#(_a, setbits, _b),        // _b total bits for index+offset,
+          Add#(tagbits, _b, paddr)     // tagbits = 32-(wordbits+blockbits+setbits)
+    );
     
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
@@ -104,8 +114,10 @@ package dcache_lib;
                                                         replicateM(mkmem_config1rw(False));
     method Action ma_request( Bool read_write, 
                               Bit#(TLog#(sets)) index, 
-                              Bit#(tagbits) tag, 
+                              Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
+
+      Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_tags[i].request(0, index, tag, '1);
@@ -114,9 +126,11 @@ package dcache_lib;
         v_tags[way].request(1, index, tag, '1);
     endmethod
 
-    method TagResponse#(ways) mv_read_response(Bit#(tagbits) tag_in, 
-                                                      Bit#(TLog#(ways)) wayselect,
-                                                      Bool comp_select );    
+    method TagResponse#(ways) mv_read_response(Bit#(paddr) address_in, 
+                                               Bit#(TLog#(ways)) wayselect,
+                                               Bool comp_select );
+
+      Bit#(tagbits) tag_in = truncateLSB(address_in);
       Bit#(ways) lv_hitvector = 0;
       Bool sed = False;
       Bool ded = False;
@@ -220,7 +234,6 @@ package dcache_lib;
                             numeric type wordsize,
                             numeric type blocksize,
                             numeric type sets,
-                            numeric type tagbits,
                             numeric type banks,
                             numeric type paddr,
                             numeric type buswidth);
@@ -257,13 +270,16 @@ package dcache_lib;
   (*conflict_free="ma_fill_from_memory, mav_release_info"*)
   (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
   module mk_fillbuffer#(parameter Bool onehot)
-      (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, tagbits, banks, paddr, buswidth))
+      (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, banks, paddr, buswidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
           Log#(blocksize, blockbits),
           Log#(sets, setbits),
           Mul#(wordsize,8, respwidth),
+          Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
+          Add#(_a, setbits, _b),        // _b total bits for index+offset,
+          Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
           
           // required by bsc
           Add#(a__, TLog#(TMul#(blocksize, wordsize)), TAdd#(TLog#(TMul#(wordsize,
@@ -448,7 +464,6 @@ package dcache_lib;
                             numeric type wordsize,
                             numeric type blocksize,
                             numeric type sets,
-                            numeric type tagbits,
                             numeric type banks,
                             numeric type paddr,
                             numeric type respwidth);
@@ -485,13 +500,16 @@ package dcache_lib;
   (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
   (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
   module mk_fillbuffer_v2#(parameter Bool onehot)
-      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, tagbits, banks, paddr, respwidth))
+      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, banks, paddr, respwidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
           Log#(blocksize, blockbits),
           Log#(sets, setbits),
           Mul#(wordsize,8, respwidth),
+          Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
+          Add#(_a, setbits, _b),        // _b total bits for index+offset,
+          Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
           
           // required by bsc
           Add#(a__, TLog#(TMul#(blocksize, wordsize)), TAdd#(TLog#(TMul#(wordsize,
@@ -662,7 +680,7 @@ package dcache_lib;
       
 
   (*synthesize*)
-  module mkinst_tag(Ifc_tagram#(`dsets, 20, `dways));
+  module mkinst_tag(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
     mk_tagram _temp(ifc);
     return (ifc);
@@ -674,13 +692,13 @@ package dcache_lib;
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, 20, `dblocks, `paddr, `dbuswidth));
+  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `dblocks, `paddr, `dbuswidth));
     let ifc();
     mk_fillbuffer#(False) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, 20, `dblocks, `paddr,  `dbuswidth));
+  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `dblocks, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(False) _temp(ifc);
     return (ifc);
