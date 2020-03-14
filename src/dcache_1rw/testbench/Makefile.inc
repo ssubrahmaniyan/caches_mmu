@@ -19,7 +19,7 @@ DRESET=1
 DDBANKS=4
 DTBANKS=1
 DBUSWIDTH=64
-ECC=enable
+ECC=disable
 ONE_HOT=0
 ECC_TEST=disable
 
@@ -27,8 +27,8 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
-TOP_MODULE:=mkinst_tag
+TOP_MODULE:=mkdcache
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
 TOP_DIR:= ../
-TOP_FILE:= dcache_lib.bsv
+TOP_FILE:= dcache1.bsv
 

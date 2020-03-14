@@ -40,7 +40,7 @@ package replacement_dcache;
     method Action reset_repl;
   endinterface
 
-  module mkreplace#(parameter Integer alg)(Ifc_replace#(sets,ways))
+  module mkreplace#(parameter Bit#(2) alg)(Ifc_replace#(sets,ways))
     provisos(Add#(a__, TLog#(ways), 4));
 
     let v_ways = valueOf(ways);

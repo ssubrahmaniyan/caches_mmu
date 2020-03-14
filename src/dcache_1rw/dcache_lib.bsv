@@ -49,7 +49,8 @@ package dcache_lib;
     Bool sed;
     Bool ded;
     Bit#(ways)    waymask;
-  } TagResponse#(numeric type ways) deriving(Bits, Eq, FShow);
+    Bit#(a)       address;
+  } TagResponse#(numeric type ways, numeric type a) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bool line_sed;
@@ -91,9 +92,9 @@ package dcache_lib;
     /*doc:method: This method will read the ram output from all ways. Compare with the input tag.
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
-    method TagResponse#(ways) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect,
-                                               Bool comp_select );    
+    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
+                                               Bit#(TLog#(ways)) wayselect
+                                               );    
   endinterface
 
   module mk_tagram(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
@@ -126,18 +127,19 @@ package dcache_lib;
         v_tags[way].request(1, index, tag, '1);
     endmethod
 
-    method TagResponse#(ways) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect,
-                                               Bool comp_select );
+    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
+                                               Bit#(TLog#(ways)) wayselect
+                                               );
 
       Bit#(tagbits) tag_in = truncateLSB(address_in);
       Bit#(ways) lv_hitvector = 0;
       Bool sed = False;
       Bool ded = False;
+      Bit#(paddr)  lv_tag = {v_tags[wayselect].read_response,'d0};
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         lv_hitvector[i] = pack(v_tags[i].read_response == tag_in);
       end
-      return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector};
+      return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag };
     endmethod
   endmodule
 
@@ -686,19 +688,19 @@ package dcache_lib;
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_data(Ifc_dataram#(`dwords, `dblocks, `dsets, `dwords, `dblocks));
+  module mkinst_data(Ifc_dataram#(`dwords, `dblocks, `dsets, `dways, `ddbanks));
     let ifc();
     mk_dataram#(False) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `dblocks, `paddr, `dbuswidth));
+  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr, `dbuswidth));
     let ifc();
     mk_fillbuffer#(False) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `dblocks, `paddr,  `dbuswidth));
+  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(False) _temp(ifc);
     return (ifc);
