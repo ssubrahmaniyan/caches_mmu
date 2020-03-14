@@ -40,6 +40,7 @@ package dcache_lib;
   import BUtils :: * ;
   import Memory :: * ; // only for the updateDataWithMask function
   import DReg :: * ;
+  import io_func::*;
 
   import mem_config :: * ;
   import dcache_types :: * ;
@@ -241,7 +242,8 @@ package dcache_lib;
                                       Bit#(TMul#(wordsize,blocksize)) init_enable);
 
     method Action ma_from_storebuffer(Bit#(TMul#(blocksize,wordsize))          byte_enable,
-                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline);
+                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
+                                     Bit#(TLog#(fbsize)) fbindex);
 
     method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
                                                                       mav_release_info;
@@ -253,6 +255,7 @@ package dcache_lib;
   (*conflict_free="mav_release_info,ma_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, ma_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, mav_release_info"*)
+  (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
   module mk_fillbuffer#(parameter Bool onehot)
       (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, tagbits, banks, paddr, buswidth))
       provisos(
@@ -290,18 +293,6 @@ package dcache_lib;
     request made by the core */
     function Bit#(TDiv#(linewidth,8)) fn_enable(Bit#(blockbits) word_index);
       Bit#(TDiv#(linewidth,8)) write_enable = 'hF << ({4'b0,word_index}*fromInteger(lv_offset));
-      return write_enable;
-    endfunction
-
-    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-    request made by the core */
-    function Bit#(TDiv#(linewidth,8)) fn_init_enable(Bit#(TLog#(TDiv#(linewidth,buswidth))) word_index);
-      Bit#(TDiv#(linewidth,8)) we = case(valueOf(buswidth))
-        32: 'hF;
-        64:'hFF;
-        default:'hFFFF;
-      endcase;
-      Bit#(TDiv#(linewidth,8)) write_enable = we << ({4'b0,word_index}*fromInteger(lv_offset1));
       return write_enable;
     endfunction
 
@@ -379,16 +370,26 @@ package dcache_lib;
       let lv_fb_linedata = updateDataWithMask(v_fb_data[fbindex], lv_new_word, lv_current_enable);
       lv_fb_linedata = updateDataWithMask(lv_fb_linedata, wr_store_data, wr_store_be);
       rg_temp_enable <= rotateBitsBy(lv_current_enable,unpack(truncate(rotate_amount)));
-      rg_fb_enables <= lv_fb_enable | lv_current_enable;
       v_fb_data[fbindex] <=  lv_fb_linedata;
-      if(mem_resp.last)
+      if(mem_resp.last)begin
         v_fb_line_valid[fbindex] <= True;
+        rg_fb_enables <= 0;
+      end
+      else
+        rg_fb_enables <= lv_fb_enable | lv_current_enable;
 
     endmethod
     method Action ma_from_storebuffer(Bit#(TMul#(blocksize,wordsize))          byte_enable,
-                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline);
-      wr_store_data <= dataline;
-      wr_store_be <= byte_enable;
+                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
+                                     Bit#(TLog#(fbsize)) fbindex);
+      if(v_fb_line_valid[fbindex]) begin
+        let lv_fbline = updateDataWithMask(v_fb_data[fbindex], dataline, byte_enable);
+        v_fb_data[fbindex] <= lv_fbline;
+      end
+      else begin
+        wr_store_data <= dataline;
+        wr_store_be <= byte_enable;
+      end
     endmethod
     method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
                                                                       mav_release_info;
@@ -436,7 +437,224 @@ package dcache_lib;
           end
         end
       end
-      Bool lv_wordhit = (lv_linevalid || ((required_enable & rg_fb_enables) ==1));
+      Bool lv_wordhit = (lv_linevalid || ((required_enable & rg_fb_enables) != 0));
+      return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
+                             line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
+    endmethod
+  endmodule
+
+  // where buswidth = respwidth and banksize = respwidth
+  interface Ifc_fillbuffer_v2#(numeric type fbsize,
+                            numeric type wordsize,
+                            numeric type blocksize,
+                            numeric type sets,
+                            numeric type tagbits,
+                            numeric type banks,
+                            numeric type paddr,
+                            numeric type respwidth);
+    (*always_ready*)
+    method Bool mv_fbfull ;
+    (*always_ready*)
+    method Bool mv_fbempty ;
+    (*always_ready*)
+    method Bool mv_fbhead_valid;
+    (*always_ready*)
+    method Bit#(paddr) mv_fbhead_address;
+    method Action ma_allocate_line( Bool                                      from_ram,
+                                    Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
+                                    Bit#(paddr)                               address,
+                                    Bit#(1)                                   dirty );
+
+    method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
+                                      Bit#(TLog#(fbsize))             fbindex,
+                                      Bit#(TLog#(banks))              init_bank);
+
+    method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
+                                      Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
+
+    method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
+                                                                      mav_release_info;
+    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+      Bit#(paddr) address); 
+
+  endinterface
+
+  (*conflict_free="mav_release_info,ma_allocate_line"*)
+  (*conflict_free="ma_fill_from_memory, ma_allocate_line"*)
+  (*conflict_free="ma_fill_from_memory, mav_release_info"*)
+  (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
+  (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
+  module mk_fillbuffer_v2#(parameter Bool onehot)
+      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, tagbits, banks, paddr, respwidth))
+      provisos(
+          Mul#(TMul#(wordsize,8),blocksize,linewidth),
+          Log#(wordsize, wordbits),
+          Log#(blocksize, blockbits),
+          Log#(sets, setbits),
+          Mul#(wordsize,8, respwidth),
+          
+          // required by bsc
+          Add#(a__, TLog#(TMul#(blocksize, wordsize)), TAdd#(TLog#(TMul#(wordsize,
+    blocksize)), 1)),
+          Mul#(blocksize, wordsize, TDiv#(linewidth, 8)),
+          Mul#(respwidth, b__, linewidth),
+          Add#(c__, respwidth, linewidth),
+          Add#(d__, blockbits, paddr),
+          Add#(TAdd#(tagbits, setbits), e__, paddr)
+          );
+
+    let v_wordsize = valueOf(wordsize);
+    let v_blocksize = valueOf(blocksize);
+    let v_sets = valueOf(sets);
+    let v_banks = valueOf(banks);
+    let v_wordbits = valueOf(wordbits);
+    let v_blockbits = valueOf(blockbits);
+    let v_fbsize = valueOf(fbsize);
+    let v_respwidth = valueOf(respwidth);
+
+    Integer lv_offset = case(valueOf(respwidth)) 32: 4;      64: 8;      128: 16;   endcase;
+    function Bool isTrue(Bool a);
+      return a;
+    endfunction
+
+    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
+    request made by the core */
+    function Bit#(banks) fn_enable (Bit#(blockbits) blockindex);
+      Bit#(banks) lv_temp = '1;
+      return lv_temp << blockindex;
+    endfunction
+
+    /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
+    Vector#(fbsize,Reg#(Bool))                      v_fb_addr_valid    <- replicateM(mkReg(False));
+    /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
+    //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
+    Vector#(fbsize,Vector#(banks,Reg#(Bit#(respwidth))))    v_fb_data     
+                                                    <- replicateM(replicateM(mkReg(unpack(0))));
+    /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
+    Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_err      <- replicateM(mkReg(0));
+    /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
+    Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkReg(0));
+    /*doc: vec: vector of regisetrs to indicate if the entire line of the fillbuffer entry is
+     * available or not*/
+    Vector#(fbsize,Reg#(Bool))                   v_fb_line_valid  <- replicateM(mkReg(False));
+    /*doc: reg: register to indicate how many bytes of the line have been filled by the
+     bus*/
+    Reg#(Bit#(banks))                  rg_fb_enables    <- mkReg(0);
+    /*doc: vec: vector registers indicating the address of the fill-buffer line*/
+    Vector#(fbsize,Reg#(Bit#(paddr)))               v_fb_addr     <- replicateM(mkReg(0));
+
+    /*doc:reg: register pointing to the next entry being released from the fillbuffer*/
+    Reg#(Bit#(TLog#(fbsize)))                       rg_fbhead     <- mkReg(0);
+    /*doc:reg: register pointing to next entry being allotted on the filbuffer*/
+    Reg#(Bit#(TLog#(fbsize)))                       rg_fbtail     <- mkReg(0);
+    /*doc:reg: temporary register holding the WE for the data to be updated in the fillbuffer from
+    the memory response*/
+    Reg#(Bit#(TLog#(banks)))           rg_next_bank<- mkReg(0);
+
+    
+    /*doc:var: variable indicating the fillbuffer is full*/
+    Bool fb_full = (all(isTrue, readVReg(v_fb_addr_valid)));
+    /*doc:var: variable indicating the fillbuffer is empty*/
+    Bool fb_empty=!(any(isTrue, readVReg(v_fb_addr_valid)));
+
+    method mv_fbfull = fb_full;
+    method mv_fbempty = fb_empty;
+    method mv_fbhead_valid = v_fb_line_valid[rg_fbhead];
+    method mv_fbhead_address = v_fb_addr[rg_fbhead];
+    method Action ma_allocate_line( Bool                                      from_ram,
+                                    Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
+                                    Bit#(paddr)                               address,
+                                    Bit#(1)                                   dirty );
+
+      Bit#(1) _temp = pack(from_ram);
+      v_fb_addr_valid[rg_fbtail] <= True;
+      v_fb_addr[rg_fbtail] <= address;
+      v_fb_dirty[rg_fbtail] <= _temp & dirty;
+      v_fb_line_valid[rg_fbtail] <= from_ram;
+      v_fb_err[rg_fbtail] <= 0;
+      for (Integer i = 0; i< v_banks ; i = i + 1) begin
+        v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+      end
+      if(!from_ram)
+        rg_fb_enables <= 0;
+      if(rg_fbtail == fromInteger(v_fbsize -1))
+        rg_fbtail <= 0;
+      else
+        rg_fbtail <= rg_fbtail + 1;
+    endmethod
+    method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
+                                      Bit#(TLog#(fbsize))             fbindex,
+                                      Bit#(TLog#(banks))              init_bank);
+      
+      Bit#(TLog#(banks)) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
+      v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
+      rg_next_bank <= lv_current_bank + 1;
+      if(mem_resp.last) begin
+        v_fb_line_valid[fbindex] <= True;
+        rg_fb_enables <= 0;
+      end
+      else
+        rg_fb_enables[lv_current_bank] <= 1;
+
+      v_fb_err[fbindex] <= pack(mem_resp.err);
+    endmethod
+    method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
+                                      Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
+
+      Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
+      v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) |
+                                         (mask & dataword);
+    endmethod
+    method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
+                                                                      mav_release_info;
+      if(rg_fbhead == fromInteger(v_fbsize -1))
+        rg_fbhead <= 0;
+      else
+        rg_fbhead <= rg_fbhead + 1;
+      v_fb_addr_valid[rg_fbhead] <= False;
+      v_fb_line_valid[rg_fbhead] <= False;
+      Bit#(linewidth) lv_dataline=?;
+      for (Integer i = 0; i<v_banks; i = i + 1) begin
+        lv_dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = v_fb_data[rg_fbhead][i];
+      end
+      return ReleaseInfo{dataline:lv_dataline, err:v_fb_err[rg_fbhead],
+                          dirty:v_fb_dirty[rg_fbhead], address: v_fb_addr[rg_fbhead]};
+    endmethod
+    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+      Bit#(paddr) address); 
+
+      Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
+
+      Bit#(blockbits) word_index = truncate(address >> v_wordbits);
+      let required_enable = fn_enable(word_index);
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
+      Bit#(fbsize) lv_hitvector = 0; 
+      Bit#(respwidth) lv_selected_word = ?;
+      Bit#(1) lv_err = ?;
+      Bool lv_linevalid = False;
+      for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+        lv_hitvector[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_addr_valid[i]);
+      end
+      if (onehot) begin
+        Vector#(fbsize, Bit#(respwidth)) lv_words = ?;
+        for (Integer i = 0; i< v_fbsize; i = i + 1) begin
+          lv_words[i] = truncate(v_fb_data[i][block_offset]);
+        end
+        lv_selected_word = select(lv_words,unpack(lv_hitvector));
+        lv_err = select(readVReg(v_fb_err), unpack(lv_hitvector));
+        lv_linevalid = select(readVReg(v_fb_line_valid), unpack(lv_hitvector));
+      end
+      else begin
+        for (Integer i = 0; i<v_fbsize; i = i + 1) begin
+          if (lv_hitvector[i] == 1) begin
+            lv_selected_word = truncate(v_fb_data[i][block_offset]);
+            lv_err = v_fb_err[i];
+            lv_linevalid = v_fb_line_valid[i];
+          end
+        end
+      end
+      Bool lv_wordhit = (lv_linevalid || ((required_enable & rg_fb_enables) != 0));
       return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
@@ -444,21 +662,27 @@ package dcache_lib;
       
 
   (*synthesize*)
-  module mkinst_tag(Ifc_tagram#(64, 20, 4));
+  module mkinst_tag(Ifc_tagram#(`dsets, 20, `dways));
     let ifc();
     mk_tagram _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_data(Ifc_dataram#(8, 4, 64, 4, 4));
+  module mkinst_data(Ifc_dataram#(`dwords, `dblocks, `dsets, `dwords, `dblocks));
     let ifc();
     mk_dataram#(False) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb(Ifc_fillbuffer#(8, 8, 4, 64, 20, 4, 32, 64));
+  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, 20, `dblocks, `paddr, `dbuswidth));
     let ifc();
     mk_fillbuffer#(False) _temp(ifc);
+    return (ifc);
+  endmodule
+  (*synthesize*)
+  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, 20, `dblocks, `paddr,  `dbuswidth));
+    let ifc();
+    mk_fillbuffer_v2#(False) _temp(ifc);
     return (ifc);
   endmodule
 
