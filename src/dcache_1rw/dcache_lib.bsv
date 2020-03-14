@@ -93,8 +93,7 @@ package dcache_lib;
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
     method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect
-                                               );    
+                                               Bit#(TLog#(ways)) wayselect);    
   endinterface
 
   module mk_tagram(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
@@ -128,8 +127,7 @@ package dcache_lib;
     endmethod
 
     method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect
-                                               );
+                                               Bit#(TLog#(ways)) wayselect );
 
       Bit#(tagbits) tag_in = truncateLSB(address_in);
       Bit#(ways) lv_hitvector = 0;
@@ -262,7 +260,7 @@ package dcache_lib;
 
     method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
                                                                       mav_release_info;
-    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+    method PollingResponse#(wordsize,fbsize) mav_polling_response(
       Bit#(paddr) address); 
 
   endinterface
@@ -420,7 +418,7 @@ package dcache_lib;
       return ReleaseInfo{dataline:v_fb_data[rg_fbhead], err:v_fb_err[rg_fbhead],
                           dirty:v_fb_dirty[rg_fbhead], address: v_fb_addr[rg_fbhead]};
     endmethod
-    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+    method PollingResponse#(wordsize,fbsize) mav_polling_response(
       Bit#(paddr) address); 
 
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
@@ -477,7 +475,10 @@ package dcache_lib;
     method Bool mv_fbhead_valid;
     (*always_ready*)
     method Bit#(paddr) mv_fbhead_address;
-    method Action ma_allocate_line( Bool                                      from_ram,
+    (*always_ready*)
+    method Bit#(1) mv_fbhead_err;
+    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line( 
+                                    Bool                                      from_ram,
                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
                                     Bit#(paddr)                               address,
                                     Bit#(1)                                   dirty );
@@ -489,17 +490,17 @@ package dcache_lib;
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
 
-    method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
-                                                                      mav_release_info;
-    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+    method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
+    method Action ma_perform_release;
+    method PollingResponse#(wordsize,fbsize) mav_polling_response(
       Bit#(paddr) address); 
 
   endinterface
 
-  (*conflict_free="mav_release_info,ma_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, ma_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, mav_release_info"*)
-  (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
+  (*conflict_free="ma_perform_release,mav_allocate_line"*)
+  (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
+  (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
+  (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
   (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
   module mk_fillbuffer_v2#(parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, banks, paddr, respwidth))
@@ -581,7 +582,9 @@ package dcache_lib;
     method mv_fbempty = fb_empty;
     method mv_fbhead_valid = v_fb_line_valid[rg_fbhead];
     method mv_fbhead_address = v_fb_addr[rg_fbhead];
-    method Action ma_allocate_line( Bool                                      from_ram,
+    method mv_fbhead_err = v_fb_err[rg_fbhead];
+    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line( 
+                                    Bool                                      from_ram,
                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
                                     Bit#(paddr)                               address,
                                     Bit#(1)                                   dirty );
@@ -601,6 +604,7 @@ package dcache_lib;
         rg_fbtail <= 0;
       else
         rg_fbtail <= rg_fbtail + 1;
+      return rg_fbtail;
     endmethod
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
@@ -624,15 +628,9 @@ package dcache_lib;
       Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
       v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) |
                                          (mask & dataword);
+      v_fb_dirty[fbindex] <= 1;
     endmethod
-    method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
-                                                                      mav_release_info;
-      if(rg_fbhead == fromInteger(v_fbsize -1))
-        rg_fbhead <= 0;
-      else
-        rg_fbhead <= rg_fbhead + 1;
-      v_fb_addr_valid[rg_fbhead] <= False;
-      v_fb_line_valid[rg_fbhead] <= False;
+    method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
       Bit#(linewidth) lv_dataline=?;
       for (Integer i = 0; i<v_banks; i = i + 1) begin
         lv_dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = v_fb_data[rg_fbhead][i];
@@ -640,7 +638,17 @@ package dcache_lib;
       return ReleaseInfo{dataline:lv_dataline, err:v_fb_err[rg_fbhead],
                           dirty:v_fb_dirty[rg_fbhead], address: v_fb_addr[rg_fbhead]};
     endmethod
-    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+
+    method Action ma_perform_release;
+      if(rg_fbhead == fromInteger(v_fbsize -1))
+        rg_fbhead <= 0;
+      else
+        rg_fbhead <= rg_fbhead + 1;
+      v_fb_addr_valid[rg_fbhead] <= False;
+      v_fb_line_valid[rg_fbhead] <= False;
+    endmethod
+
+    method PollingResponse#(wordsize,fbsize) mav_polling_response(
       Bit#(paddr) address); 
 
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
