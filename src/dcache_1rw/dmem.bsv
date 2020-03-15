@@ -42,7 +42,7 @@ package dmem;
   import io_func::*;
   `include "dcache.defines"
 `ifdef dcache
-  import dcache :: *;
+  import dcache1 :: *;
 `else
   import null_dcache :: *;
 `endif
@@ -51,17 +51,6 @@ package dmem;
   import common_tlb_types :: * ;
 `endif
 
-  (*synthesize*)
-  module mkdcache_inst#(parameter Bit#(32) id)(Ifc_dcache#(`dwords, `dblocks, `dsets, `dways, `paddr, `vaddr,
-                        `dsbsize, `dfbsize, `desize ,`ddbanks, `dtbanks, `dbuswidth ));
-    let ifc();
-  `ifdef dcache
-    mkdcache#(isIO,`drepl,id, unpack(`dcache_onehot)) _temp(ifc);
-  `else
-    mknull_dcache _temp(ifc);
-  `endif
-    return (ifc);
-  endmodule
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) put_core_req;
@@ -145,7 +134,7 @@ package dmem;
 
   (*synthesize*)
   module mkdmem#(parameter Bit#(32) id)(Ifc_dmem);
-    let dcache <- mkdcache_inst(id);
+    let dcache <- mkinst_dcache(id);
   `ifdef supervisor
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(0);
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);

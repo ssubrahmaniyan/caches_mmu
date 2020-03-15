@@ -157,9 +157,9 @@ package dcache1;
     let v_dbanks = valueOf(`ddbanks);
     let v_tagbits = valueOf(`tagbits);
 
-    let m_data <- mkinst_data;
-    let m_tag <- mkinst_tag;
-    let m_fillbuffer <- mkinst_fb_v2;
+    let m_data <- mkinst_data(id);
+    let m_tag <- mkinst_tag(id);
+    let m_fillbuffer <- mkinst_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
     FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkSizedFIFOF(2);
@@ -376,7 +376,7 @@ dataline ))
                                          io: False
                                           };
         ff_write_mem_request.enq(lv_req);
-        `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: Sending to Memory:",id,fshow(lv_req)))
+        `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: Evicting to Memory:",id,fshow(lv_req)))
       end
       if(lv_curr_way == fromInteger(v_ways-1))
         lv_next_set = zeroExtend(lv_curr_set) + 1;
@@ -419,7 +419,7 @@ dataline ))
     endrule
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
-                      && !rg_polling_mode && !fb_full);
+                      && !rg_polling_mode && !fb_full && !rg_release_readphase);
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
@@ -437,9 +437,10 @@ dataline ))
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
+      Bit#(`setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       let lv_tag_resp = m_tag.mv_read_response(phyaddr, ?);
-      Bit#(`dways) lv_hitmask = lv_tag_resp.waymask;
+      Bit#(`dways) lv_hitmask = lv_tag_resp.waymask & v_reg_valid[set_index];
       let lv_data_resp = m_data.mv_read_response(lv_blocknum,lv_hitmask);
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
 
@@ -464,10 +465,10 @@ dataline ))
     `endif
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Response:",id, fshow(lv_response)))
     endrule
     rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
     `ifdef supervisor
       Bit#(`paddr) phyaddr = ff_from_tlb.first.address;
     `else
@@ -476,7 +477,8 @@ dataline ))
       Bit#(`wordbits) word_offset = truncate(phyaddr);
       Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
 
-      let lv_polling_resp = m_fillbuffer.mav_polling_response(phyaddr);
+      let lv_polling_resp <- m_fillbuffer.mav_polling_response(phyaddr, ff_pending_req.notEmpty, 
+                ff_pending_req.first.fbindex);
       let lv_io_req = isIO(phyaddr, wr_cache_enable);
 
       let lv_response_word = lv_polling_resp.word >> {word_offset, 3'b0};
@@ -697,7 +699,7 @@ dataline ))
         wr_total_atomic_miss <= 1;
     `endif
   `endif
-        `logLevel( dcache, 0, $format("[%2d]DCACHE : MemReq: Sending Line Request for Addr:%h",id, phyaddr))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending Line Request for Addr:%h",id, phyaddr))
       end
     endrule
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
@@ -706,6 +708,7 @@ dataline ))
     rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
+      ff_read_mem_response.deq;
       m_fillbuffer.ma_fill_from_memory(response, pending_req.fbindex, pending_req.init_bank);
       `logLevel( dcache, 0, $format("[%2d]DCACHE: FILL: Response from Memory:",id,fshow(response)))
       if(response.last)
@@ -788,8 +791,8 @@ dataline ))
           m_tag.ma_request(True,set_index,fb_headaddr,waynum);
           m_data.ma_request(True,set_index,lv_release_info.dataline,waynum,'1);
           m_fillbuffer.ma_perform_release;
-          `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Upd Addr:%h set:%d way:%d dirty:%b", 
-                id,0, set_index,waynum,lv_release_info.dirty))
+          `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Upd Addr:%h set:%d way:%d dirty:%b data:%h", 
+                id,fb_headaddr, set_index,waynum,lv_release_info.dirty, lv_release_info.dataline))
           if(rg_release_readphase || set_index == rg_recent_req )
             rg_performing_replay <= True;
           // ------------------ replacement policy updates -------------------------------------//

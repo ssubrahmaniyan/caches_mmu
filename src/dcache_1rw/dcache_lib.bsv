@@ -40,6 +40,7 @@ package dcache_lib;
   import BUtils :: * ;
   import Memory :: * ; // only for the updateDataWithMask function
   import DReg :: * ;
+  import ConfigReg :: * ;
   import io_func::*;
 
   import mem_config :: * ;
@@ -96,7 +97,7 @@ package dcache_lib;
                                                Bit#(TLog#(ways)) wayselect);    
   endinterface
 
-  module mk_tagram(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
+  module mk_tagram#(parameter Bit#(32) id)(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
     provisos(    
           Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
@@ -116,7 +117,8 @@ package dcache_lib;
                               Bit#(TLog#(sets)) index, 
                               Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
-
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
+                                     id, read_write, index, address, way))
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -162,7 +164,7 @@ package dcache_lib;
                                               Bit#(ways) wayselect );
   endinterface
 
-  module mk_dataram#(parameter Bool onehot)
+  module mk_dataram#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_dataram#(wordsize, blocksize, sets, ways, banks))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -190,6 +192,8 @@ package dcache_lib;
                               Bit#(TLog#(ways)) way,
                               Bit#(banks) banks);
 
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
+                                     id, read_write, index, way, dataline))
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_data[i].request(0, index, dataline, banks);
@@ -269,7 +273,7 @@ package dcache_lib;
   (*conflict_free="ma_fill_from_memory, ma_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, mav_release_info"*)
   (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
-  module mk_fillbuffer#(parameter Bool onehot)
+  module mk_fillbuffer#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, banks, paddr, buswidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -355,7 +359,6 @@ package dcache_lib;
                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
                                     Bit#(paddr)                               address,
                                     Bit#(1)                                   dirty );
-
       Bit#(1) _temp = pack(from_ram);
       v_fb_addr_valid[rg_fbtail] <= True;
       v_fb_addr[rg_fbtail] <= address;
@@ -492,8 +495,8 @@ package dcache_lib;
 
     method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
     method Action ma_perform_release;
-    method PollingResponse#(wordsize,fbsize) mav_polling_response(
-      Bit#(paddr) address); 
+    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex); 
 
   endinterface
 
@@ -502,7 +505,7 @@ package dcache_lib;
   (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
   (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
   (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
-  module mk_fillbuffer_v2#(parameter Bool onehot)
+  module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, banks, paddr, respwidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -549,15 +552,15 @@ package dcache_lib;
     Vector#(fbsize,Reg#(Bool))                      v_fb_addr_valid    <- replicateM(mkReg(False));
     /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
-    Vector#(fbsize,Vector#(banks,Reg#(Bit#(respwidth))))    v_fb_data     
-                                                    <- replicateM(replicateM(mkReg(unpack(0))));
+    Vector#(fbsize,Vector#(banks,ConfigReg#(Bit#(respwidth))))    v_fb_data     
+                                                    <- replicateM(replicateM(mkConfigReg(unpack(0))));
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
-    Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_err      <- replicateM(mkReg(0));
+    Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
     /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
     Vector#(fbsize,Reg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkReg(0));
     /*doc: vec: vector of regisetrs to indicate if the entire line of the fillbuffer entry is
      * available or not*/
-    Vector#(fbsize,Reg#(Bool))                   v_fb_line_valid  <- replicateM(mkReg(False));
+    Vector#(fbsize,ConfigReg#(Bool))                   v_fb_line_valid  <- replicateM(mkConfigReg(False));
     /*doc: reg: register to indicate how many bytes of the line have been filled by the
      bus*/
     Reg#(Bit#(banks))                  rg_fb_enables    <- mkReg(0);
@@ -577,6 +580,10 @@ package dcache_lib;
     Bool fb_full = (all(isTrue, readVReg(v_fb_addr_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
     Bool fb_empty=!(any(isTrue, readVReg(v_fb_addr_valid)));
+    rule rl_print_stats;
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: fb_full:%b fb_empty:%b fbhead:%d fbtail:%d\
+ fbheadvalid:%b", id, fb_full, fb_empty, rg_fbhead, rg_fbtail, v_fb_line_valid[rg_fbhead]))
+    endrule
 
     method mv_fbfull = fb_full;
     method mv_fbempty = fb_empty;
@@ -598,18 +605,18 @@ package dcache_lib;
       for (Integer i = 0; i< v_banks ; i = i + 1) begin
         v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
       end
-      if(!from_ram)
-        rg_fb_enables <= 0;
       if(rg_fbtail == fromInteger(v_fbsize -1))
         rg_fbtail <= 0;
       else
         rg_fbtail <= rg_fbtail + 1;
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FB: Allocating: fromram:%b address:%h dirty:%b",
+                                        id, from_ram, address, dirty))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FB: Allocating fbindex:%d", id, rg_fbtail))
       return rg_fbtail;
     endmethod
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TLog#(banks))              init_bank);
-      
       Bit#(TLog#(banks)) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
       v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
       rg_next_bank <= lv_current_bank + 1;
@@ -619,8 +626,9 @@ package dcache_lib;
       end
       else
         rg_fb_enables[lv_current_bank] <= 1;
-
       v_fb_err[fbindex] <= pack(mem_resp.err);
+      `logLevel(dcache , 0, $format("[%2d]DCACHE: FB Fill: fbindex:%d ibank:%d cbank:%d fben:%b", id,
+      fbindex, init_bank, lv_current_bank, rg_fb_enables))
     endmethod
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
@@ -648,13 +656,12 @@ package dcache_lib;
       v_fb_line_valid[rg_fbhead] <= False;
     endmethod
 
-    method PollingResponse#(wordsize,fbsize) mav_polling_response(
-      Bit#(paddr) address); 
+    method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
+      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex); 
 
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
 
       Bit#(blockbits) word_index = truncate(address >> v_wordbits);
-      let required_enable = fn_enable(word_index);
       Bit#(TLog#(respwidth)) zeros = 0;
       Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
       Bit#(fbsize) lv_hitvector = 0; 
@@ -682,7 +689,11 @@ package dcache_lib;
           end
         end
       end
-      Bool lv_wordhit = (lv_linevalid || ((required_enable & rg_fb_enables) != 0));
+      Bool lv_hit_in_fill = fill && lv_hitvector[fbindex] == 1 &&
+                            (rg_fb_enables[block_offset] == 1);
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FB: Polling: linevalid:%b blockoffset:%d",id,
+                                    lv_linevalid, block_offset))
+      Bool lv_wordhit = (lv_linevalid || lv_hit_in_fill);
       return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
@@ -690,27 +701,27 @@ package dcache_lib;
       
 
   (*synthesize*)
-  module mkinst_tag(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
+  module mkinst_tag#(parameter Bit#(32) id)(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
-    mk_tagram _temp(ifc);
+    mk_tagram _temp(id,ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_data(Ifc_dataram#(`dwords, `dblocks, `dsets, `dways, `ddbanks));
+  module mkinst_data#(parameter Bit#(32) id)(Ifc_dataram#(`dwords, `dblocks, `dsets, `dways, `ddbanks));
     let ifc();
-    mk_dataram#(False) _temp(ifc);
+    mk_dataram#(id,False) _temp(ifc);
     return (ifc);
   endmodule
+//  (*synthesize*)
+//  module mkinst_fb#(parameter Bit#(32) id)(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr, `dbuswidth));
+//    let ifc();
+//    mk_fillbuffer#(id,False) _temp(ifc);
+//    return (ifc);
+//  endmodule
   (*synthesize*)
-  module mkinst_fb(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr, `dbuswidth));
+  module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr,  `dbuswidth));
     let ifc();
-    mk_fillbuffer#(False) _temp(ifc);
-    return (ifc);
-  endmodule
-  (*synthesize*)
-  module mkinst_fb_v2(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr,  `dbuswidth));
-    let ifc();
-    mk_fillbuffer_v2#(False) _temp(ifc);
+    mk_fillbuffer_v2#(id,False) _temp(ifc);
     return (ifc);
   endmodule
 
