@@ -225,17 +225,29 @@ package dmem_tb;
       if((waddr>>(`dwords + `dblocks )) == (req.address>>(`dwords + `dblocks ) ))begin
         rg_read_mem_req_del <= tagged Valid req;
         perform_req = False;
+        `logLevel( tb, 0, $format("TB: Memory Read request Delayed"))
       end
     end
-    if (perform_req)
+    if (perform_req) begin
       read_mem_req<=tagged Valid req;
     `logLevel( tb, 0, $format("TB: Memory Read request: ",fshow(req)))
+    end
   endrule
 
   rule rl_send_delayed_read(rg_read_mem_req_del matches tagged Valid .req &&& read_mem_req matches
     tagged Invalid);
-    rg_read_mem_req_del <= tagged Invalid;
-    read_mem_req <= tagged Valid req;
+    if(wr_write_req matches tagged Valid .waddr) begin
+      if((waddr>>(`dwords + `dblocks )) == (req.address>>(`dwords + `dblocks ) ))begin
+      end
+      else begin
+        rg_read_mem_req_del <= tagged Invalid;
+        read_mem_req <= tagged Valid req;
+      end
+    end
+    else begin
+      rg_read_mem_req_del <= tagged Invalid;
+      read_mem_req <= tagged Valid req;
+    end
   endrule
 
   rule read_mem_resp(read_mem_req matches tagged Valid .req);
