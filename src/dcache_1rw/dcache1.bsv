@@ -48,7 +48,6 @@ package dcache1;
   import dcache_lib :: * ;
   import replacement_dcache :: * ;
   import mem_config :: * ;
-  import dcache_storebuffer :: * ;
   import common_tlb_types:: * ;
 
   import io_func :: * ;
@@ -138,9 +137,8 @@ package dcache1;
   // entry in fb while ma_perform_store will update an existing allotted entry in the fb so hence no
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
-  module mkdcache#( parameter Bit#(32) id, 
-                    parameter Bool param_onehot)
-                    (Ifc_dcache);
+  (*synthesize*)
+  module mkdcache#( parameter Bit#(32) id)(Ifc_dcache);
 
     String dcache = "";
     let v_sets=valueOf(`dsets);
@@ -174,7 +172,7 @@ package dcache1;
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(DCache_mem_readresp#(`dbuswidth)) ff_read_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo stores the eviction request to be written back*/
-    FIFOF#(DCache_mem_writereq#(`paddr, `linewidth)) ff_write_mem_request <- mkSizedFIFOF(1);
+    FIFOF#(DCache_mem_writereq#(`paddr, `linewidth)) ff_write_mem_request <- mkFIFOF1;
     /*doc:fifo: this fifo stores the write response from an eviction or a io write req*/
     FIFOF#(DCache_mem_writeresp) ff_write_mem_response  <- mkBypassFIFOF();
     /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
@@ -310,7 +308,7 @@ package dcache1;
 
     Ifc_replace#(`dsets,`dways) replacement <- mkreplace(`drepl);
     // --------------------- Store buffer related structures ----------------------------------//
-    Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize) storebuffer <- mk_storebuffer(id);
+    Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize) m_storebuffer <- mk_storebuffer(id);
 
     /*doc:wire: holds the byte-enables for the store operation being performed*/
     Wire#(Bit#(TDiv#(`linewidth,8))) wr_store_be <- mkDWire(0);
@@ -323,13 +321,18 @@ package dcache1;
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
     // --------------------------- Rule operations ------------------------------------- //
-    Bool sb_empty = storebuffer.mv_sb_empty;
-    Bool sb_full = storebuffer.mv_sb_full;
+    Bool sb_empty = m_storebuffer.mv_sb_empty;
+    Bool sb_full = m_storebuffer.mv_sb_full;
     Bool fb_full = m_fillbuffer.mv_fbfull;
     Bool fb_empty = m_fillbuffer.mv_fbempty;
     Bool fb_headvalid = m_fillbuffer.mv_fbhead_valid;
-    let fb_headaddr = m_fillbuffer.mv_fbhead_address;
-    Bit#(`setbits) fillindex = fb_headaddr[v_setbits + v_blockbits + v_wordbits - 1:
+    // --------- release information 
+    let lv_release_line = m_fillbuffer.mv_release_info.dataline;
+    let lv_release_addr = m_fillbuffer.mv_release_info.address;
+    let lv_release_err  = m_fillbuffer.mv_release_info.err;
+    let lv_release_dirty =m_fillbuffer.mv_release_info.dirty; 
+
+    Bit#(`setbits) fillindex = lv_release_addr[v_setbits + v_blockbits + v_wordbits - 1:
                                                                           v_blockbits + v_wordbits];
     /*doc:var: This variable indicates if there is an oppurtunity to perform a release from the
     fill-buffer to the RAMS. This takes advantage of the fact that the cache is idle is not being
@@ -384,8 +387,8 @@ dataline ))
       if(v_ways > 1)
         lv_next_way = lv_curr_way + 1;
 
-      m_tag.ma_request(False, truncate(lv_next_set), ? , ?);
-      m_data.ma_request(False, truncate(lv_next_set), ?, ?, '1);
+      m_tag.ma_request(False, truncate(lv_next_set), lv_release_addr , ?);
+      m_data.ma_request(False, truncate(lv_next_set), lv_release_line, ?, '1);
 
       if((lv_curr_way == fromInteger(v_ways - 1) && lv_next_set== fromInteger(v_sets))
               || !rg_globaldirty) begin
@@ -537,7 +540,7 @@ dataline ))
       Bit#(`wordbits) word_offset = truncate(phyaddr);
       DMem_core_response#(`respwidth,`desize) lv_response;
 
-      let {storemask, storedata} <- storebuffer.mav_check_sb_hit(phyaddr);
+      let {storemask, storedata} <- m_storebuffer.mav_check_sb_hit(phyaddr);
 
       Bit#(3) onehot_hit = {pack(wr_ram_state==Hit || wr_fault), 
                             pack(wr_fb_state==Hit && !wr_fault), 
@@ -635,7 +638,7 @@ dataline ))
         if(req.access == 2)
           req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
       `endif
-        storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
+        m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
                                           isIO(phyaddr, wr_cache_enable));
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
         wr_allocating_storebuffer <= True;
@@ -682,21 +685,16 @@ dataline ))
       if(lv_io_req) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
       `ifdef perfmonitors
-        if(req.access == 0)
-          wr_total_io_reads <= 1;
-        if(req.access == 1)
-          wr_total_io_writes <= 1;
+        wr_total_io_reads <= pack(req.access == 0);
+        wr_total_io_writes <= pack(req.access == 1);
       `endif
       end
       else begin
   `ifdef perfmonitors
-      if(req.access == 0)
-        wr_total_read_miss <= 1;
-      if(req.access == 1)
-        wr_total_write_miss <= 1;
+      wr_total_read_miss <= pack(req.access == 0);
+      wr_total_write_miss <= pack(req.access == 1);
     `ifdef atomic
-      if(req.access == 2)
-        wr_total_atomic_miss <= 1;
+      wr_total_atomic_miss <= pack(req.access == 1);
     `endif
   `endif
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending Line Request for Addr:%h",id, phyaddr))
@@ -728,15 +726,15 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: NC Response from Memory: ",id,fshow(response)))
     endrule
     rule rl_perform_replay(rg_performing_replay);
-      m_tag.ma_request(False, rg_recent_req, ?, ?);
-      m_data.ma_request(False, rg_recent_req, ?, ?, '1);
+      m_tag.ma_request(False, rg_recent_req, lv_release_addr, ?);
+      m_data.ma_request(False, rg_recent_req, lv_release_line, ?, '1);
       rg_performing_replay <= False;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || fill_oppurtunity) && 
                                     sb_empty && !fb_empty && !wr_allocating_storebuffer  
                                     && fb_headvalid && !rg_performing_replay);
-      let addr = fb_headaddr;
+      let addr = lv_release_addr;
       Bit#(`setbits) set_index = addr[v_setbits + v_blockbits + v_wordbits - 1 :
                                                                          v_blockbits + v_wordbits];
 
@@ -746,14 +744,14 @@ dataline ))
                                     set_index, waynum,v_reg_valid[set_index][waynum] ,
                                     v_reg_dirty[set_index][waynum] ))
       let lv_release_info = m_fillbuffer.mv_release_info;
-      if(m_fillbuffer.mv_fbhead_err == 0)begin
+      if(lv_release_err == 0)begin
         // enter here if the fillbuffer entry is valid and has no errors
         if((v_reg_valid[set_index][waynum] & v_reg_dirty[set_index][waynum])==1 &&
                                                                         !rg_release_readphase)begin
           // enter here if the line to be replaced is valid and dirty. We thus need to first read it
           // out and then send to the next level
-          m_tag.ma_request(False, set_index, ?, ?);
-          m_data.ma_request(False, set_index, ?, ?, '1);
+          m_tag.ma_request(False, set_index, lv_release_addr, ?);
+          m_data.ma_request(False, set_index, lv_release_line, ?, '1);
           rg_release_readphase <= True;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Reading dirty set:%d way:%d",id,
                                       set_index,waynum))
@@ -788,11 +786,11 @@ dataline ))
         `endif
           v_reg_valid[set_index][waynum]<=1;
           v_reg_dirty[set_index][waynum]<=lv_release_info.dirty;
-          m_tag.ma_request(True,set_index,fb_headaddr,waynum);
-          m_data.ma_request(True,set_index,lv_release_info.dataline,waynum,'1);
+          m_tag.ma_request(True,set_index,lv_release_addr,waynum);
+          m_data.ma_request(True,set_index,lv_release_line,waynum,'1);
           m_fillbuffer.ma_perform_release;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: Release: Upd Addr:%h set:%d way:%d dirty:%b data:%h", 
-                id,fb_headaddr, set_index,waynum,lv_release_info.dirty, lv_release_info.dataline))
+                id,lv_release_addr, set_index,waynum,lv_release_info.dirty, lv_release_info.dataline))
           if(rg_release_readphase || set_index == rg_recent_req )
             rg_performing_replay <= True;
           // ------------------ replacement policy updates -------------------------------------//
@@ -840,15 +838,15 @@ dataline ))
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
-        m_tag.ma_request(False, set_index, ?, ?);
-        m_data.ma_request(False, set_index, ?, ?, '1);
+        m_tag.ma_request(False, set_index, lv_release_addr, ?);
+        m_data.ma_request(False, set_index, lv_release_line, ?, '1);
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         wr_takingrequest <= True;
       endmethod
     endinterface;
     method Action ma_perform_store(Bit#(`desize) currepoch);
-      let {sb_valid, sb_entry} <- storebuffer.mav_store_to_commit;
+      let {sb_valid, sb_entry} <- m_storebuffer.mav_store_to_commit;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
       if(sb_entry.epoch == currepoch) begin
         if(sb_entry.io) begin
@@ -897,22 +895,12 @@ dataline ))
                               wr_total_write_fb_hits, wr_total_atomic_fb_hits,
                               wr_total_fb_releases, wr_total_evictions };
     `endif
-    method mv_storebuffer_empty = storebuffer.mv_sb_empty;
-    method mv_cacheable_store = storebuffer.mv_cacheable_store;
+    method mv_storebuffer_empty = m_storebuffer.mv_sb_empty;
+    method mv_cacheable_store = m_storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !rg_performing_replay && !sb_full;
     method mv_commit_store_ready = ff_write_mem_request.notFull;
   endmodule
 
-  (*synthesize*)
-  module mkinst_dcache#(parameter Bit#(32) id)(Ifc_dcache);
-    let ifc();
-  `ifdef dcache
-    mkdcache#(id, unpack(`dcache_onehot)) _temp(ifc);
-  `else
-    mknull_dcache _temp(ifc);
-  `endif
-    return (ifc);
-  endmodule
 endpackage
 

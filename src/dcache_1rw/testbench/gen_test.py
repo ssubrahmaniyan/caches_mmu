@@ -361,17 +361,11 @@ def test10():
     
     address=4096+(word_size*block_size*sets) # request to old line 2, should be a miss
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="2" :
-        entrycount=entrycount+1
-    if repl=="1" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
 
     address=4096+(word_size*block_size*sets*(ways-1)) # request to old line 0, should be a miss 
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="2" :
-        entrycount=entrycount+1
-    if repl=="1" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -454,10 +448,7 @@ def test12():
 
     address=4096 # request to old line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    if repl=="2" :
-        entrycount=entrycount+1
-    if repl=="1" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -497,10 +488,7 @@ def test13():
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line 3
-    if repl=="2" :
-        entrycount=entrycount+1
-    if repl=="1" :
-        entrycount=entrycount+1
+    entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1

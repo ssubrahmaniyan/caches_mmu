@@ -27,8 +27,8 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
-TOP_MODULE:=mkdcache
+TOP_MODULE:=mkdmem_tb
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
-TOP_DIR:= ../
-TOP_FILE:= dcache1.bsv
+TOP_DIR:= ./
+TOP_FILE:= dmem_tb.bsv
 

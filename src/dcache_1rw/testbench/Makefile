@@ -80,9 +80,11 @@ generate_verilog:
 	@echo Compiling $(TOP_MODULE) in verilog ...
 	@mkdir -p $(BSVBUILDDIR); 
 	@mkdir -p $(VERILOGDIR); 
-	bsc -check-assert -show-module-use -suppress-warnings S0015 -u -verilog -show-schedule -sched-dot +RTS -K40000M -RTS -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR)\
-  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \
-  -p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
+	bsc -u -verilog -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) \
+		+RTS -K40000M -RTS -check-assert  -keep-fires -opt-undetermined-vals -remove-false-rules \
+		-remove-empty-rules -remove-starved-rules -remove-dollar -unspecified-to X -show-schedule \
+		-show-module-use $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \
+		-p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
 	@echo "old_define_macros = $(define_macros)" > vars
 	@cp common_verilog/*.v $(VERILOGDIR)
 	@cp ${BSC_VDIR}/../Verilog.Vivado/RegFile.v $(VERILOGDIR)  

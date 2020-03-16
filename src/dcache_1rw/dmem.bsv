@@ -134,7 +134,7 @@ package dmem;
 
   (*synthesize*)
   module mkdmem#(parameter Bit#(32) id)(Ifc_dmem);
-    let dcache <- mkinst_dcache(id);
+    let dcache <- mkdcache(id);
   `ifdef supervisor
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(0);
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
