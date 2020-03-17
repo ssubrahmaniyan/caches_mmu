@@ -117,8 +117,6 @@ package dcache_lib;
                               Bit#(TLog#(sets)) index, 
                               Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
-                                     id, read_write, index, address, way))
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -163,8 +161,6 @@ package dcache_lib;
                               Bit#(TLog#(sets)) index, 
                               Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
-                                     id, read_write, index, address, way))
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -237,8 +233,6 @@ package dcache_lib;
                                  Bit#(TLog#(sets)) index, 
                                  Bit#(paddr) address, 
                                  Bit#(TLog#(ways)) way);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
-                                     id, read_write, index, address, way))
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -317,8 +311,6 @@ package dcache_lib;
                               Bit#(TLog#(ways)) way,
                               Bit#(banks) banks);
 
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
-                                     id, read_write, index, way, dataline))
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_data[i].request(0, index, dataline, banks);
@@ -388,8 +380,6 @@ package dcache_lib;
                               Bit#(TLog#(ways)) way,
                               Bit#(banks) banks);
 
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
-                                     id, read_write, index, way, dataline))
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_data[i].read(index);
@@ -487,8 +477,6 @@ package dcache_lib;
                               Bit#(TLog#(ways)) way,
                               Bit#(banks) banks);
 
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
-                                     id, read_write, index, way, dataline))
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_data[i].p2.request(0, index, dataline, banks);
