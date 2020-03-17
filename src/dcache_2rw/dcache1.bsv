@@ -396,7 +396,7 @@ dataline ))
     endrule
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss  
-                      && !rg_polling_mode && !fb_full && !rg_release_readphase);
+                      && !rg_polling_mode && !fb_full );
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
