@@ -103,17 +103,15 @@ package dcache_types;
 `ifdef dcache_ecc
   typedef struct{
     Bit#(a) address;
-    Bit#(w) ways;
-  } ECC_dcache_tag_ded#(numeric type a, numeric type w) deriving(Bits, FShow, Eq);
+    Bit#(w) way;
+  } ECC_dcache_tag#(numeric type a, numeric type w) deriving(Bits, FShow, Eq);
 
   typedef struct{
     Bit#(a) address;
-    Bit#(TMul#(w,b)) banks;
-  } ECC_dcache_data_ded#(numeric type a, numeric type w, numeric type b) deriving(Bits, FShow, Eq);
+    Bit#(b) banks;
+    Bit#(w) way;
+  } ECC_dcache_data#(numeric type a, numeric type w, numeric type b) deriving(Bits, FShow, Eq);
 
-  typedef struct{
-    Bit#(a) address;
-  } ECC_dcache_sec#(numeric type a) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bit#(TLog#(`dsets)) index; 
