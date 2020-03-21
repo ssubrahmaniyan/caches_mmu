@@ -66,31 +66,6 @@ package dcache1;
   } Pending_req#(numeric type fbsize, numeric type banks)
                 deriving(Bits, Eq, FShow);
 
-  (*noinline*)
-  /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
-  function Bit#(`respwidth) fn_atomic_op (Bit#(5) op,  Bit#(`respwidth) rs2,  Bit#(`respwidth) loaded);
-    Bit#(`respwidth) op1 = loaded;
-    Bit#(`respwidth) op2 = rs2;
-    if(op[4]==0)begin
-			op1=signExtend(loaded[31:0]);
-      op2= signExtend(rs2[31:0]);
-    end
-    Int#(`respwidth) s_op1 = unpack(op1);
-		Int#(`respwidth) s_op2 = unpack(op2);
-
-    case (op[3:0])
-				'b0011:return op2;
-				'b0000:return (op1+op2);
-				'b0010:return (op1^op2);
-				'b0110:return (op1&op2);
-				'b0100:return (op1|op2);
-				'b1100:return min(op1,op2);
-				'b1110:return max(op1,op2);
-				'b1000:return pack(min(s_op1,s_op2));
-				'b1010:return pack(max(s_op1,s_op2));
-				default:return op1;
-			endcase
-  endfunction
 
   interface Ifc_dcache;
     interface Put#(DCache_core_request#(`vaddr,TMul#(`dwords,8),`desize)) put_core_req;
@@ -129,9 +104,11 @@ package dcache1;
   // the following rules access the mv_read_response from of data and tag modules which is a
   // conflict. However, these two rules will never fire together
   (*mutually_exclusive="rl_release_from_fillbuffer, rl_ram_check"*)
+`ifdef dcache_ecc
   (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
   (*preempts="mv_ram_response,rl_ram_check"*)
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
+`endif
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
   // and similarly a store entry cannot be committed which is just being allotted.
   (*conflict_free="rl_response_to_core,ma_perform_store"*)
@@ -432,7 +409,8 @@ dataline ))
     endrule
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
-                      && !rg_polling_mode && !fb_full && !rg_release_readphase);
+                      && !rg_polling_mode && !fb_full && !rg_release_readphase
+                  `ifdef atomic && !m_storebuffer.mv_sb_busy `endif );
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
@@ -479,7 +457,8 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
-    rule rl_fillbuffer_check(!ff_core_request.first.fence);
+    rule rl_fillbuffer_check(!ff_core_request.first.fence
+                              `ifdef atomic && !m_storebuffer.mv_sb_busy `endif );
       let req = ff_core_request.first;
       `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
     `ifdef supervisor
@@ -644,12 +623,9 @@ dataline ))
       if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
         Bit#(TLog#(`dfbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:_fbindex;
-      `ifdef atomic
-        if(req.access == 2)
-          req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
-      `endif
         m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
-                                          isIO(phyaddr, wr_cache_enable));
+                                          isIO(phyaddr, wr_cache_enable)
+                                `ifdef atomic ,req.access == 2,lv_response.word, req.atomic_op `endif );
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
         wr_allocating_storebuffer <= True;
       end

@@ -45,6 +45,8 @@ package dcache_lib;
 
   import mem_config :: * ;
   import dcache_types :: * ;
+  
+  `define respwidth `vaddr
 
   typedef struct{
     Bit#(ways) sed;
@@ -76,7 +78,7 @@ package dcache_lib;
     Bool line_hit;
     Bool word_hit;
   } PollingResponse#(numeric type w, numeric type f) deriving(Bits, FShow, Eq);
-
+  
   interface Ifc_tagram#(numeric type wordsize,
                         numeric type blocksize,
                         numeric type sets,
@@ -228,10 +230,8 @@ package dcache_lib;
       Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {blocknum,zeros};
       Bit#(respwidth) lv_selected_word = ?;
       Bit#(linewidth) lv_selected_line = ?;
-    `ifdef dcache_ecc
-      Bit#(blocksize) lv_line_ded = ?;
-      Bit#(blocksize) lv_line_sed = ?;
-    `endif
+      Bit#(blocksize) lv_line_ded = 0;
+      Bit#(blocksize) lv_line_sed = 0;
       if (onehot) begin
         Vector#(ways, Bit#(respwidth)) lv_words = ?;
         Vector#(ways, Bit#(linewidth)) lv_lines = ?;
@@ -264,8 +264,8 @@ package dcache_lib;
           end
         end
       end
-      Bit#(1) lv_word_ded = lv_line_ded[blocknum];
-      Bit#(1) lv_word_sed = lv_line_sed[blocknum];
+      Bit#(1) lv_word_ded = `ifdef dcache_ecc lv_line_ded[blocknum] `else 0 `endif ;
+      Bit#(1) lv_word_sed = `ifdef dcache_ecc lv_line_sed[blocknum] `else 0 `endif ;
 
       return DataResponse{word_sed: lv_word_sed, word_ded:lv_word_ded, word: lv_selected_word,
                           line_sed: lv_line_sed, line_ded:lv_line_ded, line: lv_selected_line};
@@ -740,12 +740,16 @@ package dcache_lib;
     method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8))))
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data,
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io);
+            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io
+          `ifdef atomic ,Bool atomic, Bit#(TMul#(8,wordsize)) read_data, Bit#(5) atomic_op `endif );
     method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize))))
                                                                             mav_store_to_commit;
     method Bool mv_sb_full;
     method Bool mv_sb_empty;
     method Bool mv_cacheable_store;
+  `ifdef atomic
+    method Bool mv_sb_busy;
+  `endif
   endinterface
 
   function Bool isTrue(Bool a);
@@ -784,9 +788,38 @@ package dcache_lib;
               Add#(1, c__, sbsize),
               Mul#(16, a__, dataword),
               Mul#(32, d__, dataword)
+
+            `ifdef atomic
+              ,Add#(e__, 32, dataword)
+            `endif
             );
 
     let v_wordbits = valueOf(wordbits);
+  
+    /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
+    function Bit#(dataword) fn_atomic_op (Bit#(5) op,  Bit#(dataword) rs2,  Bit#(dataword) loaded);
+      Bit#(dataword) op1 = loaded;
+      Bit#(dataword) op2 = rs2;
+      if(op[4]==0)begin
+	  		op1=signExtend(loaded[31:0]);
+        op2= signExtend(rs2[31:0]);
+      end
+      Int#(dataword) s_op1 = unpack(op1);
+	  	Int#(dataword) s_op2 = unpack(op2);
+
+      case (op[3:0])
+	  			'b0011:return op2;
+	  			'b0000:return (op1+op2);
+	  			'b0010:return (op1^op2);
+	  			'b0110:return (op1&op2);
+	  			'b0100:return (op1|op2);
+	  			'b1100:return min(op1,op2);
+	  			'b1110:return max(op1,op2);
+	  			'b1000:return pack(min(s_op1,s_op2));
+	  			'b1010:return pack(max(s_op1,s_op2));
+	  			default:return op1;
+	  		endcase
+    endfunction
 
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
@@ -807,6 +840,26 @@ package dcache_lib;
     Bool sb_full = (all(isTrue, readVReg(v_sb_valid)));
     /*dov:var: variable to indicate that the storebuffer is empty*/
     Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
+
+  `ifdef atomic
+    /*doc:reg: */
+    Reg#(Bool) rg_sb_busy <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bit#(dataword)) rg_atomic_readword <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(5)) rg_atomic_op <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(sbsize))) rg_atomic_tail <- mkReg(0);
+
+    /*doc:rule: */
+    rule rl_perform_atomic(rg_sb_busy);
+      let _s = v_sb_meta[rg_atomic_tail];
+      let _newdata = fn_atomic_op(rg_atomic_op, _s.data, rg_atomic_readword);
+      _s.data = _newdata;
+      v_sb_meta[rg_atomic_tail] <= _s;
+      rg_sb_busy <= False;
+    endrule
+  `endif
 
     method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
@@ -832,8 +885,10 @@ package dcache_lib;
       return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
 
-    method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data,
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io) if(!sb_full);
+    method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
+          Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io
+          `ifdef atomic ,Bool atomic, Bit#(TMul#(8,wordsize)) read_data, 
+          Bit#(5) atomic_op `endif ) if(!sb_full `ifdef atomic && !rg_sb_busy `endif );
 
       data = case (size[1 : 0])
         'b00 : duplicate(data[7 : 0]);
@@ -855,6 +910,12 @@ package dcache_lib;
       rg_tail <= rg_tail + 1;
       `logLevel( storebuffer, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
                                           fshow(_s)))
+    `ifdef atomic 
+      rg_sb_busy <= atomic;
+      rg_atomic_tail <= rg_tail;
+      rg_atomic_readword <= read_data;
+      rg_atomic_op <= atomic_op;
+    `endif
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
@@ -865,6 +926,9 @@ package dcache_lib;
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;
+  `ifdef atomic
+    method mv_sb_busy = rg_sb_busy;
+  `endif
   endmodule
 
   (*synthesize*)
