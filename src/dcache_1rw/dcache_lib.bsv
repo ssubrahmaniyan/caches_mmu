@@ -1,15 +1,15 @@
-/* 
+/*
 Copyright (c) 2019, IIT Madras All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted
 provided that the following conditions are met:
 
 * Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.  
-* Redistributions in binary form must reproduce the above copyright notice, this list of 
-  conditions and the following disclaimer in the documentation and/or other materials provided 
-  with the distribution.  
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
+  and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright notice, this list of
+  conditions and the following disclaimer in the documentation and/or other materials provided
+  with the distribution.
+* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or
   promote products derived from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
@@ -18,7 +18,7 @@ AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYR
 CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
 DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------------------------
 
@@ -85,20 +85,20 @@ package dcache_lib;
 
     /*doc:method: request method to initiate a read or write on the tags. A read is latched on all
     * ways. A write is peformed only on a single way.*/
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(paddr) address, 
+    method Action ma_request( Bool read_write,
+                              Bit#(TLog#(sets)) index,
+                              Bit#(paddr) address,
                               Bit#(TLog#(ways)) way);
 
     /*doc:method: This method will read the ram output from all ways. Compare with the input tag.
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
-    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect);    
+    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in,
+                                               Bit#(TLog#(ways)) wayselect);
   endinterface
 
   module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
-    provisos(    
+    provisos(
           Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
           Log#(sets, setbits),           // setbits is the no. of bits used as index in BRAMs.
@@ -111,7 +111,7 @@ package dcache_lib;
           Add#(b__, tagbits, 64)
         `endif
     );
-    
+
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
 
@@ -123,9 +123,9 @@ package dcache_lib;
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, 1)) v_tags <-
                                                         replicateM(mkmem_config1rw(False));
   `endif
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(paddr) address, 
+    method Action ma_request( Bool read_write,
+                              Bit#(TLog#(sets)) index,
+                              Bit#(paddr) address,
                               Bit#(TLog#(ways)) way);
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
@@ -136,7 +136,7 @@ package dcache_lib;
         v_tags[way].request(1, index, tag, '1);
     endmethod
 
-    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
+    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in,
                                                Bit#(TLog#(ways)) wayselect );
 
       Bit#(tagbits) tag_in = truncateLSB(address_in);
@@ -154,7 +154,7 @@ package dcache_lib;
       return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag };
     endmethod
   endmodule
-  
+
 
   interface Ifc_dataram#(numeric type wordsize,
                          numeric type blocksize,
@@ -162,9 +162,9 @@ package dcache_lib;
                          numeric type ways);
     /*doc:method: request method to initiate a read or write on the dataline. A read is latched on all
     * ways. A write is peformed only on a single way.*/
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(TMul#(TMul#(wordsize, 8),blocksize)) dataline, 
+    method Action ma_request( Bool read_write,
+                              Bit#(TLog#(sets)) index,
+                              Bit#(TMul#(TMul#(wordsize, 8),blocksize)) dataline,
                               Bit#(TLog#(ways)) way,
                               Bit#(blocksize) banks);
 
@@ -172,7 +172,7 @@ package dcache_lib;
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
     method DataResponse#(blocksize,wordsize) mv_read_response(
-                                              Bit#(TLog#(blocksize)) blocknum, 
+                                              Bit#(TLog#(blocksize)) blocknum,
                                               Bit#(ways) wayselect );
   endinterface
 
@@ -201,15 +201,15 @@ package dcache_lib;
     let v_sets = valueOf(sets);
     let v_ways = valueOf(ways);
   `ifdef dcache_ecc
-    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data 
+    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
                                                       <- replicateM(mkmem_config1rw_ecc(False));
   `else
-    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data 
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
                                                       <- replicateM(mkmem_config1rw(False));
   `endif
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(linewidth) dataline, 
+    method Action ma_request( Bool read_write,
+                              Bit#(TLog#(sets)) index,
+                              Bit#(linewidth) dataline,
                               Bit#(TLog#(ways)) way,
                               Bit#(blocksize) banks);
 
@@ -222,7 +222,7 @@ package dcache_lib;
     endmethod
 
     method DataResponse#(blocksize,wordsize) mv_read_response(
-                                              Bit#(blockbits) blocknum, 
+                                              Bit#(blockbits) blocknum,
                                               Bit#(ways) wayselect );
       Bit#(TLog#(respwidth)) zeros = 0;
       Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {blocknum,zeros};
@@ -304,7 +304,7 @@ package dcache_lib;
     method ActionValue#(ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr))
                                                                       mav_release_info;
     method PollingResponse#(wordsize,fbsize) mav_polling_response(
-      Bit#(paddr) address); 
+      Bit#(paddr) address);
 
   endinterface
 
@@ -323,7 +323,7 @@ package dcache_lib;
           Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index+offset,
           Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
-          
+
           // required by bsc
           Add#(a__, TLog#(TMul#(blocksize, wordsize)), TAdd#(TLog#(TMul#(wordsize,
     blocksize)), 1)),
@@ -384,7 +384,7 @@ package dcache_lib;
     /*doc:wire: holds the data to be updated in the fill-buffer*/
     Wire#(Bit#(linewidth))                          wr_store_data <- mkDWire(0);
 
-    
+
     /*doc:var: variable indicating the fillbuffer is full*/
     Bool fb_full = (all(isTrue, readVReg(v_fb_addr_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
@@ -415,7 +415,7 @@ package dcache_lib;
     method Action ma_fill_from_memory(DCache_mem_readresp#(buswidth)  mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TMul#(wordsize,blocksize)) init_enable);
-      
+
       let lv_fb_enable = rg_fb_enables;
       v_fb_err[fbindex] <= pack(mem_resp.err);
       Bit#(TMul#(blocksize,wordsize)) lv_current_enable = lv_fb_enable == 0? init_enable:
@@ -461,16 +461,16 @@ package dcache_lib;
                           dirty:v_fb_dirty[rg_fbhead], address: v_fb_addr[rg_fbhead]};
     endmethod
     method PollingResponse#(wordsize,fbsize) mav_polling_response(
-      Bit#(paddr) address); 
+      Bit#(paddr) address);
 
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
 
       Bit#(blockbits) word_index = truncate(address >> v_wordbits);
       let required_enable = fn_enable(word_index);
       Bit#(TLog#(respwidth)) zeros = 0;
-      Bit#(TAdd#(TLog#(respwidth), blockbits)) block_offset = 
+      Bit#(TAdd#(TLog#(respwidth), blockbits)) block_offset =
                                             {address[v_blockbits+v_wordbits-1:v_wordbits], zeros};
-      Bit#(fbsize) lv_hitvector = 0; 
+      Bit#(fbsize) lv_hitvector = 0;
       Bit#(respwidth) lv_selected_word = ?;
       Bit#(1) lv_err = ?;
       Bool lv_linevalid = False;
@@ -515,7 +515,7 @@ package dcache_lib;
     method Bool mv_fbempty ;
     (*always_ready*)
     method Bool mv_fbhead_valid;
-    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line( 
+    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line(
                                     Bool                                      from_ram,
                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
                                     Bit#(paddr)                               address,
@@ -531,7 +531,7 @@ package dcache_lib;
     method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
     method Action ma_perform_release;
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
-      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex); 
+      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex);
 
   endinterface
 
@@ -551,7 +551,7 @@ package dcache_lib;
           Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index+offset,
           Add#(tagbits, _b, paddr),     // tagbits = 32-(wordbits+blockbits+setbits)
-          
+
           // required by bsc
           Add#(a__, TLog#(TMul#(blocksize, wordsize)), TAdd#(TLog#(TMul#(wordsize,
     blocksize)), 1)),
@@ -587,7 +587,7 @@ package dcache_lib;
     Vector#(fbsize,Reg#(Bool))                      v_fb_addr_valid    <- replicateM(mkReg(False));
     /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
-    Vector#(fbsize,Vector#(banks,ConfigReg#(Bit#(respwidth))))    v_fb_data     
+    Vector#(fbsize,Vector#(banks,ConfigReg#(Bit#(respwidth))))    v_fb_data
                                                     <- replicateM(replicateM(mkConfigReg(unpack(0))));
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
@@ -610,7 +610,7 @@ package dcache_lib;
     the memory response*/
     Reg#(Bit#(TLog#(banks)))           rg_next_bank<- mkReg(0);
 
-    
+
     /*doc:var: variable indicating the fillbuffer is full*/
     Bool fb_full = (all(isTrue, readVReg(v_fb_addr_valid)));
     /*doc:var: variable indicating the fillbuffer is empty*/
@@ -623,7 +623,7 @@ package dcache_lib;
     method mv_fbfull = fb_full;
     method mv_fbempty = fb_empty;
     method mv_fbhead_valid = v_fb_line_valid[rg_fbhead];
-    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line( 
+    method ActionValue#(Bit#(TLog#(fbsize))) mav_allocate_line(
                                     Bool                                      from_ram,
                                     Bit#(TMul#(TMul#(wordsize,8),blocksize))  dataline,
                                     Bit#(paddr)                               address,
@@ -690,14 +690,14 @@ package dcache_lib;
     endmethod
 
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
-      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex); 
+      Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex);
 
       Bit#(TAdd#(tagbits, setbits)) input_tag = truncateLSB(address);
 
       Bit#(blockbits) word_index = truncate(address >> v_wordbits);
       Bit#(TLog#(respwidth)) zeros = 0;
       Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
-      Bit#(fbsize) lv_hitvector = 0; 
+      Bit#(fbsize) lv_hitvector = 0;
       Bit#(respwidth) lv_selected_word = ?;
       Bit#(1) lv_err = ?;
       Bool lv_linevalid = False;
@@ -731,17 +731,17 @@ package dcache_lib;
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
   endmodule
-  interface Ifc_storebuffer#( numeric type addr, 
-                              numeric type wordsize, 
+  interface Ifc_storebuffer#( numeric type addr,
+                              numeric type wordsize,
                               numeric type esize,
-                              numeric type sbsize, 
+                              numeric type sbsize,
                               numeric type fbsize);
 
-    method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
+    method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8))))
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
-    method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data, 
+    method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data,
             Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io);
-    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize))))
                                                                             mav_store_to_commit;
     method Bool mv_sb_full;
     method Bool mv_sb_empty;
@@ -773,7 +773,7 @@ package dcache_lib;
     Bit#(d) mask;
     Bool    io;
     Bit#(2) size;
-  } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f) 
+  } Storebuffer#(numeric type a, numeric type d, numeric type e, numeric type f)
     deriving(Bits, FShow, Eq);
 
   module mk_storebuffer#(parameter Bit#(32) id)
@@ -787,13 +787,13 @@ package dcache_lib;
             );
 
     let v_wordbits = valueOf(wordbits);
-    
+
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
     /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
      * to the cache*/
-    Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
+    Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta
                                                                     <- replicateM(mkReg(unpack(0)));
 
     /*doc:reg: Register to point to the head of the store buffers. Points to the entry that needs to
@@ -828,11 +828,11 @@ package dcache_lib;
       end
       Bit#(3) zeros = 0;
       Bit#(TAdd#(wordbits,3)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
-  
+
       return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
 
-    method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
+    method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data,
             Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io) if(!sb_full);
 
       data = case (size[1 : 0])
@@ -858,7 +858,7 @@ package dcache_lib;
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
-    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
+    method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize))))
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
       v_sb_valid[rg_head] <= False;
@@ -866,7 +866,6 @@ package dcache_lib;
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;
   endmodule
-      
 
   (*synthesize*)
   module mkinst_tag#(parameter Bit#(32) id)(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
@@ -880,26 +879,12 @@ package dcache_lib;
     mk_dataram1rw#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule
-//  (*synthesize*)
-//  module mkinst_fb#(parameter Bit#(32) id)(Ifc_fillbuffer#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr, `dbuswidth));
-//    let ifc();
-//    mk_fillbuffer#(id,False) _temp(ifc);
-//    return (ifc);
-//  endmodule
   (*synthesize*)
   module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule
-
-  /* (*synthesize*)
-  module mkinst_sb#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
-    let ifc();
-    mk_storebuffer#(id) _temp(ifc);
-    return (ifc);
-  endmodule */
-
 
 endpackage
 

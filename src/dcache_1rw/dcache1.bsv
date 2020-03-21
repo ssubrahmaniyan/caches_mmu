@@ -117,6 +117,8 @@ package dcache1;
   `ifdef dcache_ecc
     method Maybe#(ECC_dcache_data_ded#(`paddr, `dways, `ddbanks)) mv_ded_data;
     method Maybe#(ECC_dcache_tag_ded#(`paddr, `dways)) mv_ded_tag;
+    method Action ma_ram_request(RamAccess access);
+    method Bit#(`respwidth) mv_ram_response;
   `endif
   endinterface
   // both update rg_handling_miss but can never fire together
@@ -127,6 +129,9 @@ package dcache1;
   // the following rules access the mv_read_response from of data and tag modules which is a
   // conflict. However, these two rules will never fire together
   (*mutually_exclusive="rl_release_from_fillbuffer, rl_ram_check"*)
+  (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
+  (*preempts="mv_ram_response,rl_ram_check"*)
+  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
   // and similarly a store entry cannot be committed which is just being allotted.
   (*conflict_free="rl_response_to_core,ma_perform_store"*)
@@ -230,6 +235,11 @@ package dcache1;
     /*doc:reg: This register when true indicates that a there exists alteast one dirty line within
      the data cache */
     Reg#(Bool) rg_globaldirty <- mkReg(False);
+
+  `ifdef dcache_ecc
+    /*doc:reg: register to hold the access request performed by the external CCSU module*/
+    Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
+  `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
@@ -456,7 +466,7 @@ dataline ))
       if(lv_access_fault ) begin
         wr_fault <= True;
       end
-      else if(|(lv_hitmask) == 1 ) begin// trap or hit in RAMs
+      else if(|(lv_hitmask) == 1 && wr_cache_enable) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
       else begin // in case of miss from cache
@@ -838,8 +848,10 @@ dataline ))
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
-        m_tag.ma_request(False, set_index, lv_release_addr, ?);
-        m_data.ma_request(False, set_index, lv_release_line, ?, '1);
+        if(wr_cache_enable) begin
+          m_tag.ma_request(False, set_index, lv_release_addr, ?);
+          m_data.ma_request(False, set_index, lv_release_line, ?, '1);
+        end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         wr_takingrequest <= True;
@@ -900,6 +912,28 @@ dataline ))
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !rg_performing_replay && !sb_full;
     method mv_commit_store_ready = ff_write_mem_request.notFull;
+  `ifdef dcache_ecc
+    method Action ma_ram_request(RamAccess access)if(!rg_fence_stall && !rg_performing_replay);
+      if(!access.tag_data) begin // access tag;
+        m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
+      end
+      else begin
+        m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
+      end
+      rg_access_req <= access;
+    endmethod
+    method mv_ram_response if(!rg_fence_stall && !rg_performing_replay);
+      Bit#(`respwidth) return_data;
+      Bit#(TLog#(`ddbanks)) _banks = truncate(pack(countZerosLSB(rg_access_req.banks)));
+      Bit#(`dways) _ways = 0;
+      _ways[rg_access_req.way] = 1;
+      if(!rg_access_req.tag_data) // access tag
+        return_data = zeroExtend(m_tag.mv_read_response(?,rg_access_req.way).address);
+      else
+        return_data = m_data.mv_read_response(_banks, _ways).word;
+      return return_data;
+    endmethod
+  `endif
   endmodule
 
 endpackage

@@ -114,5 +114,14 @@ package dcache_types;
   typedef struct{
     Bit#(a) address;
   } ECC_dcache_sec#(numeric type a) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(TLog#(`dsets)) index; 
+    Bit#(TLog#(`dways)) way;
+    Bit#(`ddbanks) banks;
+    Bit#(TMul#(`dwords,8)) data;
+    Bool read_write; // False: read True: write
+    Bool tag_data; // False: tag True: daa
+  } RamAccess deriving (Bits, Eq, FShow);
 `endif
 endpackage
