@@ -183,6 +183,7 @@ package dcache1;
   `define blockbits TLog#(`dblocks)
   `define wordbits TLog#(`dwords)
   `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
+  `define deccsize TAdd#(2, TLog#(TMul#(`dwords,8)))
 
   typedef struct{
     Bit#(TLog#(banks)) init_bank;
@@ -235,6 +236,7 @@ package dcache1;
   (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
   (*preempts="mv_ram_response,rl_ram_check"*)
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
+  (*conflict_free="rl_perform_correction, ma_perform_store"*)
 `endif
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
   // and similarly a store entry cannot be committed which is just being allotted.
@@ -263,6 +265,7 @@ package dcache1;
     let v_fbsize = valueOf(`dfbsize);
     let v_dbanks = valueOf(`ddbanks);
     let v_tagbits = valueOf(`tagbits);
+    let v_ecc_size = valueOf(`deccsize);
 
     let m_data <- mkinst_data(id);
     let m_tag <- mkinst_tag(id);
@@ -345,6 +348,14 @@ package dcache1;
     Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
     /*doc:reg: */
     Reg#(Bool) rg_perform_sec <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(`dfbsize))) rg_sec_fbindex <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(TMul#(`dblocks, `deccsize))) rg_sec_storeparity <- mkReg(0);
+    Reg#(Bit#(TMul#(`dblocks, `deccsize))) rg_sec_checkparity <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(`paddr)) rg_sec_address <- mkReg(0);
+
   `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -476,7 +487,8 @@ package dcache1;
     // --------------------------- Rule operations ------------------------------------- //
 
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty && 
-                            sb_empty && !rg_fence_pending && !rg_performing_replay) ;
+                            sb_empty && !rg_fence_pending && !rg_performing_replay
+                          `ifdef dcache_ecc && !rg_perform_sec `endif ) ;
       `logLevel( dcache, 1, $format("[%2d]DCACHE : Fence operation in progress",id))
 
       let lv_curr_way = rg_fence_way;
@@ -559,6 +571,68 @@ dataline ))
     rule rl_deq_write_response;
       ff_write_mem_response.deq;
     endrule
+
+  `ifdef dcache_ecc
+    /*doc:rule: */
+    rule rl_perform_correction(rg_perform_sec);
+      rg_perform_sec <= False; 
+      let lv_word <- m_fillbuffer.mav_perform_sec(rg_sec_fbindex, rg_sec_storeparity, 
+                                                              rg_sec_checkparity, rg_sec_address);
+      let req = ff_core_request.first;
+    `ifdef supervisor
+      let pa_response = ff_from_tlb.first;
+      Bit#(`paddr) phyaddr = pa_response.address;
+    `else
+      Bit#(`paddr) phyaddr = truncate(req.address);
+    `endif
+      DMem_core_response#(`respwidth,`desize) lv_response = DMem_core_response{
+        word: lv_word, trap: False, cause: ?, epochs: req.epochs};
+
+      let {storemask, storedata} <- m_storebuffer.mav_check_sb_hit(phyaddr);
+      lv_response.word = (storemask & storedata) | (~storemask & lv_response.word);
+      // capture the sign bit of the response to the core
+      Bit#(1) lv_sign =case(req.size[1:0])
+          'b00: lv_response.word[7];
+          'b01: lv_response.word[15];
+          default: lv_response.word[31];
+        endcase;
+      // manipulate the sign based on the request of the core
+      lv_sign = lv_sign & ~req.size[2];
+
+      // generate a mask based on the request of the core.
+      Bit#(respwidth) mask = case(req.size[1:0])
+        'b00: 'hFF;
+        'b01: 'hFFFF;
+        'b10: 'hFFFFFFFF;
+        default: '1;
+      endcase;
+
+      // signmask basically has all bits which are zeros in the mask duplicated with the required
+      // sign bit. Theese need to be set in the final response to the core and will thus be ORed
+      Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
+      lv_response.word = (lv_response.word & mask) | signmask;
+      lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
+
+      ff_core_request.deq;
+    `ifdef supervisor
+      ff_from_tlb.deq;
+      if(req.ptwalk_req)
+        ff_ptw_response.enq(lv_response);
+      else
+    `endif
+        ff_core_response.enq(lv_response);
+      rg_handling_miss <= False;
+      if(req.access!=0 && !lv_response.trap )begin
+        wr_store_in_progress <= True;
+        Bit#(TLog#(`dfbsize)) fbindex = rg_sec_fbindex;
+        m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
+                                          isIO(phyaddr, wr_cache_enable)
+                                `ifdef atomic ,req.access == 2,lv_response.word, req.atomic_op `endif );
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
+        wr_allocating_storebuffer <= True;
+      end
+    endrule
+  `endif
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
                       && !rg_polling_mode && !fb_full && !rg_release_readphase
@@ -569,7 +643,7 @@ dataline ))
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
       Bit#(`paddr) phyaddr = pa_response.address;
-      Bool lv_access_fault = pa_response.trap;
+      Bool lv_access_fault = pa_response.trap || pa_response.tlbmiss;
       Bit#(`causesize) lv_cause = lv_access_fault? pa_response.cause:
                                   req.access == 0?`Load_access_fault:`Store_access_fault;
       `logLevel( dcache, 1, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
@@ -592,6 +666,9 @@ dataline ))
                                           cause: lv_cause, epochs: req.epochs};
     `ifdef dcache_ecc
       Bool lv_ecc_fault = False;
+
+      rg_sec_checkparity <= lv_data_resp.check_parity;
+      rg_sec_storeparity <= lv_data_resp.stored_parity;
 
       if(|lv_tag_resp.ded == 1 && |lv_hitmask == 0)
         lv_ecc_fault = True;
@@ -695,18 +772,24 @@ dataline ))
     that this fifo is not Full before responding back to the core. If it is not empty then the core
     could initiate a commit-store which could get dropped since the method performing the cannot
     fire since the fifo is full and thus the store being dropped.*/
-    rule rl_response_to_core(!ff_core_request.first.fence &&
+    rule rl_response_to_core(!ff_core_request.first.fence && `ifdef dcache !rg_perform_sec && `endif 
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
+
 
     `ifdef dcache_ecc
       Bool lv_tag_sed = isValid(wr_sed_tag_log);
       Bool lv_data_sed = isValid(wr_sed_data_log);
     `endif
+      Bool _faulty =  `ifdef dcache_ecc 
+                          ((lv_data_sed || lv_tag_sed) && wr_ram_state == Hit) 
+                        `else 
+                          False 
+                        `endif ;
+
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
       Bit#(`paddr) phyaddr = pa_response.address;
-      ff_from_tlb.deq;
     `else
       Bit#(`paddr) phyaddr = truncate(req.address);
     `endif
@@ -780,20 +863,23 @@ dataline ))
       lv_response.word = (lv_response.word & mask) | signmask;
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
 
-      ff_core_request.deq;
-    `ifdef supervisor
-      if(pa_response.tlbmiss)
-        ff_hold_request.enq(ff_core_request.first());
-      else if(req.ptwalk_req && !pa_response.tlbmiss)
-        ff_ptw_response.enq(lv_response);
-      else
-    `endif
-      ff_core_response.enq(lv_response);
-      rg_handling_miss <= False;
+      if(!_faulty)begin
+        ff_core_request.deq;
+      `ifdef supervisor
+        ff_from_tlb.deq;
+        if(pa_response.tlbmiss)
+          ff_hold_request.enq(ff_core_request.first());
+        else if(req.ptwalk_req && !pa_response.tlbmiss)
+          ff_ptw_response.enq(lv_response);
+        else
+      `endif
+        ff_core_response.enq(lv_response);
+        rg_handling_miss <= False;
+      end
 
       // -- allocate store-buffer for stores/atomic ops
       Bit#(TLog#(`dfbsize)) _fbindex = ?;
-      if( (req.access != 0 `ifdef dcache_ecc || lv_tag_sed || lv_data_sed `endif )
+      if( (req.access != 0 || _faulty )
                       && wr_ram_state == Hit && !wr_fault) begin
         _fbindex <- m_fillbuffer.mav_allocate_line(True, wr_ram_hitline, phyaddr,
                                                        v_reg_dirty[set_index][wr_ram_hitway]);
@@ -801,14 +887,18 @@ dataline ))
         // invalidate the entries in the RAM since they not reside inside the FB
         v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
-        if (lv_tag_sed ||lv_data_sed)
+        if (_faulty) begin
           rg_perform_sec <= True;
+          rg_sec_fbindex <= _fbindex;
+          rg_sec_address <= phyaddr;
+        end
       end
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
-      if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
+      if(req.access!=0 && !_faulty && !lv_response.trap 
+                                            `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
         Bit#(TLog#(`dfbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:_fbindex;
         m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
@@ -823,7 +913,8 @@ dataline ))
     Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
     be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-          !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull );
+          !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull 
+          `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
