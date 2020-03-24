@@ -42,6 +42,7 @@ package dcache_lib;
   import DReg :: * ;
   import ConfigReg :: * ;
   import io_func::*;
+  import ecc_hamming :: * ;
 
   import mem_config :: * ;
   import dcache_types :: * ;
@@ -109,8 +110,13 @@ package dcache_lib;
           Add#(tagbits, _b, paddr)     // tagbits = 32-(wordbits+blockbits+setbits)
         `ifdef dcache_ecc
           // for ecc
-          ,Add#(TLog#(tagbits), a__, 6),
-          Add#(b__, tagbits, 64)
+          ,Add#(maxsize, 0,TExp#(TLog#(tagbits))),
+          // required by bsc
+          Add#(TLog#(tagbits), a__, 6),
+          Add#(b__, tagbits, 64),
+          Add#(c__, TAdd#(2, TLog#(tagbits)), TMul#(1, TAdd#(2, TLog#(tagbits)))),
+          Log#(TDiv#(tagbits, 1), TLog#(tagbits)),
+          Add#(d__, tagbits, TExp#(TLog#(tagbits)))
         `endif
     );
 
@@ -145,14 +151,30 @@ package dcache_lib;
       Bit#(ways) lv_hitvector = 0;
       Bit#(ways) sed = 0;
       Bit#(ways) ded = 0;
-      Bit#(paddr)  lv_tag = {v_tags[wayselect].read_response,'d0};
+    `ifdef dcache_ecc
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_chparity;
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_stparity;
+    `endif
+      Vector#(ways, Bit#(tagbits)) lv_tags;
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        lv_hitvector[i] = pack(v_tags[i].read_response == tag_in);
+        lv_tags[i] = v_tags[i].read_response;
       `ifdef dcache_ecc
         sed[i] = v_tags[i].read_sed;
         ded[i] = v_tags[i].read_ded;
+        lv_chparity[i] = v_tags[i].check_parity;
+        lv_stparity[i] = v_tags[i].stored_parity;
       `endif
       end
+    `ifdef dcache_ecc
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
+        Bit#(maxsize) _t = zeroExtend(lv_tags[i]);
+        lv_tags[i] = truncate(fn_ecc_correct(lv_chparity[i], lv_stparity[i], _t));
+      end
+    `endif
+      for (Integer i = 0; i<v_ways; i = i + 1) begin
+        lv_hitvector[i] = pack(truncate(lv_tags[i]) == tag_in);
+      end
+      Bit#(paddr)  lv_tag = {lv_tags[wayselect],'d0};
       return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag };
     endmethod
   endmodule
@@ -195,7 +217,9 @@ package dcache_lib;
         `ifdef dcache_ecc
           ,Add#(b__, 2, TMul#(2, blocksize)),
           Add#(TLog#(TDiv#(linewidth, blocksize)), c__, 6),
-          Add#(d__, TDiv#(linewidth, blocksize), 64)
+          Add#(d__, TDiv#(linewidth, blocksize), 64),
+          Add#(e__, TAdd#(2, TLog#(TDiv#(linewidth, blocksize))), TMul#(blocksize,
+                                                    TAdd#(2, TLog#(TDiv#(linewidth, blocksize)))))
         `endif
       );
     let v_wordsize = valueOf(wordsize);

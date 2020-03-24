@@ -26,6 +26,131 @@ Author: Neel Gala
 Email id: neelgala@gmail.com
 Details:
 
+Working Principle
+-----------------
+
+A request from the core is enqueued into a request fifo (``ff_core_request``). On a hit within the 
+cache, the required word is enqueued into the response fifo (``ff_core_response``) which is read by 
+the core. On a miss, a read request for the line is sent to the fabric via the 
+``ff_read_mem_request`` and simultaneously an entry in the fill-buffer is allotted to capture the 
+fabric response. The responses from the fabric are enqueued in the ``ff_read_mem_response`` fifo. 
+When a dirty line needs to be evicted, a write request for that line is enqueued into 
+``ff_write_mem_request`` fifo and the response of this write is captured in ``ff_write_mem_response`` 
+fifo.
+
+Serving core requests
+^^^^^^^^^^^^^^^^^^^^^
+
+A core request can only be enqueued in ``ff_core_request`` fifo if the following conditions are true :- 
+
+1. Fill-buffer is not full.
+2. Core is ready to receive a response or deq the previous response
+3. Fence operation is not in progress.
+4. A replay of SRAM tag and data request (for a previous request) is not happening 
+   (its necessity is discussed in later sections).
+
+The reason for point 1 and 2 being, once either of the two structures are full, a hit or a miss 
+cannot be processed further. In this situation, if there is one outstanding request already 
+present in ``ff_core_request``, enqueuing one more request would overwrite the SRAM tag and data 
+values of the previous one. When tag matching resumes, incorrect tag would be used leading to 
+incorrect behaviour.
+
+Once a request is enqueued into the ``ff_core_request`` fifo, a tag and data read request is sent to 
+the SRAMs simultaneously. In the next cycle, if there isn't a pending request and fill-buffer & 
+ff_core_response are not full, the tag field of the request is compared with the tags stored in 
+the SRAMs (tag field of all the ways for particular set) and the fill-buffer 
+(tag field of all the entries). 
+
+A hit occurs in following scenarios :- 1. Tag matches in SRAM 2. Tag matches in fill-buffer and 
+also the requested word is present. There might be a case where tag matches in fill-buffer but the 
+word is not present as the line is still getting filled by the fabric. In that case we keep 
+polling on the fill-buffer until there's a **word-hit**. Please note, that a tag-hit can occur 
+either in the SRAM or the fill-buffer and never both. Assertions to check this have been put in 
+place. A miss occurs when tag match fails in both the SRAM and the fill-buffer. Now following 
+scenarios can occur :-
+
+1. **For a Load request**: if it's a hit, the requested word is enqueued in ``ff_core_response`` 
+   fifo in the same cycle as the tag-match. When it's a hit in the FB, before enqueuing the response, 
+   we check if there is a pending store to the same word, if so we enqueue the updated word 
+   accordingly. Since, the SRAMs are not updated with stores immediately, the store-buffer is 
+   looked up only in the case of a fill-buffer hit.
+
+2. **For a Load request**: If it's a miss, the address (after making it word aligned) is 
+   enqueued into the ``ff_read_mem_request`` fifo to be sent to fabric. Simultaneously, a 
+   fill-buffer entry is assigned to capture the line requested from the fabric. Once the 
+   requested word is captured in the fill-buffer (while rest of the line is still getting filled), 
+   it is enqueued into the ``ff_core_response`` to be sent to core and the entry in ``ff_core_request`` 
+   is dequeued. We are now ready to service the subsequent request in the next cycle.
+
+3. **For a store request**: If it's a hit in the fill-buffer, a store buffer entry is allotted to 
+   store the data to be written and response is enqueued in the ``ff_core_response`` fifo 
+   (response being that it is store hit). If it's a hit in the SRAM, in addition to performing 
+   actions that of a fill-buffer hit, the line is copied into the fill-buffer (since all stores 
+   are performed here) while making it invalid in the SRAM.
+
+4. **For a store request**: If it's a miss, request would be sent to fabric as was when 
+   load miss occurred. Once the requested word is captured in the fill-buffer, the actions that 
+   follow are similar to those of store hit in fill-buffer.
+
+5. **For atomic requests**: The control is similar to that store-requests apart from the fact 
+   that the updated word undergoes arithmetic op before being written in the store-buffer.
+
+Release from fill-buffer
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The necessary condition for a release of a line from fill-buffer and its updation into SRAM is 
+that the line itself is valid and all the words in the line are present and updated by store-buffer 
+if necessary. If there is any pending store in the store buffer, the line won't be released. 
+Given this is true, following conditions would initiate a release :- 
+
+1. **Fill-buffer is full**. A release is necessary in this case since no more requests can be 
+   taken and it can stall the pipe. While the release happens, suppose there is an entry already 
+   present in the request fifo which is to the line being released. The tag and data for that 
+   entry have already been read and would be used to check hit/miss. The SRAM tag matching would 
+   take place with a stale value and would result in a miss. It would also be a miss in fill-buffer 
+   since the line would already have been released. To prevent this incorrect behaviour, we need to 
+   replay the SRAM tag and data requests (now it would be a hit in SRAM).
+
+2. **Opportunistic fill**: if the fill-buffer is not full but there is no request being enqueued 
+   in a particular cycle (this does not mean ``ff_core_request`` is empty). Given this, if there is 
+   an entry in ``ff_core_request`` to the line being released, we prevent the release for not 
+   wanting to replay the SRAM read request (described in point 1).
+
+Now given the release can actually take place, following scenarios would arise :-
+
+1. If the line in the SRAM being evicted is not dirty, then we can directly put a write request 
+   (of the line being released) to the SRAM along with updation of the SRAM dirty and valid bits 
+   accordingly.
+2. If the line being replaced is dirty, we need to write it back to fabric. So first we put a read 
+   request to SRAM for the dirty line, in the next cycle we enqueue this line in the 
+   ``ff_write_mem_request`` for it to be written back in fabric while also putting a SRAM write 
+   request for line being released.
+
+Once a release is done from the fill-buffer, that particular entry in the fill-buffer is 
+invalidated and thus is available for new allocation on a miss or a store-hit.
+
+The fill-buffer is implemented as a circular-buffer with head and tail pointer-registers.
+
+Fence operation
+^^^^^^^^^^^^^^^
+
+A cache-flush operation is initiated when the core presents a fence instruction. A fence operation 
+can only start if following conditions are met:
+
+1. the entire fill-buffer is empty (i.e. all lines are updated in the SRAM).
+2. there are not pending write-backs to fabric 
+3. the store-buffer is empty.
+
+In case of the D-Cache, the fence operation is a single cycle operation if the global-dirty bit 
+is clear, where all the lines are invalidated and the dirty bits of each line are cleared as well. 
+If the global-dirty bit is set, the fence operation in the D-Cache traverses through each set and 
+identifies which lines need to the written back to the fabric. Traversing a set, requires 
+traversing each of the way and checking if a write-back is required. A set is ignored 
+if there are no valid dirty lines in the set. At the end of each set traversal, the valid and 
+dirty bits of the entire set are cleared. The fence operation in the D-Cache is only over when the 
+last set has been completely traversed. Until this point, not new requests are entertained from the 
+core-side.
+
 --------------------------------------------------------------------------------------------------
 */
 package dcache1;
@@ -218,6 +343,8 @@ package dcache1;
   `ifdef dcache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
     Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
+    /*doc:reg: */
+    Reg#(Bool) rg_perform_sec <- mkReg(False);
   `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -435,7 +562,8 @@ dataline ))
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
                       && !rg_polling_mode && !fb_full && !rg_release_readphase
-                  `ifdef atomic && !m_storebuffer.mv_sb_busy `endif );
+                  `ifdef atomic && !m_storebuffer.mv_sb_busy `endif 
+                  `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
@@ -510,7 +638,8 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
     rule rl_fillbuffer_check(!ff_core_request.first.fence
-                              `ifdef atomic && !m_storebuffer.mv_sb_busy `endif );
+                              `ifdef atomic && !m_storebuffer.mv_sb_busy `endif 
+                              `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
       `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
     `ifdef supervisor
@@ -672,6 +801,8 @@ dataline ))
         // invalidate the entries in the RAM since they not reside inside the FB
         v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
+        if (lv_tag_sed ||lv_data_sed)
+          rg_perform_sec <= True;
       end
     `ifdef supervisor
       if(!pa_response.tlbmiss)
