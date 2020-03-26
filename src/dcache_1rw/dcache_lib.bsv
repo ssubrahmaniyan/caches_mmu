@@ -324,7 +324,6 @@ package dcache_lib;
                             numeric type wordsize,
                             numeric type blocksize,
                             numeric type sets,
-                            numeric type banks,
                             numeric type paddr,
                             numeric type buswidth);
     (*always_ready*)
@@ -360,7 +359,7 @@ package dcache_lib;
   (*conflict_free="ma_fill_from_memory, mav_release_info"*)
   (*conflict_free="ma_allocate_line, ma_from_storebuffer"*)
   module mk_fillbuffer#(parameter Bit#(32) id, parameter Bool onehot)
-      (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, banks, paddr, buswidth))
+      (Ifc_fillbuffer#(fbsize, wordsize, blocksize, sets, paddr, buswidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
@@ -384,7 +383,7 @@ package dcache_lib;
     let v_wordsize = valueOf(wordsize);
     let v_blocksize = valueOf(blocksize);
     let v_sets = valueOf(sets);
-    let v_banks = valueOf(banks);
+    let v_banks = valueOf(blocksize);
     let v_wordbits = valueOf(wordbits);
     let v_blockbits = valueOf(blockbits);
     let v_buswidth = valueOf(buswidth);
@@ -553,7 +552,6 @@ package dcache_lib;
                             numeric type wordsize,
                             numeric type blocksize,
                             numeric type sets,
-                            numeric type banks,
                             numeric type paddr,
                             numeric type respwidth);
     (*always_ready*)
@@ -570,7 +568,7 @@ package dcache_lib;
 
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
-                                      Bit#(TLog#(banks))              init_bank);
+                                      Bit#(TLog#(blocksize))          init_bank);
 
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
@@ -580,10 +578,9 @@ package dcache_lib;
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
       Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex);
   `ifdef dcache_ecc
-    method ActionValue#(Bit#(TMul#(8,wordsize))) mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
-                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
-                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity, 
-                        Bit#(paddr) address);
+    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
+                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
+                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
   `endif
   endinterface
 
@@ -598,7 +595,7 @@ package dcache_lib;
   (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
 `endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
-      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, banks, paddr, respwidth))
+      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, respwidth))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
@@ -626,7 +623,7 @@ package dcache_lib;
     let v_wordsize = valueOf(wordsize);
     let v_blocksize = valueOf(blocksize);
     let v_sets = valueOf(sets);
-    let v_banks = valueOf(banks);
+    let v_banks = valueOf(blocksize);
     let v_wordbits = valueOf(wordbits);
     let v_blockbits = valueOf(blockbits);
     let v_fbsize = valueOf(fbsize);
@@ -642,8 +639,8 @@ package dcache_lib;
 
     /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
     request made by the core */
-    function Bit#(banks) fn_enable (Bit#(blockbits) blockindex);
-      Bit#(banks) lv_temp = '1;
+    function Bit#(blocksize) fn_enable (Bit#(blockbits) blockindex);
+      Bit#(blocksize) lv_temp = '1;
       return lv_temp << blockindex;
     endfunction
 
@@ -651,7 +648,7 @@ package dcache_lib;
     Vector#(fbsize,Reg#(Bool))                      v_fb_addr_valid    <- replicateM(mkReg(False));
     /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkReg(unpack(0)));
-    Vector#(fbsize,Vector#(banks,ConfigReg#(Bit#(respwidth))))    v_fb_data
+    Vector#(fbsize,Vector#(blocksize,ConfigReg#(Bit#(respwidth))))    v_fb_data
                                                     <- replicateM(replicateM(mkConfigReg(unpack(0))));
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
@@ -662,7 +659,7 @@ package dcache_lib;
     Vector#(fbsize,ConfigReg#(Bool))                   v_fb_line_valid  <- replicateM(mkConfigReg(False));
     /*doc: reg: register to indicate how many bytes of the line have been filled by the
      bus*/
-    Reg#(Bit#(banks))                  rg_fb_enables    <- mkReg(0);
+    Reg#(Bit#(blocksize))                  rg_fb_enables    <- mkReg(0);
     /*doc: vec: vector registers indicating the address of the fill-buffer line*/
     Vector#(fbsize,Reg#(Bit#(paddr)))               v_fb_addr     <- replicateM(mkReg(0));
 
@@ -672,7 +669,7 @@ package dcache_lib;
     Reg#(Bit#(TLog#(fbsize)))                       rg_fbtail     <- mkReg(0);
     /*doc:reg: temporary register holding the WE for the data to be updated in the fillbuffer from
     the memory response*/
-    Reg#(Bit#(TLog#(banks)))           rg_next_bank<- mkReg(0);
+    Reg#(Bit#(TLog#(blocksize)))           rg_next_bank<- mkReg(0);
 
 
     /*doc:var: variable indicating the fillbuffer is full*/
@@ -713,8 +710,8 @@ package dcache_lib;
     endmethod
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
-                                      Bit#(TLog#(banks))              init_bank);
-      Bit#(TLog#(banks)) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
+                                      Bit#(TLog#(blocksize))          init_bank);
+      Bit#(TLog#(blocksize)) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
       v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
       rg_next_bank <= lv_current_bank + 1;
       if(mem_resp.last) begin
@@ -795,21 +792,16 @@ package dcache_lib;
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
   `ifdef dcache_ecc
-    method ActionValue#(Bit#(TMul#(8,wordsize))) mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
-                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
-                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity,
-                        Bit#(paddr) address);
+    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
+                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
+                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
 
-      Vector#(banks, Bit#(respwidth)) _dataline;
       for (Integer i = 0; i< v_banks; i = i + 1) begin
         Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         let _data = fn_ecc_correct(_chparity, _stparity, v_fb_data[fbindex][i]);
-        _dataline[i] = _data;
         v_fb_data[fbindex][i] <= _data;
       end
-      Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
-      return _dataline[block_offset];
     endmethod
   `endif
   endmodule
@@ -829,9 +821,7 @@ package dcache_lib;
     method Bool mv_sb_full;
     method Bool mv_sb_empty;
     method Bool mv_cacheable_store;
-  `ifdef atomic
     method Bool mv_sb_busy;
-  `endif
   endinterface
 
   function Bool isTrue(Bool a);
@@ -877,7 +867,8 @@ package dcache_lib;
             );
 
     let v_wordbits = valueOf(wordbits);
-  
+
+  `ifdef atomic
     /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
     function Bit#(dataword) fn_atomic_op (Bit#(5) op,  Bit#(dataword) rs2,  Bit#(dataword) loaded);
       Bit#(dataword) op1 = loaded;
@@ -902,6 +893,7 @@ package dcache_lib;
 	  			default:return op1;
 	  		endcase
     endfunction
+  `endif
 
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
@@ -923,9 +915,10 @@ package dcache_lib;
     /*dov:var: variable to indicate that the storebuffer is empty*/
     Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
 
-  `ifdef atomic
     /*doc:reg: */
     Reg#(Bool) rg_sb_busy <- mkReg(False);
+
+  `ifdef atomic
     /*doc:reg: */
     Reg#(Bit#(dataword)) rg_atomic_readword <- mkReg(0);
     /*doc:reg: */
@@ -1008,9 +1001,7 @@ package dcache_lib;
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;
-  `ifdef atomic
     method mv_sb_busy = rg_sb_busy;
-  `endif
   endmodule
 
   (*synthesize*)
@@ -1026,7 +1017,7 @@ package dcache_lib;
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `ddbanks, `paddr,  `dbuswidth));
+  module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
