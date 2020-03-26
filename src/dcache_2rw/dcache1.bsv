@@ -58,6 +58,7 @@ package dcache1;
   `define blockbits TLog#(`dblocks)
   `define wordbits TLog#(`dwords)
   `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
+  `define deccsize TAdd#(2, TLog#(TMul#(`dwords,8)))
 
   typedef struct{
     Bit#(TLog#(banks)) init_bank;
@@ -66,31 +67,6 @@ package dcache1;
   } Pending_req#(numeric type fbsize, numeric type banks)
                 deriving(Bits, Eq, FShow);
 
-  (*noinline*)
-  /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
-  function Bit#(`respwidth) fn_atomic_op (Bit#(5) op,  Bit#(`respwidth) rs2,  Bit#(`respwidth) loaded);
-    Bit#(`respwidth) op1 = loaded;
-    Bit#(`respwidth) op2 = rs2;
-    if(op[4]==0)begin
-			op1=signExtend(loaded[31:0]);
-      op2= signExtend(rs2[31:0]);
-    end
-    Int#(`respwidth) s_op1 = unpack(op1);
-		Int#(`respwidth) s_op2 = unpack(op2);
-
-    case (op[3:0])
-				'b0011:return op2;
-				'b0000:return (op1+op2);
-				'b0010:return (op1^op2);
-				'b0110:return (op1&op2);
-				'b0100:return (op1|op2);
-				'b1100:return min(op1,op2);
-				'b1110:return max(op1,op2);
-				'b1000:return pack(min(s_op1,s_op2));
-				'b1010:return pack(max(s_op1,s_op2));
-				default:return op1;
-			endcase
-  endfunction
 
   interface Ifc_dcache;
     interface Put#(DCache_core_request#(`vaddr,TMul#(`dwords,8),`desize)) put_core_req;
@@ -115,8 +91,12 @@ package dcache1;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
   `ifdef dcache_ecc
-    method Maybe#(ECC_dcache_data_ded#(`paddr, `dways, `ddbanks)) mv_ded_data;
-    method Maybe#(ECC_dcache_tag_ded#(`paddr, `dways)) mv_ded_tag;
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `ddbanks)) mv_ded_data;
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `ddbanks)) mv_sed_data;
+    method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_ded_tag;
+    method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
+    method Action ma_ram_request(RamAccess access);
+    method Bit#(`respwidth) mv_ram_response;
   `endif
   endinterface
   // both update rg_handling_miss but can never fire together
@@ -124,6 +104,12 @@ package dcache1;
   (*conflict_free="rl_response_to_core,rl_ram_check"*)
   (*conflict_free="rl_send_memory_request,rl_release_from_fillbuffer"*)
   (*conflict_free="rl_fill_from_memory, rl_release_from_fillbuffer"*)
+`ifdef dcache_ecc
+//  (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
+//  (*preempts="mv_ram_response,rl_ram_check"*)
+//  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
+  (*conflict_free="rl_perform_correction, ma_perform_store"*)
+`endif
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
   // and similarly a store entry cannot be committed which is just being allotted.
   (*conflict_free="rl_response_to_core,ma_perform_store"*)
@@ -151,6 +137,7 @@ package dcache1;
     let v_fbsize = valueOf(`dfbsize);
     let v_dbanks = valueOf(`ddbanks);
     let v_tagbits = valueOf(`tagbits);
+    let v_ecc_size = valueOf(`deccsize);
 
     let m_data <- mkinst_data(id);
     let m_tag <- mkinst_tag(id);
@@ -218,6 +205,23 @@ package dcache1;
      the data cache */
     Reg#(Bool) rg_globaldirty <- mkReg(False);
 
+  `ifdef dcache_ecc
+    /*doc:reg: register to hold the access request performed by the external CCSU module*/
+    Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
+    /*doc:reg: */
+    Reg#(Bool) rg_perform_sec <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bool) rg_halt_ram_check <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(`dfbsize))) rg_sec_fbindex <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(TMul#(`dblocks, `deccsize))) rg_sec_storeparity <- mkReg(0);
+    Reg#(Bit#(TMul#(`dblocks, `deccsize))) rg_sec_checkparity <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(`paddr)) rg_sec_address <- mkReg(0);
+
+  `endif
+
     // -------------------- Wire declarations ----------------------------------------------//
     /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
     Wire#(Bool) wr_cache_enable<-mkWire();
@@ -284,6 +288,17 @@ package dcache1;
     value is used to indicate the storebuffer which fb entry it needs to update when committing
     the store*/
     Wire#(Bit#(TLog#(`dfbsize))) wr_fb_hitindex <- mkDWire(?);
+
+  `ifdef dcache_ecc
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_sed_tag_log <- mkDWire(tagged Invalid);
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_ded_tag_log <- mkDWire(tagged Invalid);
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `ddbanks))) wr_sed_data_log <- mkDWire(tagged Invalid);
+    /*doc:wire: */
+    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `ddbanks))) wr_ded_data_log <- mkDWire(tagged Invalid);
+  `endif
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains
     'way' number of bits in each entry*/
@@ -322,7 +337,8 @@ package dcache1;
     // --------------------------- Rule operations ------------------------------------- //
 
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty && 
-                            sb_empty && !rg_fence_pending ) ;
+                            sb_empty && !rg_fence_pending 
+ 			  `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif ) ;
       `logLevel( dcache, 1, $format("[%2d]DCACHE : Fence operation in progress",id))
 
       let lv_curr_way = rg_fence_way;
@@ -335,10 +351,21 @@ package dcache1;
       Bit#(TSub#(`paddr, TAdd#(`tagbits, `setbits))) zeros = 'd0;
       Bit#(`dways) _way = 0;
       _way[rg_fence_way] = 1;
-      let _t <-m_tag.mv_read_response_p1(?,rg_fence_way);
-      Bit#(`tagbits) tag = truncateLSB(_t.address);
-      Bit#(`linewidth) dataline = m_data.mv_read_response_p1(?,_way).line;
+      let lv_tag_resp <-m_tag.mv_read_response_p1(?,rg_fence_way);
+      let lv_data_resp = m_data.mv_read_response_p1(?,_way);
+      Bit#(`tagbits) tag = truncateLSB(lv_tag_resp.address);
+      Bit#(`linewidth) dataline = lv_data_resp.line;
       Bit#(`paddr) final_address={tag, rg_fence_set, zeros};
+    `ifdef dcache_ecc
+      if(|lv_tag_resp.ded == 1)
+        wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: final_address, 
+                                                     way: lv_tag_resp.ded & v_reg_valid[rg_fence_set]};
+
+      if (|lv_data_resp.line_ded == 1)
+        wr_ded_data_log <= tagged Valid ECC_dcache_data{address: final_address, 
+                                                       banks: lv_data_resp.line_ded,
+                                                       way : _way};
+    `endif
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
       `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
@@ -394,15 +421,26 @@ dataline ))
     rule rl_deq_write_response;
       ff_write_mem_response.deq;
     endrule
+
+  `ifdef dcache_ecc
+    /*doc:rule: */
+    rule rl_perform_correction(rg_perform_sec);
+      rg_perform_sec <= False; 
+      m_fillbuffer.mav_perform_sec(rg_sec_fbindex, rg_sec_storeparity, rg_sec_checkparity);
+      rg_halt_ram_check <= True;
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Performing SEC for fbindex:%d",id, rg_sec_fbindex))
+    endrule
+  `endif
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss  
-                      && !rg_polling_mode && !fb_full );
+                      && !rg_polling_mode && !fb_full && !m_storebuffer.mv_sb_busy 
+                  `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif );
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
       Bit#(`paddr) phyaddr = pa_response.address;
-      Bool lv_access_fault = pa_response.trap;
+      Bool lv_access_fault = pa_response.trap || pa_response.tlbmiss;
       Bit#(`causesize) lv_cause = lv_access_fault? pa_response.cause:
                                   req.access == 0?`Load_access_fault:`Store_access_fault;
       `logLevel( dcache, 1, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
@@ -423,6 +461,36 @@ dataline ))
 
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
                                           cause: lv_cause, epochs: req.epochs};
+    `ifdef dcache_ecc
+      Bool lv_ecc_fault = False;
+
+      rg_sec_checkparity <= lv_data_resp.check_parity;
+      rg_sec_storeparity <= lv_data_resp.stored_parity;
+
+      if(|lv_tag_resp.ded == 1 && |lv_hitmask == 0)
+        lv_ecc_fault = True;
+      else if(|lv_hitmask == 1 && |lv_data_resp.line_ded == 1)
+        lv_ecc_fault = True;
+
+      if(|lv_tag_resp.ded == 1)
+        wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: phyaddr, 
+                                                     way: lv_tag_resp.ded & v_reg_valid[set_index]};
+
+      if (|lv_data_resp.line_ded == 1 && |lv_hitmask == 1)
+        wr_ded_data_log <= tagged Valid ECC_dcache_data{address: phyaddr, 
+                                                       banks: lv_data_resp.line_ded,
+                                                       way : lv_hitmask};
+
+      if (|(lv_tag_resp.sed & lv_hitmask) == 1)
+        wr_sed_tag_log <= tagged Valid ECC_dcache_tag{address: phyaddr,
+                                                    way: lv_hitmask};
+
+      if (|lv_data_resp.line_sed == 1 && |lv_hitmask == 1)
+        wr_sed_data_log <= tagged Valid ECC_dcache_data{address: phyaddr, 
+                                                       banks: lv_data_resp.line_sed,
+                                                       way : lv_hitmask};
+    `endif
+
       wr_ram_response <= lv_response;
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
       wr_ram_hitline <= lv_data_resp.line;
@@ -430,7 +498,7 @@ dataline ))
       if(lv_access_fault ) begin
         wr_fault <= True;
       end
-      else if(|(lv_hitmask) == 1 ) begin// trap or hit in RAMs
+      else if(|(lv_hitmask) == 1 && wr_cache_enable) begin// trap or hit in RAMs
         wr_ram_state <= Hit;
       end
       else begin // in case of miss from cache
@@ -443,7 +511,8 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
-    rule rl_fillbuffer_check(!ff_core_request.first.fence);
+    rule rl_fillbuffer_check(!ff_core_request.first.fence && !m_storebuffer.mv_sb_busy
+                             `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
       `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
     `ifdef supervisor
@@ -499,14 +568,25 @@ dataline ))
     that this fifo is not Full before responding back to the core. If it is not empty then the core
     could initiate a commit-store which could get dropped since the method performing the cannot
     fire since the fifo is full and thus the store being dropped.*/
-    rule rl_response_to_core(!ff_core_request.first.fence &&
+    rule rl_response_to_core(!ff_core_request.first.fence && `ifdef dcache_ecc !rg_perform_sec && `endif 
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
+
+
+    `ifdef dcache_ecc
+      Bool lv_tag_sed = isValid(wr_sed_tag_log);
+      Bool lv_data_sed = isValid(wr_sed_data_log);
+      rg_halt_ram_check <= False;
+    `endif
+      Bool _faulty =  `ifdef dcache_ecc 
+                          ((lv_data_sed || lv_tag_sed) && wr_ram_state == Hit) 
+                        `else 
+                          False 
+                        `endif ;
 
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
       Bit#(`paddr) phyaddr = pa_response.address;
-      ff_from_tlb.deq;
     `else
       Bit#(`paddr) phyaddr = truncate(req.address);
     `endif
@@ -580,8 +660,10 @@ dataline ))
       lv_response.word = (lv_response.word & mask) | signmask;
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
 
+      if(!_faulty)begin
       ff_core_request.deq;
     `ifdef supervisor
+        ff_from_tlb.deq;
       if(pa_response.tlbmiss)
         ff_hold_request.enq(ff_core_request.first());
       else if(req.ptwalk_req && !pa_response.tlbmiss)
@@ -590,30 +672,37 @@ dataline ))
     `endif
       ff_core_response.enq(lv_response);
       rg_handling_miss <= False;
+      end
 
       // -- allocate store-buffer for stores/atomic ops
       Bit#(TLog#(`dfbsize)) _fbindex = ?;
-      if(req.access != 0 && wr_ram_state == Hit && !wr_fault) begin
+      if( (req.access != 0 || _faulty )
+                      && wr_ram_state == Hit && !wr_fault) begin
         _fbindex <- m_fillbuffer.mav_allocate_line(True, wr_ram_hitline, phyaddr,
                                                        v_reg_dirty[set_index][wr_ram_hitway]);
 
         // invalidate the entries in the RAM since they not reside inside the FB
         v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
         v_reg_dirty[set_index][wr_ram_hitway] <= 1'b0;
+      `ifdef dcache_ecc
+        if (_faulty) begin
+          rg_perform_sec <= True;
+          rg_sec_fbindex <= _fbindex;
+          rg_sec_address <= phyaddr;
+        end
+      `endif
       end
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
-      if(req.access!=0 && !lv_response.trap `ifdef supervisor && !pa_response.tlbmiss `endif )begin
+      if(req.access!=0 && !_faulty && !lv_response.trap 
+                                            `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
         Bit#(TLog#(`dfbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:_fbindex;
-      `ifdef atomic
-        if(req.access == 2)
-          req.data = fn_atomic_op(req.atomic_op, req.data, lv_response.word);
-      `endif
         m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size),
-                                          isIO(phyaddr, wr_cache_enable));
+                                          isIO(phyaddr, wr_cache_enable)
+                                `ifdef atomic ,req.access == 2,lv_response.word, req.atomic_op `endif );
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
         wr_allocating_storebuffer <= True;
       end
@@ -623,7 +712,8 @@ dataline ))
     Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
     be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-          !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull );
+          !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull 
+          `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -668,7 +758,7 @@ dataline ))
       wr_total_read_miss <= pack(req.access == 0);
       wr_total_write_miss <= pack(req.access == 1);
     `ifdef atomic
-      wr_total_atomic_miss <= pack(req.access == 1);
+      wr_total_atomic_miss <= pack(req.access == 2);
     `endif
   `endif
         `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending Line Request for Addr:%h",id, phyaddr))
@@ -730,9 +820,21 @@ dataline ))
           Bit#(TSub#(`paddr,TAdd#(`tagbits,`setbits))) zeros = 0;
           Bit#(`dways) _way = 0;
           _way[waynum] = 1;
-          Bit#(`tagbits) tag = truncateLSB(m_tag.mv_read_response_p2(waynum).address);
-          Bit#(`linewidth) dataline = m_data.mv_read_response_p2(_way).line;
+          let lv_tag_resp = m_tag.mv_read_response_p2(waynum);
+          let lv_data_resp = m_data.mv_read_response_p2(_way);
+          Bit#(`tagbits) tag = truncateLSB(lv_tag_resp.address);
+          Bit#(`linewidth) dataline = lv_data_resp.line;
           Bit#(`paddr) lv_evict_address = {tag,set_index,zeros};
+        `ifdef dcache_ecc
+          if(|lv_tag_resp.ded == 1)
+            wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: lv_evict_address, 
+                                                         way: lv_tag_resp.ded & v_reg_valid[set_index]};
+
+          if (|lv_data_resp.line_ded == 1)
+            wr_ded_data_log <= tagged Valid ECC_dcache_data{address: lv_evict_address, 
+                                                           banks: lv_data_resp.line_ded,
+                                                           way : _way};
+        `endif
           if(rg_release_readphase ) begin
 
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set_index:%d tag:%h\
@@ -801,8 +903,10 @@ dataline ))
         Bit#(`setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
-        m_tag.ma_read_p1(set_index);
-        m_data.ma_read_p1(set_index,'1);
+        if(wr_cache_enable) begin
+          m_tag.ma_read_p1(set_index);
+          m_data.ma_read_p1(set_index,'1);
+        end
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         wr_takingrequest <= True;
@@ -861,8 +965,35 @@ dataline ))
     method mv_storebuffer_empty = m_storebuffer.mv_sb_empty;
     method mv_cacheable_store = m_storebuffer.mv_cacheable_store;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
-        !rg_fence_stall && !fb_full && !sb_full;
-    method mv_commit_store_ready = ff_write_mem_request.notFull;
+        !rg_fence_stall && !fb_full && !sb_full && !m_storebuffer.mv_sb_busy
+        `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif ;
+    method mv_commit_store_ready = ff_write_mem_request.notFull && !m_storebuffer.mv_sb_busy;
+  `ifdef dcache_ecc
+    method mv_ded_data = wr_ded_data_log;
+    method mv_sed_data = wr_sed_data_log;
+    method mv_ded_tag = wr_ded_tag_log;
+    method mv_sed_tag = wr_ded_tag_log;
+    method Action ma_ram_request(RamAccess access)if(!rg_fence_stall);
+    //  if(!access.tag_data) begin // access tag;
+    //    m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
+    //  end
+    //  else begin
+    //    m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
+    //  end
+    //  rg_access_req <= access;
+    endmethod
+    method mv_ram_response if(!rg_fence_stall);
+      Bit#(`respwidth) return_data = ?;
+    //  Bit#(TLog#(`ddbanks)) _banks = truncate(pack(countZerosLSB(rg_access_req.banks)));
+    //  Bit#(`dways) _ways = 0;
+    //  _ways[rg_access_req.way] = 1;
+    //  if(!rg_access_req.tag_data) // access tag
+    //    return_data = zeroExtend(m_tag.mv_read_response(?,rg_access_req.way).address);
+    //  else
+    //    return_data = m_data.mv_read_response(_banks, _ways).word;
+      return return_data;
+    endmethod
+  `endif
   endmodule
 
 endpackage

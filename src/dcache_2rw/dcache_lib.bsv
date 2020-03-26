@@ -42,22 +42,31 @@ package dcache_lib;
   import DReg :: * ;
   import ConfigReg :: * ;
   import io_func::*;
+  import ecc_hamming :: * ;
 
   import mem_config :: * ;
   import dcache_types :: * ;
 
+  `define respwidth `vaddr
+
   typedef struct{
-    Bool sed;
-    Bool ded;
+  `ifdef dcache_ecc
+    Bit#(ways) sed;
+    Bit#(ways) ded;
+  `endif
     Bit#(ways)    waymask;
     Bit#(a)       address;
   } TagResponse#(numeric type ways, numeric type a) deriving(Bits, Eq, FShow);
 
   typedef struct{
-    Bool line_sed;
-    Bool line_ded;
-    Bool word_sed;
-    Bool word_ded;
+  `ifdef dcache_ecc
+    Bit#(b) line_sed;
+    Bit#(b) line_ded;
+    Bit#(1) word_sed;
+    Bit#(1) word_ded;
+    Bit#(TMul#(b,TAdd#(2,TLog#(TMul#(8,w))))) stored_parity;
+    Bit#(TMul#(b,TAdd#(2,TLog#(TMul#(8,w))))) check_parity;
+  `endif
     Bit#(TMul#(TMul#(w,8),b)) line;
     Bit#(TMul#(8,w)) word;
   } DataResponse#(numeric type b, numeric type w) deriving(Bits, Eq, FShow);
@@ -105,20 +114,33 @@ package dcache_lib;
           Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
           Add#(_a, setbits, _b),        // _b total bits for index+offset,
           Add#(tagbits, _b, paddr)     // tagbits = 32-(wordbits+blockbits+setbits)
+        `ifdef dcache_ecc
+          // for ecc
+          ,Add#(maxsize, 0,TExp#(TLog#(tagbits))),
+          // required by bsc
+          Add#(TLog#(tagbits), a__, 6),
+          Add#(b__, tagbits, 64),
+          Add#(c__, TAdd#(2, TLog#(tagbits)), TMul#(1, TAdd#(2, TLog#(tagbits)))),
+          Log#(TDiv#(tagbits, 1), TLog#(tagbits)),
+          Add#(d__, tagbits, TExp#(TLog#(tagbits)))
+        `endif
     );
     
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
 
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
+  `ifdef dcache_ecc
+    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, tagbits, 1)) v_tags <-
+                                                        replicateM(mkmem_config1rw_ecc(False));
+  `else
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, 1)) v_tags <-
                                                         replicateM(mkmem_config1rw(False));
+  `endif
     method Action ma_request( Bool read_write, 
                               Bit#(TLog#(sets)) index, 
                               Bit#(paddr) address, 
                               Bit#(TLog#(ways)) way);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
-                                     id, read_write, index, address, way))
       Bit#(tagbits) tag = truncateLSB(address);
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -133,59 +155,33 @@ package dcache_lib;
 
       Bit#(tagbits) tag_in = truncateLSB(address_in);
       Bit#(ways) lv_hitvector = 0;
-      Bool sed = False;
-      Bool ded = False;
-      Bit#(paddr)  lv_tag = {v_tags[wayselect].read_response,'d0};
+    `ifdef dcache_ecc
+      Bit#(ways) sed = 0;
+      Bit#(ways) ded = 0;
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_chparity;
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_stparity;
+    `endif
+      Vector#(ways, Bit#(tagbits)) lv_tags;
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        lv_hitvector[i] = pack(v_tags[i].read_response == tag_in);
+        lv_tags[i] = v_tags[i].read_response;
+      `ifdef dcache_ecc
+        sed[i] = v_tags[i].read_sed;
+        ded[i] = v_tags[i].read_ded;
+        lv_chparity[i] = v_tags[i].check_parity;
+        lv_stparity[i] = v_tags[i].stored_parity;
+      `endif
       end
-      return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag };
-    endmethod
-  endmodule
-  
-  module mk_tagram1r1w#(parameter Bit#(32) id)(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
-    provisos(    
-          Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
-          Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
-          Log#(sets, setbits),           // setbits is the no. of bits used as index in BRAMs.
-          Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
-          Add#(_a, setbits, _b),        // _b total bits for index+offset,
-          Add#(tagbits, _b, paddr)     // tagbits = 32-(wordbits+blockbits+setbits)
-    );
-    
-    let v_ways = valueOf(ways);
-    let v_sets = valueOf(sets);
-
-    /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
-    Vector#(ways, Ifc_mem_config1r1w#(sets, tagbits, 1)) v_tags 
-                                                            <- replicateM(mkmem_config1r1w(False,False));
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(paddr) address, 
-                              Bit#(TLog#(ways)) way);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGs: Req: rw:%b ind:%d addr:%h way:%d",
-                                     id, read_write, index, address, way))
-      Bit#(tagbits) tag = truncateLSB(address);
-      if(!read_write)
+    `ifdef dcache_ecc
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          v_tags[i].read(index);
+        Bit#(maxsize) _t = zeroExtend(lv_tags[i]);
+        lv_tags[i] = truncate(fn_ecc_correct(lv_chparity[i], lv_stparity[i], _t));
         end
-      else
-        v_tags[way].write(1, index, tag, '1);
-    endmethod
-
-    method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in, 
-                                               Bit#(TLog#(ways)) wayselect );
-
-      Bit#(tagbits) tag_in = truncateLSB(address_in);
-      Bit#(ways) lv_hitvector = 0;
-      Bool sed = False;
-      Bool ded = False;
-      Bit#(paddr)  lv_tag = {v_tags[wayselect].read_response,'d0};
+    `endif
       for (Integer i = 0; i<v_ways; i = i + 1) begin
-        lv_hitvector[i] = pack(v_tags[i].read_response == tag_in);
+        lv_hitvector[i] = pack(truncate(lv_tags[i]) == tag_in);
       end
-      return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag };
+      Bit#(paddr)  lv_tag = {lv_tags[wayselect],'d0};
+      return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif waymask: lv_hitvector, address: lv_tag };
     endmethod
   endmodule
   
@@ -254,36 +250,36 @@ package dcache_lib;
 
       Bit#(tagbits) tag_in = truncateLSB(address_in);
       Bit#(ways) lv_hitvector = 0;
-      Bool sed = False;
-      Bool ded = False;
+      Bit#(ways) sed = 0;
+      Bit#(ways) ded = 0;
       Bit#(paddr)  lv_tag = {v_tags[wayselect].p1.read_response,'d0};
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         lv_hitvector[i] = pack(v_tags[i].p1.read_response == tag_in);
         let _t = v_tags[i].p1.read_response;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: TAGP1[%d]:%h",id,i,_t))
       end
-      return TagResponse{sed: sed, ded: ded, waymask: lv_hitvector, address: lv_tag};
+      return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif 
+                          waymask: lv_hitvector, address: lv_tag};
     endmethod
     method TagResponse#(ways, paddr) mv_read_response_p2(Bit#(TLog#(ways)) wayselect );
-      Bool sed = False;
-      Bool ded = False;
+      Bit#(ways) sed = 0;
+      Bit#(ways) ded = 0;
       Bit#(paddr)  lv_tag = {v_tags[wayselect].p2.read_response,'d0};
-      return TagResponse{sed: sed, ded: ded, waymask: 0, address: lv_tag };
+      return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif waymask: 0, address: lv_tag };
     endmethod
   endmodule
 
   interface Ifc_dataram#(numeric type wordsize,
                          numeric type blocksize,
                          numeric type sets,
-                         numeric type ways,
-                         numeric type banks);
+                         numeric type ways);
     /*doc:method: request method to initiate a read or write on the dataline. A read is latched on all
     * ways. A write is peformed only on a single way.*/
     method Action ma_request( Bool read_write, 
                               Bit#(TLog#(sets)) index, 
                               Bit#(TMul#(TMul#(wordsize, 8),blocksize)) dataline, 
                               Bit#(TLog#(ways)) way,
-                              Bit#(banks) banks);
+                              Bit#(blocksize) banks);
 
     /*doc:method: This method will read the ram output from all ways. Compare with the input tag.
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
@@ -294,7 +290,7 @@ package dcache_lib;
   endinterface
 
   module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
-      (Ifc_dataram#(wordsize, blocksize, sets, ways, banks))
+      (Ifc_dataram#(wordsize, blocksize, sets, ways))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
@@ -304,25 +300,34 @@ package dcache_lib;
 
           // required by bsc
           Add#(a__, respwidth, linewidth), // since the response is truncated version of line
-          Mul#(TDiv#(linewidth, banks), banks, linewidth), // from mem_config
-          Add#(a__, TDiv#(linewidth, banks), linewidth) // from mem_config
+          Mul#(TDiv#(linewidth, blocksize), blocksize, linewidth), // from mem_config
+          Add#(a__, TDiv#(linewidth, blocksize), linewidth) // from mem_config
+
+        `ifdef dcache_ecc
+          ,Add#(b__, 2, TMul#(2, blocksize)),
+          Add#(TLog#(TDiv#(linewidth, blocksize)), c__, 6),
+          Add#(d__, TDiv#(linewidth, blocksize), 64),
+          Add#(e__, TAdd#(2, TLog#(TDiv#(linewidth, blocksize))), TMul#(blocksize,
+                                                    TAdd#(2, TLog#(TDiv#(linewidth, blocksize)))))
+        `endif
       );
     let v_wordsize = valueOf(wordsize);
     let v_blocksize = valueOf(blocksize);
     let v_sets = valueOf(sets);
     let v_ways = valueOf(ways);
-    let v_banks = valueOf(banks);
-
-    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, banks)) v_data 
+  `ifdef dcache_ecc
+    Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
+                                                      <- replicateM(mkmem_config1rw_ecc(False));
+  `else
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
                                                             <- replicateM(mkmem_config1rw(False));
+  `endif
     method Action ma_request( Bool read_write, 
                               Bit#(TLog#(sets)) index, 
                               Bit#(linewidth) dataline, 
                               Bit#(TLog#(ways)) way,
-                              Bit#(banks) banks);
+                              Bit#(blocksize) banks);
 
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
-                                     id, read_write, index, way, dataline))
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
           v_data[i].request(0, index, dataline, banks);
@@ -338,102 +343,65 @@ package dcache_lib;
       Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {blocknum,zeros};
       Bit#(respwidth) lv_selected_word = ?;
       Bit#(linewidth) lv_selected_line = ?;
+    `ifdef dcache_ecc
+      Bit#(blocksize) lv_line_ded = 0;
+      Bit#(blocksize) lv_line_sed = 0;
+      Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) lv_stored_parity=?;
+      Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) lv_check_parity=?;
+    `endif
       if (onehot) begin
         Vector#(ways, Bit#(respwidth)) lv_words = ?;
         Vector#(ways, Bit#(linewidth)) lv_lines = ?;
+      `ifdef dcache_ecc
+        Vector#(ways, Bit#(blocksize))     lv_lines_sed = ?;
+        Vector#(ways, Bit#(blocksize))     lv_lines_ded = ?;
+        Vector#(ways, Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize)))))) lv_stparity;
+        Vector#(ways, Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize)))))) lv_chparity;
+      `endif
         for (Integer i = 0; i< v_ways ; i = i + 1) begin
           lv_words[i] = truncate(v_data[i].read_response >> block_offset);
           lv_lines[i] = v_data[i].read_response;
+        `ifdef dcache_ecc
+          lv_lines_sed[i] = v_data[i].read_sed;
+          lv_lines_ded[i] = v_data[i].read_ded;
+          lv_stparity[i] = v_data[i].stored_parity;
+          lv_chparity[i] = v_data[i].check_parity;
+        `endif
         end
         lv_selected_word = select(lv_words,unpack(wayselect));
         lv_selected_line = select(lv_lines,unpack(wayselect));
+      `ifdef dcache_ecc
+        lv_line_sed = select(lv_lines_sed,unpack(wayselect));
+        lv_line_ded = select(lv_lines_ded,unpack(wayselect));
+        lv_stored_parity = select(lv_stparity, unpack(wayselect));
+        lv_check_parity = select(lv_chparity, unpack(wayselect));
+      `endif
       end
       else begin
         for (Integer i = 0; i<v_ways; i = i + 1) begin
           if (wayselect[i] == 1) begin
             lv_selected_line = v_data[i].read_response;
             lv_selected_word = truncate(lv_selected_line>> block_offset);
+          `ifdef dcache_ecc
+            lv_line_sed = v_data[i].read_sed;
+            lv_line_ded = v_data[i].read_ded;
+            lv_stored_parity = v_data[i].stored_parity;
+            lv_check_parity = v_data[i].check_parity;
+          `endif
           end
         end
       end
+      Bit#(1) lv_word_ded = `ifdef dcache_ecc lv_line_ded[blocknum] `else 0 `endif ;
+      Bit#(1) lv_word_sed = `ifdef dcache_ecc lv_line_sed[blocknum] `else 0 `endif ;
 
-      return DataResponse{word_sed: False, word_ded:False, word: lv_selected_word,
-                          line_sed: False, line_ded:False, line: lv_selected_line};
-
-    endmethod
-  endmodule
-  module mk_dataram1r1w#(parameter Bit#(32) id, parameter Bool onehot)
-      (Ifc_dataram#(wordsize, blocksize, sets, ways, banks))
-      provisos(
-          Mul#(TMul#(wordsize,8),blocksize,linewidth),
-          Log#(wordsize, wordbits),
-          Log#(blocksize, blockbits),
-          Log#(sets, setbits),
-          Mul#(wordsize,8, respwidth),
-
-          // required by bsc
-          Add#(a__, respwidth, linewidth), // since the response is truncated version of line
-          Mul#(TDiv#(linewidth, banks), banks, linewidth), // from mem_config
-          Add#(a__, TDiv#(linewidth, banks), linewidth) // from mem_config
-      );
-    let v_wordsize = valueOf(wordsize);
-    let v_blocksize = valueOf(blocksize);
-    let v_sets = valueOf(sets);
-    let v_ways = valueOf(ways);
-    let v_banks = valueOf(banks);
-
-//    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, banks)) v_data 
-//                                                            <- replicateM(mkmem_config1rw(False));
-    Vector#(ways, Ifc_mem_config1r1w#(sets, linewidth, banks)) v_data 
-                                                            <- replicateM(mkmem_config1r1w(False,False));
-    method Action ma_request( Bool read_write, 
-                              Bit#(TLog#(sets)) index, 
-                              Bit#(linewidth) dataline, 
-                              Bit#(TLog#(ways)) way,
-                              Bit#(banks) banks);
-
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d way:%d data:%h",
-                                     id, read_write, index, way, dataline))
-      if(!read_write)
-        for (Integer i = 0; i< v_ways; i = i + 1) begin
-          v_data[i].read(index);
-        end
-      else
-        v_data[way].write(1, index, dataline, banks);
-    endmethod
-
-    method DataResponse#(blocksize,wordsize) mv_read_response(
-                                              Bit#(blockbits) blocknum, 
-                                              Bit#(ways) wayselect );
-      Bit#(TLog#(respwidth)) zeros = 0;
-      Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {blocknum,zeros};
-      Bit#(respwidth) lv_selected_word = ?;
-      Bit#(linewidth) lv_selected_line = ?;
-      if (onehot) begin
-        Vector#(ways, Bit#(respwidth)) lv_words = ?;
-        Vector#(ways, Bit#(linewidth)) lv_lines = ?;
-        for (Integer i = 0; i< v_ways ; i = i + 1) begin
-          lv_words[i] = truncate(v_data[i].read_response >> block_offset);
-          lv_lines[i] = v_data[i].read_response;
-        end
-        lv_selected_word = select(lv_words,unpack(wayselect));
-        lv_selected_line = select(lv_lines,unpack(wayselect));
-      end
-      else begin
-        for (Integer i = 0; i<v_ways; i = i + 1) begin
-          if (wayselect[i] == 1) begin
-            lv_selected_line = v_data[i].read_response;
-            lv_selected_word = truncate(lv_selected_line>> block_offset);
-          end
-        end
-      end
-
-      return DataResponse{word_sed: False, word_ded:False, word: lv_selected_word,
-                          line_sed: False, line_ded:False, line: lv_selected_line};
+      return DataResponse{`ifdef dcache_ecc 
+                            word_sed: lv_word_sed, word_ded:lv_word_ded,  
+                            line_sed: lv_line_sed, line_ded:lv_line_ded, 
+                            stored_parity: lv_stored_parity, check_parity: lv_check_parity,
+                          `endif line: lv_selected_line, word: lv_selected_word};
 
     endmethod
   endmodule
-  
   interface Ifc_dataram2rw#(
                          numeric type wordsize,
                          numeric type blocksize,
@@ -527,8 +495,10 @@ package dcache_lib;
         end
       end
 
-      return DataResponse{word_sed: False, word_ded:False, word: lv_selected_word,
-                          line_sed: False, line_ded:False, line: lv_selected_line};
+      return DataResponse{`ifdef dcache_ecc 
+                            word_sed: 0, word_ded:0, 
+                            line_sed: 0, line_ded:0, 
+                          `endif  line: lv_selected_line, word: lv_selected_word};
 
     endmethod
     method DataResponse#(blocksize,wordsize) mv_read_response_p2(Bit#(ways) wayselect );
@@ -547,8 +517,10 @@ package dcache_lib;
           end
         end
       end
-      return DataResponse{word_sed: False, word_ded:False, word: ?,
-                          line_sed: False, line_ded:False, line: lv_selected_line};
+      return DataResponse{`ifdef dcache_ecc 
+                            word_sed: 0, word_ded:0, 
+                            line_sed: 0, line_ded:0, 
+                          `endif  line: lv_selected_line, word: ?};
     endmethod
   endmodule
 
@@ -811,7 +783,11 @@ package dcache_lib;
     method Action ma_perform_release;
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
       Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex); 
-
+  `ifdef dcache_ecc
+    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
+                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
+                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
+  `endif
   endinterface
 
   (*conflict_free="ma_perform_release,mav_allocate_line"*)
@@ -819,6 +795,11 @@ package dcache_lib;
   (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
   (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
   (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
+`ifdef dcache_ecc
+  (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
+  (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
+  (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
+`endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, banks, paddr, respwidth))
       provisos(
@@ -839,6 +820,10 @@ package dcache_lib;
           Add#(c__, respwidth, linewidth),
           Add#(d__, blockbits, paddr),
           Add#(TAdd#(tagbits, setbits), e__, paddr)
+
+        `ifdef dcache_ecc
+          , Add#(2, TLog#(TMul#(8,wordsize)), ecc_size)
+        `endif
           );
 
     let v_wordsize = valueOf(wordsize);
@@ -849,6 +834,9 @@ package dcache_lib;
     let v_blockbits = valueOf(blockbits);
     let v_fbsize = valueOf(fbsize);
     let v_respwidth = valueOf(respwidth);
+  `ifdef dcache_ecc
+    let v_ecc_size = valueOf(ecc_size);
+  `endif
 
     Integer lv_offset = case(valueOf(respwidth)) 32: 4;      64: 8;      128: 16;   endcase;
     function Bool isTrue(Bool a);
@@ -1009,6 +997,19 @@ package dcache_lib;
       return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
+  `ifdef dcache_ecc
+    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
+                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
+                        Bit#(TMul#(banks,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
+
+      for (Integer i = 0; i< v_banks; i = i + 1) begin
+        Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        let _data = fn_ecc_correct(_chparity, _stparity, v_fb_data[fbindex][i]);
+        v_fb_data[fbindex][i] <= _data;
+      end
+    endmethod
+  `endif
   endmodule
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
@@ -1019,12 +1020,14 @@ package dcache_lib;
     method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data, 
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io);
+            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io
+          `ifdef atomic ,Bool atomic, Bit#(TMul#(8,wordsize)) read_data, Bit#(5) atomic_op `endif );
     method ActionValue#(Tuple2#(Bool,Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)))) 
                                                                             mav_store_to_commit;
     method Bool mv_sb_full;
     method Bool mv_sb_empty;
     method Bool mv_cacheable_store;
+    method Bool mv_sb_busy;
   endinterface
 
   function Bool isTrue(Bool a);
@@ -1063,10 +1066,40 @@ package dcache_lib;
               Add#(1, c__, sbsize),
               Mul#(16, a__, dataword),
               Mul#(32, d__, dataword)
+
+            `ifdef atomic
+              ,Add#(e__, 32, dataword)
+            `endif
             );
 
     let v_wordbits = valueOf(wordbits);
-    
+   
+  `ifdef atomic
+    /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
+    function Bit#(dataword) fn_atomic_op (Bit#(5) op,  Bit#(dataword) rs2,  Bit#(dataword) loaded);
+      Bit#(dataword) op1 = loaded;
+      Bit#(dataword) op2 = rs2;
+      if(op[4]==0)begin
+	  		op1=signExtend(loaded[31:0]);
+        op2= signExtend(rs2[31:0]);
+      end
+      Int#(dataword) s_op1 = unpack(op1);
+	  	Int#(dataword) s_op2 = unpack(op2);
+
+      case (op[3:0])
+	  			'b0011:return op2;
+	  			'b0000:return (op1+op2);
+	  			'b0010:return (op1^op2);
+	  			'b0110:return (op1&op2);
+	  			'b0100:return (op1|op2);
+	  			'b1100:return min(op1,op2);
+	  			'b1110:return max(op1,op2);
+	  			'b1000:return pack(min(s_op1,s_op2));
+	  			'b1010:return pack(max(s_op1,s_op2));
+	  			default:return op1;
+	  		endcase
+    endfunction
+  `endif
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
@@ -1086,6 +1119,27 @@ package dcache_lib;
     Bool sb_full = (all(isTrue, readVReg(v_sb_valid)));
     /*dov:var: variable to indicate that the storebuffer is empty*/
     Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
+
+    /*doc:reg: */
+    Reg#(Bool) rg_sb_busy <- mkReg(False);
+
+  `ifdef atomic
+    /*doc:reg: */
+    Reg#(Bit#(dataword)) rg_atomic_readword <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(5)) rg_atomic_op <- mkReg(0);
+    /*doc:reg: */
+    Reg#(Bit#(TLog#(sbsize))) rg_atomic_tail <- mkReg(0);
+
+    /*doc:rule: */
+    rule rl_perform_atomic(rg_sb_busy);
+      let _s = v_sb_meta[rg_atomic_tail];
+      let _newdata = fn_atomic_op(rg_atomic_op, _s.data, rg_atomic_readword);
+      _s.data = _newdata;
+      v_sb_meta[rg_atomic_tail] <= _s;
+      rg_sb_busy <= False;
+    endrule
+  `endif
 
     method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
@@ -1112,7 +1166,9 @@ package dcache_lib;
     endmethod
 
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(dataword) data, 
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io) if(!sb_full);
+          Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size, Bool io
+          `ifdef atomic ,Bool atomic, Bit#(TMul#(8,wordsize)) read_data, 
+          Bit#(5) atomic_op `endif ) if(!sb_full `ifdef atomic && !rg_sb_busy `endif );
 
       data = case (size[1 : 0])
         'b00 : duplicate(data[7 : 0]);
@@ -1134,6 +1190,12 @@ package dcache_lib;
       rg_tail <= rg_tail + 1;
       `logLevel( storebuffer, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
                                           fshow(_s)))
+    `ifdef atomic 
+      rg_sb_busy <= atomic;
+      rg_atomic_tail <= rg_tail;
+      rg_atomic_readword <= read_data;
+      rg_atomic_op <= atomic_op;
+    `endif
     endmethod
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
@@ -1144,6 +1206,7 @@ package dcache_lib;
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;
+    method mv_sb_busy = rg_sb_busy;
   endmodule
       
 
