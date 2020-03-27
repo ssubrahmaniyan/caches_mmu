@@ -116,7 +116,7 @@ package dcache_types;
   typedef struct{
     Bit#(TLog#(`dsets)) index; 
     Bit#(TLog#(`dways)) way;
-    Bit#(`ddbanks) banks;
+    Bit#(TLog#(`dblocks)) banks;
     Bit#(TMul#(`dwords,8)) data;
     Bool read_write; // False: read True: write
     Bool tag_data; // False: tag True: daa

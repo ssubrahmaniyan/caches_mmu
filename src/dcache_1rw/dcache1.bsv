@@ -236,8 +236,6 @@ package dcache1;
   // conflict. However, these two rules will never fire together
   (*mutually_exclusive="rl_release_from_fillbuffer, rl_ram_check"*)
 `ifdef dcache_ecc
-//  (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
-//  (*preempts="mv_ram_response,rl_ram_check"*)
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
   (*conflict_free="rl_perform_correction, ma_perform_store"*)
 `endif
@@ -348,7 +346,7 @@ package dcache1;
 
   `ifdef dcache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
-    Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
+    Reg#(Maybe#(RamAccess)) rg_access_req <- mkDReg(tagged Invalid);
     /*doc:reg: */
     Reg#(Bool) rg_perform_sec <- mkReg(False);
     /*doc:reg: */
@@ -1169,24 +1167,26 @@ dataline ))
     method mv_ded_tag = wr_ded_tag_log;
     method mv_sed_tag = wr_ded_tag_log;
     method Action ma_ram_request(RamAccess access)if(!rg_fence_stall && !rg_performing_replay);
+      Bit#(blocksize) _banks = 0;
+      _banks[access.banks] = 1;
       if(!access.tag_data) begin // access tag;
         m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
       end
       else begin
-        m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
+        m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way,
+        _banks);
       end
-      rg_access_req <= access;
+      rg_access_req <= tagged Valid access;
     endmethod
-    method mv_ram_response if(!rg_fence_stall && !rg_performing_replay);
-      Bit#(`respwidth) return_data= ?;
-//      Bit#(TLog#(`dblocks)) _banks = truncate(pack(countZerosLSB(rg_access_req.banks)));
-//      Bit#(`dways) _ways = 0;
-//      _ways[rg_access_req.way] = 1;
-//      if(!rg_access_req.tag_data) // access tag
-//        return_data = zeroExtend(m_tag.mv_read_response(?,rg_access_req.way).address);
-//      else
-//        return_data = m_data.mv_read_response(_banks, _ways).word;
-      return return_data;
+    method Bit#(`respwidth) mv_ram_response if(!rg_fence_stall &&& !rg_performing_replay 
+                                              &&& rg_access_req matches tagged Valid .access);
+      Bit#(`respwidth) tag_response = zeroExtend(m_tag.mv_sideband_read(access.way));
+      Bit#(`respwidth) data_response = m_data.mv_sideband_read(access.way,
+                                        access.banks);
+      if(!access.tag_data) // access tag
+        return tag_response;
+      else
+        return data_response;
     endmethod
   `endif
   endmodule

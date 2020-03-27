@@ -102,6 +102,9 @@ package dcache_lib;
      * single-error or double-error detected while performing the read across all the ways. */
     method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in,
                                                Bit#(TLog#(ways)) wayselect);
+  `ifdef dcache_ecc
+    method Bit#(paddr) mv_sideband_read (Bit#(TLog#(ways)) way);
+  `endif
   endinterface
 
   module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
@@ -183,6 +186,11 @@ package dcache_lib;
       Bit#(paddr)  lv_tag = {lv_tags[wayselect],'d0};
       return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif waymask: lv_hitvector, address: lv_tag };
     endmethod
+  `ifdef dcache_ecc
+    method Bit#(paddr) mv_sideband_read (Bit#(TLog#(ways)) way);
+      return zeroExtend(v_tags[way].read_response);
+    endmethod
+  `endif
   endmodule
 
 
@@ -204,6 +212,9 @@ package dcache_lib;
     method DataResponse#(blocksize,wordsize) mv_read_response(
                                               Bit#(TLog#(blocksize)) blocknum,
                                               Bit#(ways) wayselect );
+  `ifdef dcache_ecc
+    method Bit#(TMul#(wordsize, 8)) mv_sideband_read (Bit#(TLog#(ways)) way, Bit#(TLog#(blocksize)) bank);
+  `endif
   endinterface
 
   module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
@@ -218,7 +229,8 @@ package dcache_lib;
           // required by bsc
           Add#(a__, respwidth, linewidth), // since the response is truncated version of line
           Mul#(TDiv#(linewidth, blocksize), blocksize, linewidth), // from mem_config
-          Add#(a__, TDiv#(linewidth, blocksize), linewidth) // from mem_config
+          Add#(a__, TDiv#(linewidth, blocksize), linewidth), // from mem_config
+          Add#(f__, TMul#(wordsize, 8), linewidth)
 
         `ifdef dcache_ecc
           ,Add#(b__, 2, TMul#(2, blocksize)),
@@ -318,6 +330,14 @@ package dcache_lib;
                           `endif line: lv_selected_line, word: lv_selected_word};
 
     endmethod
+  `ifdef dcache_ecc
+    method Bit#(TMul#(wordsize, 8)) mv_sideband_read (Bit#(TLog#(ways)) way, Bit#(TLog#(blocksize)) bank);
+      Bit#(linewidth) _line = v_data[way].read_response;
+      Bit#(TLog#(respwidth)) zeros = 0;
+      Bit#(TAdd#(TLog#(respwidth),blockbits))  block_offset = {bank,zeros};
+      return truncate(_line>> block_offset);
+    endmethod
+  `endif
   endmodule
 
   interface Ifc_fillbuffer#(numeric type fbsize,
