@@ -46,8 +46,6 @@ package dcache_lib;
 
   import mem_config :: * ;
   import dcache_types :: * ;
-  
-  `define respwidth `vaddr
 
   typedef struct{
   `ifdef dcache_ecc
@@ -148,6 +146,8 @@ package dcache_lib;
         end
       else
         v_tags[way].request(1, index, tag, '1);
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: TagReq: Tag:%h RW:%b Way:%d index:%d",id,tag,
+      read_write, way, index))
     endmethod
 
     method TagResponse#(ways, paddr) mv_read_response(Bit#(paddr) address_in,

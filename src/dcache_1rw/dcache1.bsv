@@ -166,6 +166,7 @@ package dcache1;
   import BUtils :: * ;
   import Memory :: * ; // only for the updateDataWithMask function
   import DReg :: * ;
+  import UniqueWrappers :: * ;
 
 
   `include "dcache.defines"
@@ -174,10 +175,12 @@ package dcache1;
   import replacement_dcache :: * ;
   import mem_config :: * ;
   import common_tlb_types:: * ;
+  import ecc_hamming :: * ;
+
 
   import io_func :: * ;
  
-  `define respwidth `vaddr
+  `define respwidth TMul#(`dwords,8)
   `define linewidth TMul#(`dblocks, TMul#(`dwords,8))
   `define setbits TLog#(`dsets)
   `define blockbits TLog#(`dblocks)
@@ -235,7 +238,7 @@ package dcache1;
 `ifdef dcache_ecc
 //  (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
 //  (*preempts="mv_ram_response,rl_ram_check"*)
-//  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
+  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
   (*conflict_free="rl_perform_correction, ma_perform_store"*)
 `endif
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
@@ -429,6 +432,8 @@ package dcache1;
 
   `ifdef dcache_ecc
     /*doc:wire: */
+    Wire#(Bool) wr_ecc_fault <- mkDWire(False);
+    /*doc:wire: */
     Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_sed_tag_log <- mkDWire(tagged Invalid);
     /*doc:wire: */
     Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_ded_tag_log <- mkDWire(tagged Invalid);
@@ -460,7 +465,11 @@ package dcache1;
      ensure that a release of the fill-buffer does not happen.*/
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
-    // --------------------------- Rule operations ------------------------------------- //
+    Vector#(`dblocks, Wrapper3#(Bit#(`deccsize), Bit#(`deccsize), 
+      Bit#(`respwidth), Bit#(`respwidth))) fn_ecc_correct_uw <-
+      replicateM(mkUniqueWrapper3(fn_ecc_correct));
+
+    // --------------------------- global variables ------------------------------------- //
     Bool sb_empty = m_storebuffer.mv_sb_empty;
     Bool sb_full = m_storebuffer.mv_sb_full;
     Bool fb_full = m_fillbuffer.mv_fbfull;
@@ -509,6 +518,15 @@ package dcache1;
       Bit#(`linewidth) dataline = lv_data_resp.line;
       Bit#(`paddr) final_address={tag, rg_fence_set, zeros};
     `ifdef dcache_ecc
+      Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) stored_parity = lv_data_resp.stored_parity;
+      Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) check_parity = lv_data_resp.check_parity;
+      for (Integer i = 0; i< v_blocksize; i = i + 1) begin
+        Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        Bit#(`respwidth) _data = dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        _data <- fn_ecc_correct_uw[i].func(_chparity, _stparity, _data);
+        dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = _data;
+      end
       if(|lv_tag_resp.ded == 1)
         wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: final_address, 
                                                      way: lv_tag_resp.ded & v_reg_valid[rg_fence_set]};
@@ -608,22 +626,23 @@ dataline ))
       Bit#(`setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       let lv_tag_resp = m_tag.mv_read_response(phyaddr, ?);
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: lv_tag_resp:",id,fshow(lv_tag_resp)))
       Bit#(`dways) lv_hitmask = lv_tag_resp.waymask & v_reg_valid[set_index];
       let lv_data_resp = m_data.mv_read_response(lv_blocknum,lv_hitmask);
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: lv_data_resp:",id,fshow(lv_data_resp)))
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
 
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
                                           cause: lv_cause, epochs: req.epochs};
     `ifdef dcache_ecc
-      Bool lv_ecc_fault = False;
 
       rg_sec_checkparity <= lv_data_resp.check_parity;
       rg_sec_storeparity <= lv_data_resp.stored_parity;
 
-      if(|lv_tag_resp.ded == 1 && |lv_hitmask == 0)
-        lv_ecc_fault = True;
+      if(|lv_tag_resp.ded == 1 && |v_reg_valid[set_index] == 1)
+        lv_access_fault = True;
       else if(|lv_hitmask == 1 && |lv_data_resp.line_ded == 1)
-        lv_ecc_fault = True;
+        lv_access_fault = True;
 
       if(|lv_tag_resp.ded == 1)
         wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: phyaddr, 
@@ -648,7 +667,7 @@ dataline ))
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
       wr_ram_hitline <= lv_data_resp.line;
 
-      if(lv_access_fault ) begin
+      if(lv_access_fault) begin
         wr_fault <= True;
       end
       else if(|(lv_hitmask) == 1 && wr_cache_enable) begin// trap or hit in RAMs
@@ -724,7 +743,6 @@ dataline ))
     fire since the fifo is full and thus the store being dropped.*/
     rule rl_response_to_core(!ff_core_request.first.fence && `ifdef dcache_ecc !rg_perform_sec && `endif 
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
-
 
     `ifdef dcache_ecc
       Bool lv_tag_sed = isValid(wr_sed_tag_log);
@@ -843,13 +861,16 @@ dataline ))
           rg_perform_sec <= True;
           rg_sec_fbindex <= _fbindex;
           rg_sec_address <= phyaddr;
+          `logLevel( dcache, 0, $format("[%2d]DCACHE: Detected Single Error in Data Line",id))
         end
       `endif
       end
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+        if(!_faulty)
+          `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+
       if(req.access!=0 && !_faulty && !lv_response.trap 
                                             `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
@@ -987,6 +1008,15 @@ dataline ))
           Bit#(`linewidth) dataline = lv_data_resp.line;
           Bit#(`paddr) lv_evict_address = {tag,set_index,zeros};
         `ifdef dcache_ecc
+          Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) stored_parity = lv_data_resp.stored_parity;
+          Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) check_parity = lv_data_resp.check_parity;
+          for (Integer i = 0; i< v_blocksize; i = i + 1) begin
+            Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+            Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+            Bit#(`respwidth) _data = dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+            _data <- fn_ecc_correct_uw[i].func(_chparity, _stparity, _data);
+            dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = _data;
+          end
           if(|lv_tag_resp.ded == 1)
             wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: lv_evict_address, 
                                                          way: lv_tag_resp.ded & v_reg_valid[set_index]};
@@ -1139,13 +1169,13 @@ dataline ))
     method mv_ded_tag = wr_ded_tag_log;
     method mv_sed_tag = wr_ded_tag_log;
     method Action ma_ram_request(RamAccess access)if(!rg_fence_stall && !rg_performing_replay);
-//      if(!access.tag_data) begin // access tag;
-//        m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
-//      end
-//      else begin
-//        m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
-//      end
-//      rg_access_req <= access;
+      if(!access.tag_data) begin // access tag;
+        m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
+      end
+      else begin
+        m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
+      end
+      rg_access_req <= access;
     endmethod
     method mv_ram_response if(!rg_fence_stall && !rg_performing_replay);
       Bit#(`respwidth) return_data= ?;
