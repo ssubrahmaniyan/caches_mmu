@@ -630,14 +630,12 @@ dataline ))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: lv_data_resp:",id,fshow(lv_data_resp)))
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
 
-      let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
-                                          cause: lv_cause, epochs: req.epochs};
     `ifdef dcache_ecc
 
       rg_sec_checkparity <= lv_data_resp.check_parity;
       rg_sec_storeparity <= lv_data_resp.stored_parity;
 
-      if(|lv_tag_resp.ded == 1 && |v_reg_valid[set_index] == 1)
+      if(|(lv_tag_resp.ded & v_reg_valid[set_index]) == 1)
         lv_access_fault = True;
       else if(|lv_hitmask == 1 && |lv_data_resp.line_ded == 1)
         lv_access_fault = True;
@@ -660,6 +658,8 @@ dataline ))
                                                        banks: lv_data_resp.line_sed,
                                                        way : lv_hitmask};
     `endif
+      let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
+                                          cause: lv_cause, epochs: req.epochs};
 
       wr_ram_response <= lv_response;
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
