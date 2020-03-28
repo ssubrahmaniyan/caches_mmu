@@ -284,12 +284,6 @@ package icache1;
     /*doc:reg: When tru indicates that a miss is being catered to*/
     Reg#(Bool) rg_handling_miss <- mkReg(False);
 
-    /*doc:reg: */
-    Reg#(Bit#(1)) rg_wEpoch <- mkReg(0);
-    
-    /*doc:reg: this register indicates the read-phase of the release sequence*/
-    Reg#(Bool) rg_release_readphase <- mkDReg(False);
-
     /*doc:reg: This register indicates that the bram inputs are being re-driven by those provided
     from the core in the most recent request. This happens because as the release from the
     fillbuffer happens it is possible that a dirty ways needs to be read out. This will change the
@@ -305,31 +299,9 @@ package icache1;
     and thus rg_miss_handling cannot be used here. Hence the need for this register*/
     Reg#(Bool) rg_polling_mode <- mkReg(False);
 
-    /*doc:reg: this register selects the way for performing a fence operation */
-    Reg#(Bit#(TLog#(`iways))) rg_fence_way <- mkReg(0);
-
-    /*doc:reg: this register selects the set for performing a fence operation */
-    Reg#(Bit#(TLog#(`isets))) rg_fence_set <- mkReg(0);
-
-    /*doc:reg: this register when true indicates that a fence operation has caused a writeback to
-     the memory and the response has not been received yet.*/
-    Reg#(Bool) rg_fence_pending <- mkReg(False);
-
   `ifdef icache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
     Reg#(Maybe#(RamAccess)) rg_access_req <- mkDReg(tagged Invalid);
-    /*doc:reg: */
-    Reg#(Bool) rg_perform_sec <- mkReg(False);
-    /*doc:reg: */
-    Reg#(Bool) rg_halt_ram_check <- mkReg(False);
-    /*doc:reg: */
-    Reg#(Bit#(TLog#(`ifbsize))) rg_sec_fbindex <- mkReg(0);
-    /*doc:reg: */
-    Reg#(Bit#(TMul#(`iblocks, `ieccsize))) rg_sec_storeparity <- mkReg(0);
-    Reg#(Bit#(TMul#(`iblocks, `ieccsize))) rg_sec_checkparity <- mkReg(0);
-    /*doc:reg: */
-    Reg#(Bit#(`paddr)) rg_sec_address <- mkReg(0);
-
   `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -344,11 +316,6 @@ package icache1;
     /*doc:wire: in case of a hit in the ram, this wire holds the information of which way was a hit.
     This is used for replacement purposes only.*/
     Wire#(Bit#(TLog#(`iways))) wr_ram_hitway <-mkDWire(0);
-    /*doc:wire: in case of a store-hit in the RAM, the hit line needs to be transfered to the FB.
-    This wire holds that hit line*/
-  `ifdef icache_ecc
-    Wire#(Bit#(`linewidth)) wr_ram_hitline <- mkDWire(?);
-  `endif
     /*doc:wire in case of a hit in the rams, the wire holds the holds the value of the set which
     caused a hit. This is necessary since an eviction from the same set should not affect the
     replacement policy if a hit to the same set has occurred in the same cycle */
@@ -384,6 +351,8 @@ package icache1;
   `ifdef icache_ecc
     /*doc:wire: */
     Wire#(Bool) wr_ecc_fault <- mkDWire(False);
+    /*doc:wire: */
+    Wire#(Bit#(`iways)) wr_err_ways <- mkDWire(0);
     /*doc:wire: */
     Wire#(Maybe#(ECC_icache_tag#(`paddr,`iways))) wr_sed_tag_log <- mkDWire(tagged Invalid);
     /*doc:wire: */
@@ -427,8 +396,7 @@ package icache1;
     // --------------------------- Rule operations ------------------------------------- //
 
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty && 
-                            !rg_fence_pending && !rg_performing_replay
-                          `ifdef icache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif ) ;
+                            !rg_performing_replay ) ;
       `logLevel( icache, 1, $format("[%2d]ICACHE : Fence operation in progress",id))
       for (Integer i = 0; i< fromInteger(v_sets); i = i + 1) begin
         v_reg_valid[i] <= 0 ;
@@ -438,19 +406,9 @@ package icache1;
       replacement.reset_repl;
     endrule
 
-  `ifdef icache_ecc
-    /*doc:rule: */
-    rule rl_perform_correction(rg_perform_sec);
-      rg_perform_sec <= False; 
-      m_fillbuffer.mav_perform_sec(rg_sec_fbindex, rg_sec_storeparity, rg_sec_checkparity);
-      rg_halt_ram_check <= True;
-      `logLevel( icache, 0, $format("[%2d]ICACHE: Performing SEC for fbindex:%d",id, rg_sec_fbindex))
-    endrule
-  `endif
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
-                      && !rg_polling_mode && !fb_full && !rg_release_readphase
-                  `ifdef icache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif );
+                      && !rg_polling_mode && !fb_full );
       let req = ff_core_request.first;
       // select the physical address and check for any faults
     `ifdef supervisor
@@ -479,13 +437,19 @@ package icache1;
 
     `ifdef icache_ecc
 
-      rg_sec_checkparity <= lv_data_resp.check_parity;
-      rg_sec_storeparity <= lv_data_resp.stored_parity;
+      Bool fault_detected = False;
 
-      if(|(lv_tag_resp.ded & v_reg_valid[set_index]) == 1)
-        lv_access_fault = True;
-      else if(|lv_hitmask == 1 && |lv_data_resp.line_ded == 1)
-        lv_access_fault = True;
+      if(|( (lv_tag_resp.ded|lv_tag_resp.sed) & v_reg_valid[set_index]) == 1) begin
+        fault_detected = True;
+        wr_err_ways <= lv_tag_resp.ded | lv_tag_resp.sed;
+        v_reg_valid[set_index]))
+      end
+      else if(|lv_hitmask == 1 && |(lv_data_resp.line_ded|lv_data_resp.line_sed) == 1) begin
+        fault_detected = True;
+        wr_err_ways <= lv_hitmask;
+      end
+
+      wr_ecc_fault <= fault_detected;
 
       if(|lv_tag_resp.ded == 1)
         wr_ded_tag_log <= tagged Valid ECC_icache_tag{address: phyaddr, 
@@ -510,14 +474,12 @@ package icache1;
 
       wr_ram_response <= lv_response;
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
-    `ifdef icache_ecc
-      wr_ram_hitline <= lv_data_resp.line;
-    `endif
 
       if(lv_access_fault) begin
         wr_fault <= True;
       end
-      else if(|(lv_hitmask) == 1 && wr_cache_enable) begin// trap or hit in RAMs
+      else if(|(lv_hitmask) == 1 && wr_cache_enable 
+                        `ifdef icache_ecc && !fault_detected `endif ) begin
         wr_ram_state <= Hit;
       end
       else begin // in case of miss from cache
@@ -530,8 +492,7 @@ package icache1;
       `logLevel( icache, 2, $format("[%2d]ICACHE: RAM Req:",id,fshow(req)))
       `logLevel( icache, 2, $format("[%2d]ICACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
-    rule rl_fillbuffer_check(!ff_core_request.first.fence
-                              `ifdef icache_ecc && !rg_perform_sec `endif );
+    rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
       `logLevel( icache, 2, $format("[%2d]ICACHE: FB: Req:",id,fshow(req)))
     `ifdef supervisor
@@ -584,19 +545,8 @@ package icache1;
     that this fifo is not Full before responding back to the core. If it is not empty then the core
     could initiate a commit-store which could get dropped since the method performing the cannot
     fire since the fifo is full and thus the store being dropped.*/
-    rule rl_response_to_core(!ff_core_request.first.fence && `ifdef icache_ecc !rg_perform_sec && `endif 
+    rule rl_response_to_core(!ff_core_request.first.fence && 
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
-
-    `ifdef icache_ecc
-      Bool lv_tag_sed = isValid(wr_sed_tag_log);
-      Bool lv_data_sed = isValid(wr_sed_data_log);
-      rg_halt_ram_check <= False;
-    `endif
-      Bool _faulty =  `ifdef icache_ecc 
-                          ((lv_data_sed || lv_tag_sed) && wr_ram_state == Hit) 
-                        `else 
-                          False 
-                        `endif ;
 
       let req = ff_core_request.first;
     `ifdef supervisor
@@ -646,40 +596,22 @@ package icache1;
       
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
 
-      if(!_faulty)begin
-        ff_core_request.deq;
-      `ifdef supervisor
-        ff_from_tlb.deq;
-      `endif
-        ff_core_response.enq(lv_response);
-        rg_handling_miss <= False;
-      end
+      ff_core_request.deq;
+    `ifdef supervisor
+      ff_from_tlb.deq;
+    `endif
+      ff_core_response.enq(lv_response);
+      rg_handling_miss <= False;
 
       Bit#(TLog#(`ifbsize)) _fbindex = ?;
-    `ifdef icache_ecc
-      if( _faulty && wr_ram_state == Hit && !wr_fault) begin
-        _fbindex <- m_fillbuffer.mav_allocate_line(True, wr_ram_hitline, phyaddr);
-
-        // invalidate the entries in the RAM since they not reside inside the FB
-        v_reg_valid[set_index][wr_ram_hitway] <= 1'b0;
-        if (_faulty) begin
-          rg_perform_sec <= True;
-          rg_sec_fbindex <= _fbindex;
-          rg_sec_address <= phyaddr;
-          `logLevel( icache, 0, $format("[%2d]ICACHE: Detected Single Error in Data Line",id))
-        end
-      end
-    `endif
-      if(!_faulty)
-        `logLevel( icache, 0, $format("[%2d]ICACHE: Responding to Core:",id, fshow(lv_response)))
+      `logLevel( icache, 0, $format("[%2d]ICACHE: Responding to Core:",id, fshow(lv_response)))
     endrule
     
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
     Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
     be a miss in both the SRAMs and the FB and thus need to be checked only here */
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-          !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull 
-          `ifdef icache_ecc && !rg_perform_sec `endif );
+        !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull);
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -687,6 +619,8 @@ package icache1;
     `else
       Bit#(`paddr) phyaddr = truncate(req.address);
     `endif
+      Bit#(`setbits) set_index = phyaddr[v_setbits + v_blockbits + v_wordbits - 1 :
+                                         v_blockbits + v_wordbits];
       let lv_io_req = isIO(phyaddr, wr_cache_enable);
       let burst_len = lv_io_req?0:(v_blocksize/valueOf(TDiv#(`ibuswidth,`respwidth)))-1;
       Bit#(3) burst_size = fromInteger(valueOf(TLog#(TDiv#(`ibuswidth,8))));
@@ -719,11 +653,17 @@ package icache1;
       `endif
       end
       else begin
-  `ifdef perfmonitors
+    `ifdef perfmonitors
       wr_total_read_miss <= 1;
-  `endif
+    `endif
         `logLevel( icache, 0, $format("[%2d]ICACHE: MemReq: Sending Line Request for Addr:%h",id, phyaddr))
       end
+    `ifdef icache_ecc
+      if(wr_ecc_fault) begin
+        v_reg_valid[set_index] <= v_reg_valid[set_index] & ~wr_err_ways;
+        `logLevel( icache, 0, $format("[%2d]ICACHE: Invalidating Faulty Ways: %b", id, wr_err_ways))
+      end
+    `endif
     endrule
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
     has been received the entire line and tag are written in to the BRAM and the fill buffer is
@@ -756,6 +696,7 @@ package icache1;
       rg_performing_replay <= False;
       `logLevel( icache, 0, $format("[%2d]ICACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
+
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || fill_oppurtunity) && 
                                     !fb_empty 
                                     && fb_headvalid && !rg_performing_replay);
@@ -777,7 +718,7 @@ package icache1;
         m_fillbuffer.ma_perform_release;
         `logLevel( icache, 0, $format("[%2d]ICACHE: Release: Upd Addr:%h set:%d way:%d data:%h", 
               id,lv_release_addr, set_index,waynum,lv_release_info.dataline))
-        if(rg_release_readphase || set_index == rg_recent_req )
+        if(set_index == rg_recent_req )
           rg_performing_replay <= True;
         // ------------------ replacement policy updates -------------------------------------//
 
@@ -837,8 +778,7 @@ package icache1;
                               wr_total_fb_releases, wr_total_evictions };
     `endif
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
-        !rg_fence_stall && !fb_full && !rg_performing_replay 
-        `ifdef icache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif ;
+        !rg_fence_stall && !fb_full && !rg_performing_replay ;
   `ifdef icache_ecc
     method mv_ded_data = wr_ded_data_log;
     method mv_sed_data = wr_sed_data_log;

@@ -16,7 +16,7 @@ IREPL=1
 IRESET=1
 ITBANKS=1
 IBUSWIDTH=64
-ECC=disable
+ECC=enable
 ONE_HOT=0
 ECC_TEST=disable
 

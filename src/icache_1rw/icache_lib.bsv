@@ -60,10 +60,6 @@ package icache_lib;
   `ifdef icache_ecc
     Bit#(b) line_sed;
     Bit#(b) line_ded;
-    Bit#(1) word_sed;
-    Bit#(1) word_ded;
-    Bit#(TMul#(b,TAdd#(2,TLog#(TMul#(8,w))))) stored_parity;
-    Bit#(TMul#(b,TAdd#(2,TLog#(TMul#(8,w))))) check_parity;
   `endif
     Bit#(TMul#(TMul#(w,8),b)) line;
     Bit#(TMul#(8,w)) word;
@@ -160,8 +156,6 @@ package icache_lib;
     `ifdef icache_ecc
       Bit#(ways) sed = 0;
       Bit#(ways) ded = 0;
-      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_chparity;
-      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_stparity;
     `endif
       Vector#(ways, Bit#(tagbits)) lv_tags;
       for (Integer i = 0; i<v_ways; i = i + 1) begin
@@ -169,16 +163,8 @@ package icache_lib;
       `ifdef icache_ecc
         sed[i] = v_tags[i].read_sed;
         ded[i] = v_tags[i].read_ded;
-        lv_chparity[i] = v_tags[i].check_parity;
-        lv_stparity[i] = v_tags[i].stored_parity;
       `endif
       end
-//    `ifdef icache_ecc
-//      for (Integer i = 0; i< v_ways; i = i + 1) begin
-//        Bit#(maxsize) _t = zeroExtend(lv_tags[i]);
-//        lv_tags[i] = truncate(fn_ecc_correct(lv_chparity[i], lv_stparity[i], _t));
-//      end
-//    `endif
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         lv_hitvector[i] = pack(truncate(lv_tags[i]) == tag_in);
       end
@@ -274,8 +260,6 @@ package icache_lib;
     `ifdef icache_ecc
       Bit#(blocksize) lv_line_ded = 0;
       Bit#(blocksize) lv_line_sed = 0;
-      Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) lv_stored_parity=?;
-      Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) lv_check_parity=?;
     `endif
       if (onehot) begin
         Vector#(ways, Bit#(respwidth)) lv_words = ?;
@@ -283,8 +267,6 @@ package icache_lib;
       `ifdef icache_ecc
         Vector#(ways, Bit#(blocksize))     lv_lines_sed = ?;
         Vector#(ways, Bit#(blocksize))     lv_lines_ded = ?;
-        Vector#(ways, Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize)))))) lv_stparity;
-        Vector#(ways, Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize)))))) lv_chparity;
       `endif
         for (Integer i = 0; i< v_ways ; i = i + 1) begin
           lv_words[i] = truncate(v_data[i].read_response >> block_offset);
@@ -292,8 +274,6 @@ package icache_lib;
         `ifdef icache_ecc
           lv_lines_sed[i] = v_data[i].read_sed;
           lv_lines_ded[i] = v_data[i].read_ded;
-          lv_stparity[i] = v_data[i].stored_parity;
-          lv_chparity[i] = v_data[i].check_parity;
         `endif
         end
         lv_selected_word = select(lv_words,unpack(wayselect));
@@ -301,8 +281,6 @@ package icache_lib;
       `ifdef icache_ecc
         lv_line_sed = select(lv_lines_sed,unpack(wayselect));
         lv_line_ded = select(lv_lines_ded,unpack(wayselect));
-        lv_stored_parity = select(lv_stparity, unpack(wayselect));
-        lv_check_parity = select(lv_chparity, unpack(wayselect));
       `endif
       end
       else begin
@@ -313,19 +291,13 @@ package icache_lib;
           `ifdef icache_ecc
             lv_line_sed = v_data[i].read_sed;
             lv_line_ded = v_data[i].read_ded;
-            lv_stored_parity = v_data[i].stored_parity;
-            lv_check_parity = v_data[i].check_parity;
           `endif
           end
         end
       end
-      Bit#(1) lv_word_ded = `ifdef icache_ecc lv_line_ded[blocknum] `else 0 `endif ;
-      Bit#(1) lv_word_sed = `ifdef icache_ecc lv_line_sed[blocknum] `else 0 `endif ;
 
       return DataResponse{`ifdef icache_ecc 
-                            word_sed: lv_word_sed, word_ded:lv_word_ded,  
                             line_sed: lv_line_sed, line_ded:lv_line_ded, 
-                            stored_parity: lv_stored_parity, check_parity: lv_check_parity,
                           `endif line: lv_selected_line, word: lv_selected_word};
 
     endmethod
@@ -366,20 +338,11 @@ package icache_lib;
     method Action ma_perform_release;
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
       Bit#(paddr) address, Bool fill, Bit#(TLog#(fbsize)) fbindex);
-  `ifdef icache_ecc
-    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
-                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
-                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
-  `endif
   endinterface
 
   (*conflict_free="ma_perform_release,mav_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
-`ifdef icache_ecc
-  (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
-  (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
-`endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, buswidth))
       provisos(
@@ -569,19 +532,6 @@ package icache_lib;
       return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
-  `ifdef icache_ecc
-    method Action mav_perform_sec (Bit#(TLog#(fbsize)) fbindex,
-                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
-                        Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
-
-      for (Integer i = 0; i< v_banks; i = i + 1) begin
-        Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
-        Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
-        let _data = fn_ecc_correct(_chparity, _stparity, v_fb_data[fbindex][i]);
-        v_fb_data[fbindex][i] <= _data;
-      end
-    endmethod
-  `endif
   endmodule
   (*synthesize*)
   module mkinst_tag#(parameter Bit#(32) id)(Ifc_tagram#(`iwords, `iblocks, `isets, `iways, `paddr));

@@ -40,7 +40,7 @@ endif
 override define_macros += -D ASSERT=True -D dwords=$(DWORDS) -D dblocks=$(DBLOCKS) -D dways=$(DWAYS) \
 								-D dsets=$(DSETS) -D drepl=$(DREPL) -D dcachereset=$(DRESET) -D dsbsize=$(DSBSIZE)\
 								-D dfbsize=$(DFBSIZE)\
-								-D desize=$(DESIZE) -D ddbanks=$(DDBANKS) -D dtbanks=$(DTBANKS) \
+								-D desize=$(DESIZE) -D dtbanks=$(DTBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D dtlbsize=$(DTLBSIZE) -D causesize=6 \
 								-D pmp=True -D PMPSIZE=16 -D dbuswidth=$(DBUSWIDTH)\
