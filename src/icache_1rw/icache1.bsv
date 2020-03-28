@@ -442,7 +442,6 @@ package icache1;
       if(|( (lv_tag_resp.ded|lv_tag_resp.sed) & v_reg_valid[set_index]) == 1) begin
         fault_detected = True;
         wr_err_ways <= lv_tag_resp.ded | lv_tag_resp.sed;
-        v_reg_valid[set_index]))
       end
       else if(|lv_hitmask == 1 && |(lv_data_resp.line_ded|lv_data_resp.line_sed) == 1) begin
         fault_detected = True;
