@@ -43,7 +43,7 @@ package imem;
   `include "icache.defines"
   `include "common_tlb.defines"
 `ifdef icache
-  import icache1 :: *;
+  import icache :: *;
 `else
   import null_icache :: *;
 `endif

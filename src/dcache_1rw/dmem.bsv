@@ -42,7 +42,7 @@ package dmem;
   import io_func::*;
   `include "dcache.defines"
 `ifdef dcache
-  import dcache1 :: *;
+  import dcache :: *;
 `else
   import null_dcache :: *;
 `endif

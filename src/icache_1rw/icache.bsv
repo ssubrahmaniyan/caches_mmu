@@ -153,7 +153,7 @@ core-side.
 
 --------------------------------------------------------------------------------------------------
 */
-package icache1;
+package icache;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
