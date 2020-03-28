@@ -92,6 +92,6 @@ package icache_types;
     Bit#(TMul#(`iwords,8)) data;
     Bool read_write; // False: read True: write
     Bool tag_data; // False: tag True: daa
-  } RamAccess deriving (Bits, Eq, FShow);
+  } IRamAccess deriving (Bits, Eq, FShow);
 `endif
 endpackage

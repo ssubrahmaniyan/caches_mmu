@@ -88,6 +88,14 @@ package imem;
     method Bit#(1) mv_itlb_perf_counters ;
   `endif
 `endif
+  `ifdef icache_ecc
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_ded_data;
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_sed_data;
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_ded_tag;
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_sed_tag;
+    method Action ma_ram_request(IRamAccess access);
+    method Bit#(`respwidth) mv_ram_response;
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -150,6 +158,14 @@ package imem;
     method mv_itlb_perf_counters = itlb.mv_perf_counters;
   `endif
 `endif
+  `ifdef icache_ecc
+    method mv_ded_data = icache.mv_ded_data;
+    method mv_sed_data = icache.mv_sed_data;
+    method mv_ded_tag = icache.mv_ded_tag;
+    method mv_sed_tag = icache.mv_sed_tag;
+    method ma_ram_request = icache.ma_ram_request;
+    method mv_ram_response = icache.mv_ram_response;
+  `endif
   endmodule
 endpackage
 

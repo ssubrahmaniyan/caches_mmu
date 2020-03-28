@@ -180,14 +180,6 @@ package icache;
 
   import io_func :: * ;
  
-  `define respwidth TMul#(`iwords,8)
-  `define linewidth TMul#(`iblocks, TMul#(`iwords,8))
-  `define setbits TLog#(`isets)
-  `define blockbits TLog#(`iblocks)
-  `define wordbits TLog#(`iwords)
-  `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
-  `define ieccsize TAdd#(2, TLog#(TMul#(`iwords,8)))
-
   typedef struct{
     Bit#(TLog#(blocks)) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
@@ -215,7 +207,7 @@ package icache;
     method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_sed_data;
     method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_ded_tag;
     method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_sed_tag;
-    method Action ma_ram_request(RamAccess access);
+    method Action ma_ram_request(IRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
   `endif
   endinterface
@@ -301,7 +293,7 @@ package icache;
 
   `ifdef icache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
-    Reg#(Maybe#(RamAccess)) rg_access_req <- mkDReg(tagged Invalid);
+    Reg#(Maybe#(IRamAccess)) rg_access_req <- mkDReg(tagged Invalid);
   `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
@@ -783,7 +775,7 @@ package icache;
     method mv_sed_data = wr_sed_data_log;
     method mv_ded_tag = wr_ded_tag_log;
     method mv_sed_tag = wr_ded_tag_log;
-    method Action ma_ram_request(RamAccess access)if(!rg_fence_stall && !rg_performing_replay);
+    method Action ma_ram_request(IRamAccess access)if(!rg_fence_stall && !rg_performing_replay);
       Bit#(blocksize) _banks = 0;
       _banks[access.banks] = 1;
       if(!access.tag_data) begin // access tag;

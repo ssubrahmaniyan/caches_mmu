@@ -180,14 +180,6 @@ package dcache;
 
   import io_func :: * ;
  
-  `define respwidth TMul#(`dwords,8)
-  `define linewidth TMul#(`dblocks, TMul#(`dwords,8))
-  `define setbits TLog#(`dsets)
-  `define blockbits TLog#(`dblocks)
-  `define wordbits TLog#(`dwords)
-  `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
-  `define deccsize TAdd#(2, TLog#(TMul#(`dwords,8)))
-
   typedef struct{
     Bit#(TLog#(blocks)) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
@@ -223,7 +215,7 @@ package dcache;
     method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_sed_data;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_ded_tag;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
-    method Action ma_ram_request(RamAccess access);
+    method Action ma_ram_request(DRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
   `endif
   endinterface
@@ -346,7 +338,7 @@ package dcache;
 
   `ifdef dcache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
-    Reg#(Maybe#(RamAccess)) rg_access_req <- mkDReg(tagged Invalid);
+    Reg#(Maybe#(DRamAccess)) rg_access_req <- mkDReg(tagged Invalid);
     /*doc:reg: */
     Reg#(Bool) rg_perform_sec <- mkReg(False);
     /*doc:reg: */
@@ -1166,7 +1158,7 @@ dataline ))
     method mv_sed_data = wr_sed_data_log;
     method mv_ded_tag = wr_ded_tag_log;
     method mv_sed_tag = wr_ded_tag_log;
-    method Action ma_ram_request(RamAccess access)if(!rg_fence_stall && !rg_performing_replay);
+    method Action ma_ram_request(DRamAccess access)if(!rg_fence_stall && !rg_performing_replay);
       Bit#(blocksize) _banks = 0;
       _banks[access.banks] = 1;
       if(!access.tag_data) begin // access tag;

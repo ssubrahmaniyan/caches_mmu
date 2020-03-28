@@ -101,6 +101,14 @@ package dmem;
     method Bit#(1) mv_dtlb_perf_counters ;
   `endif
 `endif
+  `ifdef dcache_ecc
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_ded_data;
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_sed_data;
+    method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_ded_tag;
+    method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
+    method Action ma_ram_request(DRamAccess access);
+    method Bit#(`respwidth) mv_ram_response;
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -186,6 +194,12 @@ package dmem;
     method mv_dtlb_perf_counters = dtlb.mv_perf_counters;
   `endif
 `endif
+    method mv_ded_data = dcache.mv_ded_data;
+    method mv_sed_data = dcache.mv_sed_data;
+    method mv_ded_tag = dcache.mv_ded_tag;
+    method mv_sed_tag = dcache.mv_sed_tag;
+    method ma_ram_request = dcache.ma_ram_request;
+    method mv_ram_response = dcache.mv_ram_response;
   endmodule
 endpackage
 
