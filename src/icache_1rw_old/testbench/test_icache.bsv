@@ -93,7 +93,7 @@ package test_icache;
             'b110: zeroExtend(temp[31:0]);
             default: truncate(temp);
           endcase;
-        
+
         `logLevel( testcache, 0, $format("\tTEST: addr: %h index: %d access: %d size: %b Loadeddata: %h",
           addr, index, access, size, loaded_data))
       return response_word;

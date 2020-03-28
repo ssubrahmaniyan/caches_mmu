@@ -43,7 +43,7 @@ package imem;
   `include "icache.defines"
   `include "common_tlb.defines"
 `ifdef icache
-  import icache1 :: *;
+  import icache :: *;
 `else
   import null_icache :: *;
 `endif
@@ -52,6 +52,18 @@ package imem;
   import common_tlb_types :: * ;
 `endif
 
+  (*synthesize*)
+  module mkicache_inst#(parameter Bit#(32) id)(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr,
+                                                      `ifbsize, `iesize ,
+                              `ifdef ECC `vaddr, 1, `endif `idbanks, `itbanks, `ibuswidth ));
+    let ifc();
+  `ifdef icache
+    mkicache#(isIO,`irepl,id) _temp(ifc);
+  `else
+    mknull_icache _temp(ifc);
+  `endif
+    return (ifc);
+  endmodule
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(IMem_core_request#(`vaddr, `iesize )) put_core_req;
@@ -108,7 +120,7 @@ package imem;
 
   (*synthesize*)
   module mkimem#(parameter Bit#(32) id)(Ifc_imem);
-    let icache <- mkicache(id);
+    let icache <- mkicache_inst(id);
   `ifdef supervisor
     Ifc_fa_itlb itlb <- mkfa_itlb(id);
     mkConnection(itlb.get_core_response, icache.put_pa_from_tlb);
@@ -128,11 +140,13 @@ package imem;
     interface get_core_resp = icache.get_core_resp;
     interface get_read_mem_req = icache.get_read_mem_req;
     interface put_read_mem_resp = icache.put_read_mem_resp;
-    method ma_cache_enable =  icache.ma_cache_enable;
+    method Action ma_cache_enable (Bool c);
+      icache.ma_cache_enable(c);
+    endmethod
   `ifdef icache
-    method mv_cache_available    =icache.mv_cache_available ;
+    method mv_cache_available = icache.mv_cache_available;
   `endif
-`ifdef supervisor
+  `ifdef supervisor
     interface get_request_to_ptw = itlb.get_request_to_ptw;
     interface put_response_frm_ptw = itlb.put_response_frm_ptw;
     method ma_satp_from_csr = itlb.ma_satp_from_csr;
@@ -141,7 +155,7 @@ package imem;
       method ma_pmp_cfg = itlb.ma_pmp_cfg;
       method ma_pmp_addr = itlb.ma_pmp_addr;
     `endif
-`endif
+  `endif
 `ifdef perfmonitors
   `ifdef icache
     method mv_icache_perf_counters = icache.mv_perf_counters;

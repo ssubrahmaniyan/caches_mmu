@@ -11,12 +11,12 @@ variables=f.readlines()[0]
 print(variables)
 f.close()
 
-sets=int(re.findall(r'isets=(.*?)\s+',variables,re.M|re.S)[0])
-ways=int(re.findall(r'iways=(.*?)\s+',variables,re.M|re.S)[0])
-word_size=int(re.findall(r'iwords=(.*?)\s+',variables,re.M|re.S)[0])
-block_size=int(re.findall(r'iblocks=(.*?)\s+',variables,re.M|re.S)[0])
+sets=int(re.findall(r'dsets=(.*?)\s+',variables,re.M|re.S)[0])
+ways=int(re.findall(r'dways=(.*?)\s+',variables,re.M|re.S)[0])
+word_size=int(re.findall(r'dwords=(.*?)\s+',variables,re.M|re.S)[0])
+block_size=int(re.findall(r'dblocks=(.*?)\s+',variables,re.M|re.S)[0])
 addr_width=int(re.findall(r'paddr=(.*?)\s+',variables,re.M|re.S)[0])
-repl=re.findall(r'irepl=(.*?)\s+',variables,re.M|re.S)[0]
+repl=re.findall(r'drepl=(.*?)\s+',variables,re.M|re.S)[0]
 xlen=int(re.findall(r'vaddr=(.*?)\s+',variables,re.M|re.S)[0])
 
 print('Generating test for Following Parameters: ')
@@ -308,7 +308,7 @@ def test9():
     entrycount=entrycount+1
 
     address=4096
-    for i in range(200):
+    for i in range(ways+ways+ways+1):
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
       address=address+(word_size*block_size*sets)
@@ -361,11 +361,17 @@ def test10():
     
     address=4096+(word_size*block_size*sets) # request to old line 2, should be a miss
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    entrycount=entrycount+1
+    if repl=="PLRU" :
+        entrycount=entrycount+1
+    if repl=="RROBIN" :
+        entrycount=entrycount+1
 
     address=4096+(word_size*block_size*sets*(ways-1)) # request to old line 0, should be a miss 
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    entrycount=entrycount+1
+    if repl=="PLRU" :
+        entrycount=entrycount+1
+    if repl=="RROBIN" :
+        entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -434,10 +440,10 @@ def test12():
     address=4096 # 2 hits to line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
     entrycount=entrycount+1
-    if repl=="2":
+    if repl=="PLRU":
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
-    elif repl=="1":
+    elif repl=="RROBIN":
       write_to_file(address,read,word,unsigned,nodelay,nofence)
       entrycount=entrycount+1
 
@@ -448,7 +454,10 @@ def test12():
 
     address=4096 # request to old line 3
     write_to_file(address,read,word,unsigned,nodelay,nofence)
-    entrycount=entrycount+1
+    if repl=="PLRU" :
+        entrycount=entrycount+1
+    if repl=="RROBIN" :
+        entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -488,7 +497,10 @@ def test13():
 
     address=4096
     write_to_file(address,read,word,unsigned,nodelay,nofence) # request to old line 3
-    entrycount=entrycount+1
+    if repl=="PLRU" :
+        entrycount=entrycount+1
+    if repl=="RROBIN" :
+        entrycount=entrycount+1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
@@ -814,22 +826,6 @@ def test21():
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
     entrycount=entrycount+1
     return 0
-# this test creates a thrashing scenario on the same set. Total requests =
-# 200 write requests
-def test22():
-    global entrycount
-    
-    write_to_file(0,read,word,unsigned,nodelay,fence)
-    entrycount=entrycount+1
-
-    address=4096
-    for i in range(200):
-      write_to_file(address,write,word,unsigned,nodelay,nofence)
-      entrycount=entrycount+1
-      address=address+(word_size*block_size*sets)
-    
-    write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
-    entrycount=entrycount+1
 
 def random_read():
     global entrycount
@@ -840,7 +836,7 @@ def random_read():
         address = int(random.randrange(0, maxaddr, 4))
         access_size = random.choice([byte,hword,word])
         sign = random.choice([signed,unsigned])
-        write_to_file(address, read, word, sign, nodelay, nofence)
+        write_to_file(address, read, access_size, sign, nodelay, nofence)
         entrycount = entrycount + 1
     
     write_to_file(maxaddr,atomic,dword,unsigned,delay,fence)
