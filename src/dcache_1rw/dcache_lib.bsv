@@ -1025,19 +1025,19 @@ package dcache_lib;
   endmodule
 
   (*synthesize*)
-  module mkinst_tag#(parameter Bit#(32) id)(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
+  module mkdcache_tag#(parameter Bit#(32) id)(Ifc_tagram#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
     mk_tagram1rw _temp(id,ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_data#(parameter Bit#(32) id)(Ifc_dataram#(`dwords, `dblocks, `dsets, `dways));
+  module mkdcache_data#(parameter Bit#(32) id)(Ifc_dataram#(`dwords, `dblocks, `dsets, `dways));
     let ifc();
     mk_dataram1rw#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
+  module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);

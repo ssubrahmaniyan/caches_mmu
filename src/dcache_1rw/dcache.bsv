@@ -241,6 +241,8 @@ package dcache;
   // entry in fb while ma_perform_store will update an existing allotted entry in the fb so hence no
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
+  // both the following will update the replacement policy
+  (*conflict_free="rl_release_from_fillbuffer, rl_response_to_core"*)
   (*synthesize*)
   module mkdcache#( parameter Bit#(32) id)(Ifc_dcache);
 
@@ -260,9 +262,9 @@ package dcache;
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`deccsize);
 
-    let m_data <- mkinst_data(id);
-    let m_tag <- mkinst_tag(id);
-    let m_fillbuffer <- mkinst_fb_v2(id);
+    let m_data <- mkdcache_data(id);
+    let m_tag <- mkdcache_tag(id);
+    let m_fillbuffer <- mkdcache_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
     FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkSizedFIFOF(2);

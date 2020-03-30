@@ -266,9 +266,9 @@ package icache;
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`ieccsize);
 
-    let m_data <- mkinst_data(id);
-    let m_tag <- mkinst_tag(id);
-    let m_fillbuffer <- mkinst_fb_v2(id);
+    let m_data <- mkicache_data(id);
+    let m_tag <- mkicache_tag(id);
+    let m_fillbuffer <- mkicache_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the in-coming request from the core.*/
     FIFOF#(ICache_core_request#(`vaddr, `iesize)) ff_core_request <- mkSizedFIFOF(2);

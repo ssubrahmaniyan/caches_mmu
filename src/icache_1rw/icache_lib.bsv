@@ -379,16 +379,8 @@ package icache_lib;
     let v_ecc_size = valueOf(ecc_size);
   `endif
 
-    Integer lv_offset = case(valueOf(respwidth)) 32: 4;      64: 8;      128: 16;   endcase;
     function Bool isTrue(Bool a);
       return a;
-    endfunction
-
-    /*doc:func: This function generates the byte-enable for a data-line sized vector based on the
-    request made by the core */
-    function Bit#(blocksize) fn_enable (Bit#(blockbits) blockindex);
-      Bit#(blocksize) lv_temp = '1;
-      return lv_temp << blockindex;
     endfunction
 
     /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
@@ -534,19 +526,19 @@ package icache_lib;
     endmethod
   endmodule
   (*synthesize*)
-  module mkinst_tag#(parameter Bit#(32) id)(Ifc_tagram#(`iwords, `iblocks, `isets, `iways, `paddr));
+  module mkicache_tag#(parameter Bit#(32) id)(Ifc_tagram#(`iwords, `iblocks, `isets, `iways, `paddr));
     let ifc();
     mk_tagram1rw _temp(id,ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_data#(parameter Bit#(32) id)(Ifc_dataram#(`iwords, `iblocks, `isets, `iways));
+  module mkicache_data#(parameter Bit#(32) id)(Ifc_dataram#(`iwords, `iblocks, `isets, `iways));
     let ifc();
     mk_dataram1rw#(id,unpack(`icache_onehot)) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
-  module mkinst_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`ifbsize, `iwords, `iblocks, `isets, `paddr,  `ibuswidth));
+  module mkicache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`ifbsize, `iwords, `iblocks, `isets, `paddr,  `ibuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`icache_onehot)) _temp(ifc);
     return (ifc);
