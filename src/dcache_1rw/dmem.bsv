@@ -194,12 +194,14 @@ package dmem;
     method mv_dtlb_perf_counters = dtlb.mv_perf_counters;
   `endif
 `endif
+  `ifdef dcache_ecc
     method mv_ded_data = dcache.mv_ded_data;
     method mv_sed_data = dcache.mv_sed_data;
     method mv_ded_tag = dcache.mv_ded_tag;
     method mv_sed_tag = dcache.mv_sed_tag;
     method ma_ram_request = dcache.ma_ram_request;
     method mv_ram_response = dcache.mv_ram_response;
+  `endif
   endmodule
 endpackage
 

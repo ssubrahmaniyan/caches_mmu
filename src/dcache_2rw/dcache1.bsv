@@ -91,8 +91,8 @@ package dcache1;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
   `ifdef dcache_ecc
-    method Maybe#(ECC_dcache_data#(`paddr, `dways, `ddbanks)) mv_ded_data;
-    method Maybe#(ECC_dcache_data#(`paddr, `dways, `ddbanks)) mv_sed_data;
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_ded_data;
+    method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_sed_data;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_ded_tag;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
     method Action ma_ram_request(RamAccess access);
@@ -135,13 +135,12 @@ package dcache1;
     let v_blocksize=valueOf(`dblocks);
     let v_respwidth=valueOf(`respwidth);
     let v_fbsize = valueOf(`dfbsize);
-    let v_dbanks = valueOf(`ddbanks);
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`deccsize);
 
-    let m_data <- mkinst_data(id);
-    let m_tag <- mkinst_tag(id);
-    let m_fillbuffer <- mkinst_fb_v2(id);
+    let m_data <- mkdcache_data(id);
+    let m_tag <- mkdcache_tag(id);
+    let m_fillbuffer <- mkdcache_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
     FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkSizedFIFOF(2);
@@ -169,7 +168,7 @@ package dcache1;
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
     /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
-    FIFOF#(Pending_req#(`dfbsize, `ddbanks)) ff_pending_req <- mkUGSizedFIFOF(2);
+    FIFOF#(Pending_req#(`dfbsize, `dblocks)) ff_pending_req <- mkUGSizedFIFOF(2);
     
     // -------------------- Register declarations ----------------------------------------------//
 
@@ -295,9 +294,9 @@ package dcache1;
     /*doc:wire: */
     Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_ded_tag_log <- mkDWire(tagged Invalid);
     /*doc:wire: */
-    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `ddbanks))) wr_sed_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `dblocks))) wr_sed_data_log <- mkDWire(tagged Invalid);
     /*doc:wire: */
-    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `ddbanks))) wr_ded_data_log <- mkDWire(tagged Invalid);
+    Wire#(Maybe#(ECC_dcache_data#(`paddr,`dways, `dblocks))) wr_ded_data_log <- mkDWire(tagged Invalid);
   `endif
     // ----------------------- Storage elements -------------------------------------------//
     /*doc:reg: This is an array of the valid bits. Each entry corresponds to a set and contains

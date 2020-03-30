@@ -175,7 +175,9 @@ package dcache;
   import replacement_dcache :: * ;
   import mem_config :: * ;
   import common_tlb_types:: * ;
+`ifdef dcache_ecc
   import ecc_hamming :: * ;
+`endif
 
 
   import io_func :: * ;
@@ -457,9 +459,11 @@ package dcache;
      ensure that a release of the fill-buffer does not happen.*/
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
+  `ifdef dcache_ecc
     Vector#(`dblocks, Wrapper3#(Bit#(`deccsize), Bit#(`deccsize), 
       Bit#(`respwidth), Bit#(`respwidth))) fn_ecc_correct_uw <-
       replicateM(mkUniqueWrapper3(fn_ecc_correct));
+  `endif
 
     // --------------------------- global variables ------------------------------------- //
     Bool sb_empty = m_storebuffer.mv_sb_empty;
