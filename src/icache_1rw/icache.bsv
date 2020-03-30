@@ -25,6 +25,8 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Author: Neel Gala
 Email id: neelgala@gmail.com
 Details:
+*/
+/*doc:overview:
 
 Working Principle
 -----------------
@@ -34,9 +36,6 @@ cache, the required word is enqueued into the response fifo (``ff_core_response`
 the core. On a miss, a read request for the line is sent to the fabric via the 
 ``ff_read_mem_request`` and simultaneously an entry in the fill-buffer is allotted to capture the 
 fabric response. The responses from the fabric are enqueued in the ``ff_read_mem_response`` fifo. 
-When a dirty line needs to be evicted, a write request for that line is enqueued into 
-``ff_write_mem_request`` fifo and the response of this write is captured in ``ff_write_mem_response`` 
-fifo.
 
 Serving core requests
 ^^^^^^^^^^^^^^^^^^^^^
@@ -69,38 +68,24 @@ either in the SRAM or the fill-buffer and never both. Assertions to check this h
 place. A miss occurs when tag match fails in both the SRAM and the fill-buffer. Now following 
 scenarios can occur :-
 
-1. **For a Load request**: if it's a hit, the requested word is enqueued in ``ff_core_response`` 
-   fifo in the same cycle as the tag-match. When it's a hit in the FB, before enqueuing the response, 
-   we check if there is a pending store to the same word, if so we enqueue the updated word 
-   accordingly. Since, the SRAMs are not updated with stores immediately, the store-buffer is 
-   looked up only in the case of a fill-buffer hit.
+1. If it's a hit, the requested word is enqueued in ``ff_core_response`` 
+   fifo in the same cycle as the tag-match. 
 
-2. **For a Load request**: If it's a miss, the address (after making it word aligned) is 
+2. If it's a miss, the address (after making it word aligned) is 
    enqueued into the ``ff_read_mem_request`` fifo to be sent to fabric. Simultaneously, a 
-   fill-buffer entry is assigned to capture the line requested from the fabric. Once the 
-   requested word is captured in the fill-buffer (while rest of the line is still getting filled), 
+   fill-buffer entry is assigned to capture the line requested from the fabric. The register
+   rg_performing_replay is also set to true to ensure that the next request from the core, which
+   might have been latched is not served until the miss request has been served. Thus, while a miss
+   is being served only the fill-buffer polling is active and RAM look-ups are blocked.
+   Once the requested word is captured in the fill-buffer (while rest of the line is still getting filled), 
    it is enqueued into the ``ff_core_response`` to be sent to core and the entry in ``ff_core_request`` 
    is dequeued. We are now ready to service the subsequent request in the next cycle.
-
-3. **For a store request**: If it's a hit in the fill-buffer, a store buffer entry is allotted to 
-   store the data to be written and response is enqueued in the ``ff_core_response`` fifo 
-   (response being that it is store hit). If it's a hit in the SRAM, in addition to performing 
-   actions that of a fill-buffer hit, the line is copied into the fill-buffer (since all stores 
-   are performed here) while making it invalid in the SRAM.
-
-4. **For a store request**: If it's a miss, request would be sent to fabric as was when 
-   load miss occurred. Once the requested word is captured in the fill-buffer, the actions that 
-   follow are similar to those of store hit in fill-buffer.
-
-5. **For atomic requests**: The control is similar to that store-requests apart from the fact 
-   that the updated word undergoes arithmetic op before being written in the store-buffer.
 
 Release from fill-buffer
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 The necessary condition for a release of a line from fill-buffer and its updation into SRAM is 
-that the line itself is valid and all the words in the line are present and updated by store-buffer 
-if necessary. If there is any pending store in the store buffer, the line won't be released. 
+that the line itself is valid and all the words in the line are present 
 Given this is true, following conditions would initiate a release :- 
 
 1. **Fill-buffer is full**. A release is necessary in this case since no more requests can be 
@@ -116,20 +101,20 @@ Given this is true, following conditions would initiate a release :-
    an entry in ``ff_core_request`` to the line being released, we prevent the release for not 
    wanting to replay the SRAM read request (described in point 1).
 
-Now given the release can actually take place, following scenarios would arise :-
-
-1. If the line in the SRAM being evicted is not dirty, then we can directly put a write request 
-   (of the line being released) to the SRAM along with updation of the SRAM dirty and valid bits 
-   accordingly.
-2. If the line being replaced is dirty, we need to write it back to fabric. So first we put a read 
-   request to SRAM for the dirty line, in the next cycle we enqueue this line in the 
-   ``ff_write_mem_request`` for it to be written back in fabric while also putting a SRAM write 
-   request for line being released.
 
 Once a release is done from the fill-buffer, that particular entry in the fill-buffer is 
-invalidated and thus is available for new allocation on a miss or a store-hit.
+invalidated and thus is available for new allocation on a miss.
 
 The fill-buffer is implemented as a circular-buffer with head and tail pointer-registers.
+
+Replaying Requests
+^^^^^^^^^^^^^^^^^^
+
+This register indicates that the bram inputs are being re-driven by those provided
+from the core in the most recent request. This happens because as the release from the
+fillbuffer happens it is possible that a dirty ways needs to be read out. This will change the
+output of the brams as compared to what the core requested. Thus the core request needs to be
+replayed on these again.
 
 Fence operation
 ^^^^^^^^^^^^^^^
@@ -137,21 +122,30 @@ Fence operation
 A cache-flush operation is initiated when the core presents a fence instruction. A fence operation 
 can only start if following conditions are met:
 
-1. the entire fill-buffer is empty (i.e. all lines are updated in the SRAM).
-2. there are not pending write-backs to fabric 
-3. the store-buffer is empty.
+  1. the entire fill-buffer is empty (i.e. all lines are updated in the SRAM).
 
-In case of the D-Cache, the fence operation is a single cycle operation if the global-dirty bit 
-is clear, where all the lines are invalidated and the dirty bits of each line are cleared as well. 
-If the global-dirty bit is set, the fence operation in the D-Cache traverses through each set and 
-identifies which lines need to the written back to the fabric. Traversing a set, requires 
-traversing each of the way and checking if a write-back is required. A set is ignored 
-if there are no valid dirty lines in the set. At the end of each set traversal, the valid and 
-dirty bits of the entire set are cleared. The fence operation in the D-Cache is only over when the 
-last set has been completely traversed. Until this point, not new requests are entertained from the 
-core-side.
+The fence operation is a single cycle operation where all the lines are invalidated 
+*/
+/*doc:macros: 
 
---------------------------------------------------------------------------------------------------
+Boolean macros
+^^^^^^^^^^^^^^
+  - **supervisor**: when set at compile time will implement supervisor support
+  - **perfmonitors**: when set at compile time will enable performance monitors
+  - **icache_ecc**: when set at compile time will enable ECC support
+
+Value Based macros
+^^^^^^^^^^^^^^^^^^
+  - **vaddr**  : size of virtual address
+  - **paddr**  : size of the physical address
+  - **iesize** : size of instruction epoch
+  - **ifbsize**: size of the fill-buffer
+  - **ibuswidth**: size of data on the fabric bus
+  - **iwords** : number of bytes per word/response to core
+  - **iways**  : number of ways in the cache
+  - **iblocks**: number of words within a block/cache line
+  - **isets**  : number of sets in the cache
+  - **irepl**  : replacement policy choice
 */
 package icache;
   `include "Logger.bsv"
@@ -168,7 +162,6 @@ package icache;
   import DReg :: * ;
   import UniqueWrappers :: * ;
 
-
   `include "icache.defines"
   import icache_types :: * ;
   import icache_lib :: * ;
@@ -176,8 +169,6 @@ package icache;
   import mem_config :: * ;
   import common_tlb_types:: * ;
   import ecc_hamming :: * ;
-
-
   import io_func :: * ;
  
   typedef struct{
@@ -189,28 +180,60 @@ package icache;
 
 
   interface Ifc_icache;
+    /*doc:subifc: A Put method to receive the core request. A request should be lateched into this
+    port only if the interface mv_cache_available is set to True*/
     interface Put#(ICache_core_request#(`vaddr,`iesize)) put_core_req;
+    /*doc:subifc: A Get method to respond to the core with the requested instruction or to respond
+    with a trap*/
     interface Get#(IMem_core_response#(TMul#(`iwords,8),`iesize)) get_core_resp;
+    /*doc:subifc: A Get method to send requests to the fabric on a miss in the cache or for an IO
+    request.*/
     interface Get#(ICache_mem_readreq#(`paddr)) get_read_mem_req;
+    /*doc:subifc: A Put method to receive response from the fabric for a pending miss or for an IO
+    request*/
     interface Put#(ICache_mem_readresp#(`ibuswidth)) put_read_mem_resp;
   `ifdef supervisor
-    interface Get#(IMem_core_response#(TMul#(`iwords,8),`iesize)) get_ptw_resp;
+    /*doc:subifc: A Put method to receive the translated address from the TLB or a page fault
+    exception from the TLB*/
     interface Put#(ITLB_core_response#(`paddr)) put_pa_from_tlb;
   `endif
   `ifdef perfmonitors
-    method Bit#(5) mv_perf_counters;
+    /*doc:method: holds the performinor signals. Each bit corresponds to an event. A toggle from 1
+    to 0 on these signals indicates that the particular event has occurred. Events are concatenated
+    in the following order: {number of access, number of IO requests, number of misses, 
+    number of fb releases, number of fbhits}*/
+    method Bit#(5) mv_perf_counters();
   `endif
+    /*doc:method: input signal indicating if the cache is enabled by the core or not. The SoC can
+    choose to drive this signal from any resources (CSRs or memory mapped registers, etc) */
     method Action ma_cache_enable(Bool c);
-    method Bool mv_cache_available;
+    /*doc:method: output signal indicating if the cache is busy or ready to take new inputs from the
+    core. The cache is available only under the following conditions: 
+      - fill-buffer is no full
+      - replay is not being performed
+      - fence is not under operation
+      - core has read all pending responses */
+    method Bool mv_cache_available();
   `ifdef icache_ecc
-    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_ded_data;
-    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_sed_data;
-    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_ded_tag;
-    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_sed_tag;
+    /*doc:method:output signal holding information of the latest double error detected in data RAMs*/
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_ded_data();
+    /*doc:method:output signal holding information of the latest single error detected in Data RAMs*/
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_sed_data();
+    /*doc:method: output signal holding information of the latest double error detected in the TAG
+    RAMs*/
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_ded_tag();
+    /*doc:method: output signal holdng information of the latest single error detected in the TAG
+    RAMs*/
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_sed_tag();
+    /*doc:method: input signals to access the Tag and Data rams externally. This interface should
+    typically be used by software , through a memory mapped region to further probe and correct
+    RAM errors*/
     method Action ma_ram_request(IRamAccess access);
-    method Bit#(`respwidth) mv_ram_response;
+    /*doc:method: output signal holding the response from the rams after an external access to the
+    RAMs was performed.*/
+    method Bit#(`respwidth) mv_ram_response();
   `endif
-  endinterface
+  endinterface : Ifc_icache
   // both update rg_handling_miss but can never fire together
   (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
   (*conflict_free="rl_response_to_core,rl_ram_check"*)
@@ -245,14 +268,10 @@ package icache;
     let m_tag <- mkinst_tag(id);
     let m_fillbuffer <- mkinst_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
-    /*doc:fifo: This fifo stores the request from the core.*/
+    /*doc:fifo: This fifo stores the in-coming request from the core.*/
     FIFOF#(ICache_core_request#(`vaddr, `iesize)) ff_core_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response that needs to be sent back to the core.*/
     FIFOF#(IMem_core_response#(`respwidth,`iesize))ff_core_response <- mkBypassFIFOF();
-  `ifdef supervisor
-    /*doc:fifo: This fifo stores the response that needs to be sent back to the ptw.*/
-    FIFOF#(IMem_core_response#(`respwidth,`iesize))ff_ptw_response <- mkBypassFIFOF();
-  `endif
     /*doc:fifo: this fifo stores the read request that needs to be sent to the next memory level.*/
     FIFOF#(ICache_mem_readreq#(`paddr)) ff_read_mem_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
@@ -273,7 +292,9 @@ package icache;
      new requests from the core*/
     Reg#(Bool) rg_fence_stall <- mkReg(False);
 
-    /*doc:reg: When tru indicates that a miss is being catered to*/
+    /*doc:reg: When true indicates that a miss is being catered to. Setting this register to true
+    prevents the next request from being handled until this register has been set back to false -
+    which happens when the requested word arrives from fabric*/
     Reg#(Bool) rg_handling_miss <- mkReg(False);
 
     /*doc:reg: This register indicates that the bram inputs are being re-driven by those provided
@@ -283,7 +304,8 @@ package icache;
     replayed on these again */
     Reg#(Bool) rg_performing_replay <- mkReg(False);
 
-    /*doc:reg: this register holds the index of the most recent request performed by the core*/
+    /*doc:reg: this register holds the index of the most recent request performed by the core. This
+    register is used for performing a replay*/
     Reg#(Bit#(`setbits)) rg_recent_req <- mkReg(0);
 
     /*doc:reg: this register indicates that the line corresponding to the current request to the
@@ -297,9 +319,11 @@ package icache;
   `endif
 
     // -------------------- Wire declarations ----------------------------------------------//
-    /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr*/
+    /*doc:wire: boolean wire indicating if the cache is enabled. This is controlled through a csr or
+    a memory mapped region*/
     Wire#(Bool) wr_cache_enable<-mkWire();
-    /*doc:wire: this wire indicates if there was a fault in the address or during translation*/
+    /*doc:wire: this wire indicates if there was a fault in the address or during translation from
+    the TLB*/
     Wire#(Bool) wr_fault <- mkDWire(False);
     /*doc:wire: this wire indicates if there was a hit or miss on SRAMs.*/
     Wire#(RespState) wr_ram_state <- mkDWire(None);
@@ -331,13 +355,14 @@ package icache;
     Wire#(Bit#(1)) wr_total_io_reads <- mkDWire(0);
     /*doc:wire: wire to pulse on every read miss within the cache*/
     Wire#(Bit#(1)) wr_total_read_miss <- mkDWire(0);
-    /*doc:wire: wire to pulse on every eviction from the cache*/
-    Wire#(Bit#(1)) wr_total_evictions <- mkDWire(0);
     /*doc:wire: wire to pulse on every release from fill-buffer to RAMS*/
     Wire#(Bit#(1)) wr_total_fb_releases <- mkDWire(0);
     /*doc:wire: wire to pulse on  hit in fill-buffer for read ops*/
     Wire#(Bit#(1)) wr_total_read_fb_hits <- mkDWire(0);
   `endif
+    /*doc:wire: A Boolean wire indicating that a request if being taken from the core in the current
+    cycle. This wire prevents any oppurtunistic releases from the fill-buffer to happen when set to
+    True*/
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
 
   `ifdef icache_ecc
@@ -379,14 +404,16 @@ package icache;
     conditions are met:
       1. there is not core-request pending
       2. The core is not generating any request in the current cycle
-      3. Store-buffer is not being allocated in the current cycle
       4. The set being released to is not the most recent set accessed by the core.
     */
-    Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest)  &&
+    Bool lv_fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest)  &&
          /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req); 
     
     // --------------------------- Rule operations ------------------------------------- //
 
+    /*doc:rule: This rule performs the fence operation. This is a single cycle op where all the
+    valid registers are assigned 0. A fence operation can be triggered only if: the a fence
+    operation is requested by the core, the fill-buffer is empty and no replay is being performed.*/
     rule rl_fence_operation(ff_core_request.first.fence && rg_fence_stall && fb_empty && 
                             !rg_performing_replay ) ;
       `logLevel( icache, 1, $format("[%2d]ICACHE : Fence operation in progress",id))
@@ -398,7 +425,10 @@ package icache;
       replacement.reset_repl;
     endrule
 
-    /*doc:rule: This rule checks the tag rams for a hit*/
+    /*doc:rule: This rule checks the tag rams for a hit. Once a hit is detected, the selected way is
+    used to capture the corresponding dataline and the requested word is extracted from the same
+    line. This rule will also capture any exceptions received from the TLB when supervisor is
+    enabled. Also a hit in the rams is only detected if the ``wr_cache_enable`` signal is asserted.*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
                       && !rg_polling_mode && !fb_full );
       let req = ff_core_request.first;
@@ -483,6 +513,12 @@ package icache;
       `logLevel( icache, 2, $format("[%2d]ICACHE: RAM Req:",id,fshow(req)))
       `logLevel( icache, 2, $format("[%2d]ICACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
+
+    /*doc:rule: This rule performs a check on the fill-buffer for a given core-request. The address
+     from the core is looked up in the fill-buffer in a fully-associative fashion. In case of a
+     hit, the requested word is extracted from the hit line. This rule will also check if the
+     request is an IO request.
+    */
     rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
       `logLevel( icache, 2, $format("[%2d]ICACHE: FB: Req:",id,fshow(req)))
@@ -531,11 +567,10 @@ package icache;
     endrule
 
     /*doc:rule: this rule fires when the requested word is either present in the SRAMs or the
-    fill-buffer or if there was an error in the request. Since we are re-using the
-    ff_write_mem_response fifo to send out cacheable and MMIO ops, it is necessary that we make sure
-    that this fifo is not Full before responding back to the core. If it is not empty then the core
-    could initiate a commit-store which could get dropped since the method performing the cannot
-    fire since the fifo is full and thus the store being dropped.*/
+    fill-buffer or an IO response is received. Only one of the three can be true at any point and
+    thus do not require a priority anymore. Once the response has been enqueued into the
+    ff_core_response fifo, the core request fifo (ff_core_request) is dequed and rg_miss_handling is
+    de-asserted */
     rule rl_response_to_core(!ff_core_request.first.fence && 
                       ( wr_fault || wr_nc_state == Hit || wr_ram_state == Hit || wr_fb_state == Hit));
 
@@ -600,9 +635,10 @@ package icache;
     
     /*doc:rule: This rule fires when the requested word is a miss in both the SRAMs and the
     Fill-buffer. This rule thereby forwards the requests to the network. IOs by default should
-    be a miss in both the SRAMs and the FB and thus need to be checked only here */
+    be a miss in both the SRAMs and the FB and thus need to be checked only here. 
+    This rule will set the rg_miss_handling to prevent further requests from the core being served*/
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-        !wr_fault && !rg_handling_miss && ! ff_core_request.first.fence && ff_pending_req.notFull);
+        !wr_fault && ! ff_core_request.first.fence && ff_pending_req.notFull);
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -681,6 +717,8 @@ package icache;
       ff_pending_req.deq;
       `logLevel( icache, 2, $format("[%2d]ICACHE: NC Response from Memory: ",id,fshow(response)))
     endrule
+    /*doc:rule: This rule fires when a replay of the last core-request is required because a release
+     from the fill-buffer has updated the same set*/
     rule rl_perform_replay(rg_performing_replay);
       m_tag.ma_request(False, rg_recent_req, lv_release_addr, ?);
       m_data.ma_request(False, rg_recent_req, lv_release_line, ?, '1);
@@ -688,7 +726,14 @@ package icache;
       `logLevel( icache, 0, $format("[%2d]ICACHE: Replaying Req. Index:%d",id,rg_recent_req))
     endrule
 
-    rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || fill_oppurtunity) && 
+    /*doc:rule: This rule performs a release of a line from the fill-buffer into the SRAMs. A
+    release is triggered under the following conditions: fill-buffer is full, fence operation is
+    requested but not started, there is an idle cycle where the core is not requesting and thus
+    the SRAMs can be accessed. Also the head of the fill-buffer should be valid and have all the
+    words/bytes available to perform a release. To perform a release the replacement policy
+    provides the way to be replaced which is then over-written with the address and data present
+    in the fill-buffer*/
+    rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || lv_fill_oppurtunity) && 
                                     !fb_empty 
                                     && fb_headvalid && !rg_performing_replay);
       let addr = lv_release_addr;
@@ -761,12 +806,11 @@ package icache;
     interface put_read_mem_resp = toPut(ff_read_mem_response);
     interface get_core_resp = toGet(ff_core_response);
   `ifdef supervisor
-    interface get_ptw_resp = toGet(ff_ptw_response);
     interface put_pa_from_tlb = toPut(ff_from_tlb);
   `endif
     `ifdef perfmonitors
       method mv_perf_counters = {wr_total_read_access, wr_total_io_reads ,wr_total_read_miss ,
-                              wr_total_fb_releases, wr_total_evictions };
+                              wr_total_fb_releases, wr_total_read_fb_hits };
     `endif
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !rg_performing_replay ;
@@ -798,7 +842,7 @@ package icache;
         return data_response;
     endmethod
   `endif
-  endmodule
+  endmodule: mkicache
 
-endpackage
+endpackage: icache
 
