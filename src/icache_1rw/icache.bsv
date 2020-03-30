@@ -242,6 +242,8 @@ package icache;
   // the following rules access the mv_read_response from of data and tag modules which is a
   // conflict. However, these two rules will never fire together
   (*mutually_exclusive="rl_release_from_fillbuffer, rl_ram_check"*)
+  // both the following will update the replacement policy
+  (*conflict_free="rl_release_from_fillbuffer, rl_response_to_core"*)
 `ifdef icache_ecc
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
 `endif
