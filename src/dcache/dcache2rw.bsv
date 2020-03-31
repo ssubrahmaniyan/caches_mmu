@@ -41,6 +41,7 @@ package dcache2rw;
   import BUtils :: * ;
   import Memory :: * ; // only for the updateDataWithMask function
   import DReg :: * ;
+  import UniqueWrappers :: * ;
 
 
   `include "dcache.defines"
@@ -49,16 +50,12 @@ package dcache2rw;
   import replacement_dcache :: * ;
   import mem_config :: * ;
   import common_tlb_types:: * ;
+`ifdef dcache_ecc
+  import ecc_hamming :: * ;
+`endif
+
 
   import io_func :: * ;
- 
-  `define respwidth `vaddr
-  `define linewidth TMul#(`dblocks, TMul#(`dwords,8))
-  `define setbits TLog#(`dsets)
-  `define blockbits TLog#(`dblocks)
-  `define wordbits TLog#(`dwords)
-  `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
-  `define deccsize TAdd#(2, TLog#(TMul#(`dwords,8)))
 
   typedef struct{
     Bit#(TLog#(banks)) init_bank;
@@ -95,7 +92,7 @@ package dcache2rw;
     method Maybe#(ECC_dcache_data#(`paddr, `dways, `dblocks)) mv_sed_data;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_ded_tag;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
-    method Action ma_ram_request(RamAccess access);
+    method Action ma_ram_request(DRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
   `endif
   endinterface
@@ -206,7 +203,7 @@ package dcache2rw;
 
   `ifdef dcache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
-    Reg#(RamAccess) rg_access_req <- mkReg(unpack(0));
+    Reg#(Maybe#(DRamAccess)) rg_access_req <- mkDReg(tagged Invalid);
     /*doc:reg: */
     Reg#(Bool) rg_perform_sec <- mkReg(False);
     /*doc:reg: */
@@ -290,6 +287,8 @@ package dcache2rw;
 
   `ifdef dcache_ecc
     /*doc:wire: */
+    Wire#(Bool) wr_ecc_fault <- mkDWire(False);
+    /*doc:wire: */
     Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_sed_tag_log <- mkDWire(tagged Invalid);
     /*doc:wire: */
     Wire#(Maybe#(ECC_dcache_tag#(`paddr,`dways))) wr_ded_tag_log <- mkDWire(tagged Invalid);
@@ -321,7 +320,13 @@ package dcache2rw;
      ensure that a release of the fill-buffer does not happen.*/
     Wire#(Bool) wr_allocating_storebuffer <- mkDWire(False);
 
-    // --------------------------- Rule operations ------------------------------------- //
+  `ifdef dcache_ecc
+    Vector#(`dblocks, Wrapper3#(Bit#(`deccsize), Bit#(`deccsize), 
+      Bit#(`respwidth), Bit#(`respwidth))) fn_ecc_correct_uw <-
+      replicateM(mkUniqueWrapper3(fn_ecc_correct));
+  `endif
+
+    // --------------------------- global variables ------------------------------------- //
     Bool sb_empty = m_storebuffer.mv_sb_empty;
     Bool sb_full = m_storebuffer.mv_sb_full;
     Bool fb_full = m_fillbuffer.mv_fbfull;
@@ -356,6 +361,15 @@ package dcache2rw;
       Bit#(`linewidth) dataline = lv_data_resp.line;
       Bit#(`paddr) final_address={tag, rg_fence_set, zeros};
     `ifdef dcache_ecc
+      Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) stored_parity = lv_data_resp.stored_parity;
+      Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) check_parity = lv_data_resp.check_parity;
+      for (Integer i = 0; i< v_blocksize; i = i + 1) begin
+        Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+        Bit#(`respwidth) _data = dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        _data <- fn_ecc_correct_uw[i].func(_chparity, _stparity, _data);
+        dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = _data;
+      end
       if(|lv_tag_resp.ded == 1)
         wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: final_address, 
                                                      way: lv_tag_resp.ded & v_reg_valid[rg_fence_set]};
@@ -458,18 +472,15 @@ dataline ))
       let lv_data_resp = m_data.mv_read_response_p1(lv_blocknum,lv_hitmask);
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
 
-      let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
-                                          cause: lv_cause, epochs: req.epochs};
     `ifdef dcache_ecc
-      Bool lv_ecc_fault = False;
 
       rg_sec_checkparity <= lv_data_resp.check_parity;
       rg_sec_storeparity <= lv_data_resp.stored_parity;
 
-      if(|lv_tag_resp.ded == 1 && |lv_hitmask == 0)
-        lv_ecc_fault = True;
+      if(|(lv_tag_resp.ded & v_reg_valid[set_index]) == 1)
+        lv_access_fault = True;
       else if(|lv_hitmask == 1 && |lv_data_resp.line_ded == 1)
-        lv_ecc_fault = True;
+        lv_access_fault = True;
 
       if(|lv_tag_resp.ded == 1)
         wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: phyaddr, 
@@ -489,6 +500,8 @@ dataline ))
                                                        banks: lv_data_resp.line_sed,
                                                        way : lv_hitmask};
     `endif
+      let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
+                                          cause: lv_cause, epochs: req.epochs};
 
       wr_ram_response <= lv_response;
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
@@ -694,7 +707,9 @@ dataline ))
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+        if(!_faulty)
+          `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+
       if(req.access!=0 && !_faulty && !lv_response.trap 
                                             `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         wr_store_in_progress <= True;
@@ -825,6 +840,15 @@ dataline ))
           Bit#(`linewidth) dataline = lv_data_resp.line;
           Bit#(`paddr) lv_evict_address = {tag,set_index,zeros};
         `ifdef dcache_ecc
+          Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) stored_parity = lv_data_resp.stored_parity;
+          Bit#(TMul#(`dblocks,TAdd#(2,TLog#(`respwidth)))) check_parity = lv_data_resp.check_parity;
+          for (Integer i = 0; i< v_blocksize; i = i + 1) begin
+            Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+            Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
+            Bit#(`respwidth) _data = dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+            _data <- fn_ecc_correct_uw[i].func(_chparity, _stparity, _data);
+            dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth] = _data;
+          end
           if(|lv_tag_resp.ded == 1)
             wr_ded_tag_log <= tagged Valid ECC_dcache_tag{address: lv_evict_address, 
                                                          way: lv_tag_resp.ded & v_reg_valid[set_index]};
@@ -972,25 +996,27 @@ dataline ))
     method mv_sed_data = wr_sed_data_log;
     method mv_ded_tag = wr_ded_tag_log;
     method mv_sed_tag = wr_ded_tag_log;
-    method Action ma_ram_request(RamAccess access)if(!rg_fence_stall);
-    //  if(!access.tag_data) begin // access tag;
-    //    m_tag.ma_request(access.read_write, access.index, truncate(access.data), access.way);
-    //  end
-    //  else begin
-    //    m_data.ma_request(access.read_write, access.index, duplicate(access.data) , access.way, access.banks);
-    //  end
-    //  rg_access_req <= access;
+    method Action ma_ram_request(DRamAccess access)if(!rg_fence_stall);
+      Bit#(blocksize) _banks = 0;
+      _banks[access.banks] = 1;
+      if(!access.tag_data) begin // access tag;
+        m_tag.ma_request_p2(access.read_write, access.index, truncate(access.data), access.way);
+      end
+      else begin
+        m_data.ma_request_p2(access.read_write, access.index, duplicate(access.data) , access.way,
+        _banks);
+      end
+      rg_access_req <= tagged Valid access;
     endmethod
-    method mv_ram_response if(!rg_fence_stall);
-      Bit#(`respwidth) return_data = ?;
-    //  Bit#(TLog#(`ddbanks)) _banks = truncate(pack(countZerosLSB(rg_access_req.banks)));
-    //  Bit#(`dways) _ways = 0;
-    //  _ways[rg_access_req.way] = 1;
-    //  if(!rg_access_req.tag_data) // access tag
-    //    return_data = zeroExtend(m_tag.mv_read_response(?,rg_access_req.way).address);
-    //  else
-    //    return_data = m_data.mv_read_response(_banks, _ways).word;
-      return return_data;
+    method Bit#(`respwidth) mv_ram_response if(!rg_fence_stall 
+                                              &&& rg_access_req matches tagged Valid .access);
+      Bit#(`respwidth) tag_response = zeroExtend(m_tag.mv_sideband_read(access.way));
+      Bit#(`respwidth) data_response = m_data.mv_sideband_read(access.way,
+                                        access.banks);
+      if(!access.tag_data) // access tag
+        return tag_response;
+      else
+        return data_response;
     endmethod
   `endif
   endmodule
