@@ -29,14 +29,13 @@ Details:
 --------------------------------------------------------------------------------------------------
 */
 package icache_types;
-
 // ---------------------- Data Cache types ---------------------------------------------//
   typedef struct{
     Bit#(addr)    address;
     Bool          fence;
     Bit#(esize)   epochs;
   } ICache_core_request#( numeric type addr,
-                      numeric type esize) deriving (Bits, Eq, FShow);
+                          numeric type esize) deriving (Bits, Eq, FShow);
   typedef struct{
     Bit#(addr)    address;
     Bit#(8)       burst_len;
@@ -50,14 +49,17 @@ package icache_types;
     Bool          err;
   } ICache_mem_readresp#(numeric type data) deriving(Bits, Eq, FShow);
 
+
+  // ---------------------- Types for IMem and Core interaction ------------------------------- //
   typedef struct{
     Bit#(addr)    address;
-    Bool          fence;
     Bit#(esize)   epochs;
+    Bool          fence;
   `ifdef supervisor
     Bool          sfence;
   `endif
-  } IMem_core_request#( numeric type addr, numeric type esize) deriving (Bits, Eq, FShow);
+  } IMem_core_request#(numeric type addr,
+                  numeric type esize ) deriving(Bits, Eq, FShow);
 
   typedef struct{
     Bit#(data)        word;
@@ -65,20 +67,31 @@ package icache_types;
     Bit#(`causesize)  cause;
     Bit#(esize)       epochs;
   } IMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq, FShow);
-// --------------------------------------------------------------------------------------------- //
+  // -------------------------------------------------------------------------------------------//
 
 // --------------------------- Common Structs ---------------------------------------------------//
   typedef enum {Hit=1, Miss=0, None=2} RespState deriving(Eq,Bits,FShow);
-
-  function String countName (Integer cntr);
-    case (cntr)
-      'd0: return "Total accesses";
-      'd1: return "Total Hits in Cache";
-      'd2: return "Total Hits in LB";
-      'd3: return "Total IO requests";
-      'd4: return "Misses which cause evictions";
-      default: return "Null";
-    endcase
-  endfunction
 // -------------------------------------------------------------------------------------------//
+`ifdef icache_ecc
+  typedef struct{
+    Bit#(a) address;
+    Bit#(w) way;
+  } ECC_icache_tag#(numeric type a, numeric type w) deriving(Bits, FShow, Eq);
+
+  typedef struct{
+    Bit#(a) address;
+    Bit#(b) banks;
+    Bit#(w) way;
+  } ECC_icache_data#(numeric type a, numeric type w, numeric type b) deriving(Bits, FShow, Eq);
+
+
+  typedef struct{
+    Bit#(TLog#(`isets)) index; 
+    Bit#(TLog#(`iways)) way;
+    Bit#(TLog#(`iblocks)) banks;
+    Bit#(TMul#(`iwords,8)) data;
+    Bool read_write; // False: read True: write
+    Bool tag_data; // False: tag True: daa
+  } IRamAccess deriving (Bits, Eq, FShow);
+`endif
 endpackage

@@ -52,18 +52,6 @@ package imem;
   import common_tlb_types :: * ;
 `endif
 
-  (*synthesize*)
-  module mkicache_inst#(parameter Bit#(32) id)(Ifc_icache#(`iwords, `iblocks, `isets, `iways, `paddr, `vaddr,
-                                                      `ifbsize, `iesize ,
-                              `ifdef ECC `vaddr, 1, `endif `idbanks, `itbanks, `ibuswidth ));
-    let ifc();
-  `ifdef icache
-    mkicache#(isIO,`irepl,id) _temp(ifc);
-  `else
-    mknull_icache _temp(ifc);
-  `endif
-    return (ifc);
-  endmodule
   interface Ifc_imem;
       // -------------------- Cache related interfaces ------------//
     interface Put#(IMem_core_request#(`vaddr, `iesize )) put_core_req;
@@ -100,6 +88,14 @@ package imem;
     method Bit#(1) mv_itlb_perf_counters ;
   `endif
 `endif
+  `ifdef icache_ecc
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_ded_data;
+    method Maybe#(ECC_icache_data#(`paddr, `iways, `iblocks)) mv_sed_data;
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_ded_tag;
+    method Maybe#(ECC_icache_tag#(`paddr, `iways)) mv_sed_tag;
+    method Action ma_ram_request(IRamAccess access);
+    method Bit#(`respwidth) mv_ram_response;
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -120,7 +116,7 @@ package imem;
 
   (*synthesize*)
   module mkimem#(parameter Bit#(32) id)(Ifc_imem);
-    let icache <- mkicache_inst(id);
+    let icache <- mkicache(id);
   `ifdef supervisor
     Ifc_fa_itlb itlb <- mkfa_itlb(id);
     mkConnection(itlb.get_core_response, icache.put_pa_from_tlb);
@@ -140,13 +136,11 @@ package imem;
     interface get_core_resp = icache.get_core_resp;
     interface get_read_mem_req = icache.get_read_mem_req;
     interface put_read_mem_resp = icache.put_read_mem_resp;
-    method Action ma_cache_enable (Bool c);
-      icache.ma_cache_enable(c);
-    endmethod
+    method ma_cache_enable =  icache.ma_cache_enable;
   `ifdef icache
-    method mv_cache_available = icache.mv_cache_available;
+    method mv_cache_available    =icache.mv_cache_available ;
   `endif
-  `ifdef supervisor
+`ifdef supervisor
     interface get_request_to_ptw = itlb.get_request_to_ptw;
     interface put_response_frm_ptw = itlb.put_response_frm_ptw;
     method ma_satp_from_csr = itlb.ma_satp_from_csr;
@@ -155,7 +149,7 @@ package imem;
       method ma_pmp_cfg = itlb.ma_pmp_cfg;
       method ma_pmp_addr = itlb.ma_pmp_addr;
     `endif
-  `endif
+`endif
 `ifdef perfmonitors
   `ifdef icache
     method mv_icache_perf_counters = icache.mv_perf_counters;
@@ -164,6 +158,14 @@ package imem;
     method mv_itlb_perf_counters = itlb.mv_perf_counters;
   `endif
 `endif
+  `ifdef icache_ecc
+    method mv_ded_data = icache.mv_ded_data;
+    method mv_sed_data = icache.mv_sed_data;
+    method mv_ded_tag = icache.mv_ded_tag;
+    method mv_sed_tag = icache.mv_sed_tag;
+    method ma_ram_request = icache.ma_ram_request;
+    method mv_ram_response = icache.mv_ram_response;
+  `endif
   endmodule
 endpackage
 

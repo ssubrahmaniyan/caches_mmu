@@ -39,53 +39,55 @@ package null_dcache;
   import BUtils::*;
   import Assert :: *;
 
-  import cache_types :: *;
-  import globals :: *;
-  `include "cache.defines"
+  import dcache_types :: *;
+  import common_tlb_types :: * ;
+  `include "dcache.defines"
+  `include "common_tlb.defines"
   `include "Logger.bsv"
 
 
-  interface Ifc_l1dcache#( numeric type wordsize, 
+  interface Ifc_dcache#( numeric type wordsize, 
                            numeric type blocksize,  
                            numeric type sets,
                            numeric type ways,
                            numeric type paddr,
                            numeric type vaddr,
-                           numeric type fbsize,
                            numeric type sbsize,
+                           numeric type fbsize,
                            numeric type esize,
                            numeric type dbanks,
-                           numeric type tbanks
+                           numeric type tbanks,
+                           numeric type buswidth
                            );
 
-    interface Put#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) core_req;
-    interface Get#(DMem_core_response#(TMul#(wordsize, 8), esize)) core_resp;
-    method DCache_mem_writereq#(paddr, TMul#(wordsize, 8)) write_mem_req_rd;
-    method Action write_mem_req_deq;
-    interface Get#(DCache_mem_readreq#(paddr)) read_mem_req;
-    interface Put#(DCache_mem_readresp#(TMul#(wordsize, 8))) read_mem_resp;
+    interface Put#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) put_core_req;
+    interface Get#(DMem_core_response#(TMul#(wordsize, 8), esize)) get_core_resp;
+    method DCache_mem_writereq#(paddr, TMul#(wordsize, 8)) mv_write_mem_req;
+    method Action ma_write_mem_req_deq;
+    interface Get#(DCache_mem_readreq#(paddr)) get_read_mem_req;
+    interface Put#(DCache_mem_readresp#(TMul#(wordsize, 8))) put_read_mem_resp;
     `ifdef pysimulate
       interface Get#(Bit#(1)) meta;
     `endif
     `ifdef perf
-      method Bit#(5) perf_counters;
+      method Bit#(5) mv_perf_counters;
     `endif
-    method Action cache_enable(Bool c);
-    method Action perform_store(Bit#(esize) currepoch);
-    method Bool cacheable_store;
-    method Bool cache_available;
-    method Bool storebuffer_empty;
+    method Action ma_cache_enable(Bool c);
+    method Action ma_perform_store(Bit#(esize) currepoch);
+    method Bool mv_cacheable_store;
+    method Bool mv_cache_available;
+    method Bool mv_storebuffer_empty;
   `ifdef supervisor
-    interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) hold_req;
-    interface Put#(DTLB_core_response#(paddr)) pa_from_tlb;
-    interface Get#(DMem_core_response#(TMul#(wordsize, 8), esize)) ptw_resp;
+    interface Get#(DCache_core_request#(vaddr, TMul#(wordsize, 8), esize)) get_hold_req;
+    interface Put#(DTLB_core_response#(paddr)) put_pa_from_tlb;
+    interface Get#(DMem_core_response#(TMul#(wordsize, 8), esize)) get_ptw_resp;
   `endif
   endinterface
 
-  (*conflict_free="allocate_storebuffer, perform_store"*)
+  (*conflict_free="allocate_storebuffer, ma_perform_store"*)
   (*conflict_free="allocate_storebuffer, respond_to_core"*)
-  module mknull_dcache(Ifc_l1dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, fbsize, 
-                                    sbsize, esize, dbanks, tbanks))
+  module mknull_dcache(Ifc_dcache#(wordsize, blocksize, sets, ways, paddr, vaddr, sbsize, 
+                                    fbsize, esize, dbanks, tbanks, buswidth))
     provisos(
           Mul#(wordsize, 8, respwidth),// respwidth is the total bits in a word
           Add#(a__, paddr, vaddr),
@@ -382,7 +384,8 @@ package null_dcache;
       else if(req.access == 0 `ifdef atomic || req.access == 2 `endif )begin
         ff_read_mem_request.enq(DCache_mem_readreq{address    : phy_addr,
                                                   burst_len  : 0,
-                                                  burst_size : zeroExtend(req.size[1:0])});
+                                                  burst_size : zeroExtend(req.size[1:0]),
+                                                  io: True});
         `logLevel( dcache, 0, $format("DCACHE : Sending IO Request for Addr:%h", phy_addr))
         rg_pending_read <= True;
       end
@@ -404,23 +407,23 @@ package null_dcache;
       rg_pending_read <= False;
     endrule
 
-    interface core_req = interface Put
+    interface put_core_req = interface Put
       method Action put(DCache_core_request#(vaddr, respwidth, esize) req);
         ff_core_request.enq(req);
         `logLevel( dcache, 0, $format("DCACHE : Receiving request: ",fshow(req)))
       endmethod
     endinterface;
-    interface core_resp     = toGet(ff_core_response);
-    interface read_mem_req  = toGet(ff_read_mem_request);
-    interface read_mem_resp = toPut(ff_read_mem_response);
+    interface get_core_resp     = toGet(ff_core_response);
+    interface get_read_mem_req  = toGet(ff_read_mem_request);
+    interface put_read_mem_resp = toPut(ff_read_mem_response);
 
-    method DCache_mem_writereq#(paddr, TMul#(wordsize, 8)) write_mem_req_rd;
+    method DCache_mem_writereq#(paddr, TMul#(wordsize, 8)) mv_write_mem_req;
       return ff_write_mem_request.first;
     endmethod
-    method Action write_mem_req_deq;
+    method Action ma_write_mem_req_deq;
       ff_write_mem_request.deq;
     endmethod
-    method Action perform_store(Bit#(esize) currepoch);
+    method Action ma_perform_store(Bit#(esize) currepoch);
       let addr = store_addr[rg_storehead];
       let data = store_data[rg_storehead];
       let valid = store_valid[rg_storehead];
@@ -437,7 +440,8 @@ package null_dcache;
           ff_write_mem_request.enq(DCache_mem_writereq{address     : addr,
                                                       burst_len   : 0,
                                                       burst_size  : zeroExtend(size),
-                                                      data        : data});
+                                                      data        : data,
+                                                      io          : True});
       end
       else begin
         `logLevel( dcache, 0, $format("DCACHE : Dropping Store sbhead:%d",rg_storehead))
@@ -448,16 +452,16 @@ package null_dcache;
         dynamicAssert(store_valid[rg_storehead],"Performing Store on invalid entry in SB");
       `endif
     endmethod
-    method Action cache_enable(Bool c);
+    method Action ma_cache_enable(Bool c);
       noAction;
     endmethod
-    method cacheable_store = False;
-    method cache_available = ff_core_request.notFull && ff_core_response.notFull && !sb_full;
-    method storebuffer_empty = sb_empty;
+    method mv_cacheable_store = False;
+    method mv_cache_available = ff_core_request.notFull && ff_core_response.notFull && !sb_full;
+    method mv_storebuffer_empty = sb_empty;
   `ifdef supervisor
-    interface ptw_resp      = toGet(ff_ptw_response);
-    interface hold_req      = toGet(ff_hold_request);
-    interface pa_from_tlb   = toPut(ff_from_tlb);
+    interface get_ptw_resp      = toGet(ff_ptw_response);
+    interface get_hold_req      = toGet(ff_hold_request);
+    interface put_pa_from_tlb   = toPut(ff_from_tlb);
   `endif
   endmodule
 endpackage

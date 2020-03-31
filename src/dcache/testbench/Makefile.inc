@@ -4,31 +4,32 @@ XLEN=64
 SUPERVISOR=sv39
 DTLBSIZE=4
 ASIDWIDTH=9
-ATOMIC=disable
+ATOMIC=enable
 
 DCACHE=enable
-DSETS=64
+DSETS=128
 DWORDS=8
-DBLOCKS=8
+DBLOCKS=4
 DWAYS=4
-DFBSIZE=4
-DSBSIZE=2
 DESIZE=1
-DREPL=PLRU
+DSBSIZE=2
+DFBSIZE=8
+DREPL=1
 DRESET=1
-DDBANKS=1
+DDBANKS=4
 DTBANKS=1
+DBUSWIDTH=64
 ECC=enable
-ECC_TEST=enable
-DTIM=enable
-DTIMWAYS=1
+ONE_HOT=0
+ECC_TEST=disable
+PORT=dual
 
 THREADS=1
-COVERAGE=line
+COVERAGE=none
 TRACE=disable
 
 TOP_MODULE:=mkdmem_tb
-DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../:../../tlbs
+DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
 TOP_DIR:= ./
 TOP_FILE:= dmem_tb.bsv
 

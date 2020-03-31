@@ -4,15 +4,17 @@ include Makefile.inc
 
 BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
-BSVINCDIR:= .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:$(DIR)
+BSVINCDIR:= .:%/Libraries:$(DIR)
 BSVOUTDIR:=./bin
+BSC_DIR:=$(shell which bsc)
+BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
 
 define_macros += -D Addr_space=25
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
 ifeq ($(ECC), enable)
-	override define_macros += -D ECC
+	override define_macros += -D icache_ecc
 endif
 ifeq ($(ATOMIC), enable)
   override define_macros += -D atomic=True
@@ -36,19 +38,13 @@ ifeq ($(TRACE), enable)
 endif
 
 override define_macros += -D ASSERT=True -D iwords=$(IWORDS) -D iblocks=$(IBLOCKS) -D iways=$(IWAYS) \
-								-D isets=$(ISETS) -D irepl=$(IREPL) -D icachereset=$(IRESET) \
+								-D isets=$(ISETS) -D irepl=$(IREPL) -D icachereset=$(IRESET)\
 								-D ifbsize=$(IFBSIZE)\
-								-D iesize=$(IESIZE) -D idbanks=$(IDBANKS) -D itbanks=$(ITBANKS) \
+								-D iesize=$(IESIZE) -D itbanks=$(ITBANKS) \
 								-D paddr=32 -D vaddr=$(XLEN) -D RV$(XLEN)=True -D asidwidth=$(ASIDWIDTH) \
 								-D simulate=True -D itlbsize=$(ITLBSIZE) -D causesize=6 \
-								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(IBUSWIDTH)
-
-ifeq (, $(wildcard ${TOOLS_DIR}/shakti-tools/insert_license.sh))
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout
-else
-  VERILOG_FILTER:= -verilog-filter ${BLUESPECDIR}/bin/basicinout -verilog-filter ${TOOLS_DIR}/shakti-tools/insert_license.sh
-  VERILOGLICENSE:= cp ${TOOLS_DIR}/shakti-tools/IITM_LICENSE.txt ./verilog
-endif
+								-D pmp=True -D PMPSIZE=16 -D ibuswidth=$(IBUSWIDTH)\
+								-D icache_onehot=$(ONE_HOT)
 
 verilate_fast := OPT_SLOW="-O3" OPT_FAST="-O3"
 VERILATOR_FLAGS = --stats -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-assign fast --x-initial fast \
@@ -84,25 +80,24 @@ generate_verilog:
 	@echo Compiling $(TOP_MODULE) in verilog ...
 	@mkdir -p $(BSVBUILDDIR); 
 	@mkdir -p $(VERILOGDIR); 
-	bsc -show-module-use -suppress-warnings S0015 -u -verilog -show-schedule -sched-dot +RTS -K40000M -RTS -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR)\
-  $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) $(VERILOG_FILTER) \
-  -p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
+	bsc -u -verilog -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) \
+		+RTS -K40000M -RTS -check-assert  -keep-fires -opt-undetermined-vals -remove-false-rules \
+		-remove-empty-rules -remove-starved-rules -remove-dollar -unspecified-to X -show-schedule \
+		-show-module-use $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \
+		-p $(BSVINCDIR) -g $(TOP_MODULE) $(TOP_DIR)/$(TOP_FILE)  || (echo "BSC COMPILE ERROR"; exit 1) 
 	@echo "old_define_macros = $(define_macros)" > vars
-	@cp ${BLUESPECDIR}/Verilog.Vivado/RegFile.v ./verilog/  
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BELoad.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2BE.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog.Vivado/BRAM2.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO2.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO10.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RevertReg.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFO20.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/FIFOL1.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SyncFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/Counter.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/SizedFIFO.v ./verilog/
-	@cp ${BLUESPECDIR}/Verilog/RegFileLoad.v ./verilog/
-	@$(VERILOGLICENSE)
+	@cp common_verilog/*.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/../Verilog.Vivado/RegFile.v $(VERILOGDIR)  
+	@cp ${BSC_VDIR}/FIFO2.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO10.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RevertReg.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFO20.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/FIFOL1.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SyncFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/Counter.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/SizedFIFO.v $(VERILOGDIR)
+	@cp ${BSC_VDIR}/RegFileLoad.v $(VERILOGDIR)
 
 .PHONY: link_vcs
 link_vcs: ## Generate simulation executable using Synopsys VCS
