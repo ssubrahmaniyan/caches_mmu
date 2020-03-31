@@ -10,12 +10,6 @@ BSC_DIR:=$(shell which bsc)
 BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
 
 define_macros += -D Addr_space=25
-ifeq ($(ITIM), enable)
-	override define_macros += -D itim
-endif
-ifeq ($(DTIM), enable)
-	override define_macros += -D dtim
-endif
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
