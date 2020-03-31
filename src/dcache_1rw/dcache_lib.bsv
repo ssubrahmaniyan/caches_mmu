@@ -741,7 +741,7 @@ package dcache_lib;
       else
         rg_fb_enables[lv_current_bank] <= 1;
       v_fb_err[fbindex] <= pack(mem_resp.err);
-      `logLevel(dcache , 0, $format("[%2d]DCACHE: FB Fill: fbindex:%d ibank:%d cbank:%d fben:%b", id,
+      `logLevel( dcache , 0, $format("[%2d]DCACHE: FB Fill: fbindex:%d ibank:%d cbank:%d fben:%b", id,
       fbindex, init_bank, lv_current_bank, rg_fb_enables))
     endmethod
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
@@ -893,10 +893,12 @@ package dcache_lib;
     function Bit#(dataword) fn_atomic_op (Bit#(5) op,  Bit#(dataword) rs2,  Bit#(dataword) loaded);
       Bit#(dataword) op1 = loaded;
       Bit#(dataword) op2 = rs2;
+    `ifdef RV64
       if(op[4]==0)begin
 	  		op1=signExtend(loaded[31:0]);
         op2= signExtend(rs2[31:0]);
       end
+    `endif
       Int#(dataword) s_op1 = unpack(op1);
 	  	Int#(dataword) s_op2 = unpack(op2);
 
@@ -937,6 +939,11 @@ package dcache_lib;
 
     /*doc:reg: */
     Reg#(Bool) rg_sb_busy <- mkReg(False);
+    
+    rule rl_print_stats;
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: sb_full:%b sb_empty:%b sbhead:%d sbtail:%d", 
+        id, sb_full, sb_empty, rg_head, rg_tail))
+    endrule
 
   `ifdef atomic
     /*doc:reg: */
@@ -950,9 +957,16 @@ package dcache_lib;
     rule rl_perform_atomic(rg_sb_busy);
       let _s = v_sb_meta[rg_atomic_tail];
       let _newdata = fn_atomic_op(rg_atomic_op, _s.data, rg_atomic_readword);
+    `ifdef RV64
+      if(rg_atomic_op[4] == 0)begin
+        _newdata = duplicate(_newdata[31:0]);
+      end
+    `endif
       _s.data = _newdata;
       v_sb_meta[rg_atomic_tail] <= _s;
       rg_sb_busy <= False;
+      `logLevel( dcache, 0, $format("[%2d]SB: Performing Atomic: Op:%b Wdata:%h Rdata:%h Result:%h",
+        id, rg_atomic_op, _s.data, rg_atomic_readword, _newdata))
     endrule
   `endif
 
@@ -976,6 +990,9 @@ package dcache_lib;
       end
       Bit#(3) zeros = 0;
       Bit#(TAdd#(wordbits,3)) shiftamt = {phyaddr[v_wordbits - 1:0], zeros};
+      for (Integer i = 0; i<valueOf(sbsize); i = i + 1) begin
+        `logLevel( dcache, 0, $format("[%2d]SB: Lookup:",id,fshow(v_sb_meta[i])))
+      end
 
       return tuple2(fold(fn_OR,storemask)>>shiftamt,fold(fn_OR,data_values)>>shiftamt);
     endmethod
@@ -1003,7 +1020,7 @@ package dcache_lib;
                                       io: io, mask: storemask, size:truncate(size)};
       v_sb_meta[rg_tail] <= _s;
       rg_tail <= rg_tail + 1;
-      `logLevel( storebuffer, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
+      `logLevel( dcache, 0, $format("[%2d]SB: Allocating sbindex:%d with ",id,rg_tail,
                                           fshow(_s)))
     `ifdef atomic 
       rg_sb_busy <= atomic;
@@ -1018,6 +1035,8 @@ package dcache_lib;
         mav_store_to_commit if(!sb_empty);
       rg_head <= rg_head + 1;
       v_sb_valid[rg_head] <= False;
+      `logLevel( dcache, 0, $format("[%2d]SB: Committing store sbindex:%d with ",id,rg_head,
+                                          fshow(v_sb_meta[rg_head])))
       return tuple2(v_sb_valid[rg_head], v_sb_meta[rg_head]);
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;

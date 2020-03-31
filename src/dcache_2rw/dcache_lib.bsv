@@ -711,6 +711,11 @@ package dcache_lib;
     rule rl_perform_atomic(rg_sb_busy);
       let _s = v_sb_meta[rg_atomic_tail];
       let _newdata = fn_atomic_op(rg_atomic_op, _s.data, rg_atomic_readword);
+    `ifdef RV64
+      if(rg_atomic_op[4] == 0)begin
+        _newdata = duplicate(_newdata[31:0]);
+      end
+    `endif
       _s.data = _newdata;
       v_sb_meta[rg_atomic_tail] <= _s;
       rg_sb_busy <= False;
