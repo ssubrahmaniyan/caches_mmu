@@ -105,7 +105,7 @@ package dcache_lib;
   `ifdef dcache_ecc
     method Bit#(paddr) mv_sideband_read (Bit#(TLog#(ways)) way);
   `endif
-  endinterface
+  endinterface : Ifc_tagram1rw
 
   module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram1rw#(wordsize, blocksize, sets, ways, paddr))
     provisos(
@@ -191,7 +191,7 @@ package dcache_lib;
       return zeroExtend(v_tags[way].read_response);
     endmethod
   `endif
-  endmodule
+  endmodule : mk_tagram1rw
   interface Ifc_tagram2rw#(
                         numeric type wordsize,
                         numeric type blocksize,
@@ -216,7 +216,7 @@ package dcache_lib;
   `ifdef dcache_ecc
     method Bit#(paddr) mv_sideband_read (Bit#(TLog#(ways)) way);
   `endif
-  endinterface
+  endinterface : Ifc_tagram2rw
   
   module mk_tagram2rw#(parameter Bit#(32) id)(Ifc_tagram2rw#(wordsize, blocksize, sets, ways, paddr))
     provisos(    
@@ -320,13 +320,13 @@ package dcache_lib;
       ded[wayselect] = v_tags[wayselect].p2.read_ded;
       Bit#(TAdd#(2,TLog#(tagbits))) lv_chparity = v_tags[wayselect].p2.check_parity;
       Bit#(TAdd#(2,TLog#(tagbits))) lv_stparity = v_tags[wayselect].p2.stored_parity;
+      Bit#(maxsize) _t = zeroExtend(lv_tag);
+      lv_tag = truncate(fn_ecc_correct(lv_chparity, lv_stparity, _t));
     `endif
-        Bit#(maxsize) _t = zeroExtend(lv_tag);
-        lv_tag = truncate(fn_ecc_correct(lv_chparity, lv_stparity, _t));
         Bit#(paddr) _t1 = {lv_tag, 'd0};
       return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif waymask: 0, address: _t1 };
     endmethod
-  endmodule
+  endmodule : mk_tagram2rw
 
 
   interface Ifc_dataram1rw#(numeric type wordsize,
@@ -350,7 +350,7 @@ package dcache_lib;
   `ifdef dcache_ecc
     method Bit#(TMul#(wordsize, 8)) mv_sideband_read (Bit#(TLog#(ways)) way, Bit#(TLog#(blocksize)) bank);
   `endif
-  endinterface
+  endinterface : Ifc_dataram1rw
 
   module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_dataram1rw#(wordsize, blocksize, sets, ways))
@@ -473,7 +473,8 @@ package dcache_lib;
       return truncate(_line>> block_offset);
     endmethod
   `endif
-  endmodule
+  endmodule : mk_dataram1rw
+
   interface Ifc_dataram2rw#(
                          numeric type wordsize,
                          numeric type blocksize,
@@ -499,7 +500,7 @@ package dcache_lib;
   `ifdef dcache_ecc
     method Bit#(TMul#(wordsize, 8)) mv_sideband_read (Bit#(TLog#(ways)) way, Bit#(TLog#(blocksize)) bank);
   `endif
-  endinterface
+  endinterface : Ifc_dataram2rw
   module mk_dataram2rw#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_dataram2rw#(wordsize, blocksize, sets, ways))
       provisos(
@@ -682,7 +683,7 @@ package dcache_lib;
       return truncate(_line>> block_offset);
     endmethod
   `endif
-  endmodule
+  endmodule : mk_dataram2rw
 
   // where buswidth = respwidth and banksize = respwidth
   interface Ifc_fillbuffer_v2#(numeric type fbsize,
@@ -719,7 +720,7 @@ package dcache_lib;
                         Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
                         Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
   `endif
-  endinterface
+  endinterface : Ifc_fillbuffer_v2
 
   (*conflict_free="ma_perform_release,mav_allocate_line"*)
   (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
@@ -940,7 +941,8 @@ package dcache_lib;
       end
     endmethod
   `endif
-  endmodule
+  endmodule : mk_fillbuffer_v2
+
   interface Ifc_storebuffer#( numeric type addr, 
                               numeric type wordsize, 
                               numeric type esize,
@@ -958,7 +960,7 @@ package dcache_lib;
     method Bool mv_sb_empty;
     method Bool mv_cacheable_store;
     method Bool mv_sb_busy;
-  endinterface
+  endinterface : Ifc_storebuffer
 
   function Bool isTrue(Bool a);
     return a;
@@ -1152,40 +1154,41 @@ package dcache_lib;
     endmethod
     method mv_cacheable_store = !v_sb_meta[rg_head].io;
     method mv_sb_busy = rg_sb_busy;
-  endmodule
+  endmodule : mk_storebuffer
+
 `ifdef dcache_dualport
   (*synthesize*)
   module mkdcache_tag#(parameter Bit#(32) id)(Ifc_tagram2rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
     mk_tagram2rw _temp(id,ifc);
     return (ifc);
-  endmodule
+  endmodule : mkdcache_tag
   (*synthesize*)
   module mkdcache_data#(parameter Bit#(32) id)(Ifc_dataram2rw#(`dwords, `dblocks, `dsets, `dways));
     let ifc();
     mk_dataram2rw#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
-  endmodule
+  endmodule : mkdcache_data
 `else
   (*synthesize*)
   module mkdcache_tag#(parameter Bit#(32) id)(Ifc_tagram1rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
     mk_tagram1rw _temp(id,ifc);
     return (ifc);
-  endmodule
+  endmodule : mkdcache_tag
   (*synthesize*)
   module mkdcache_data#(parameter Bit#(32) id)(Ifc_dataram1rw#(`dwords, `dblocks, `dsets, `dways));
     let ifc();
     mk_dataram1rw#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
-  endmodule
+  endmodule : mkdcache_data
 `endif
   (*synthesize*)
   module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
-  endmodule
+  endmodule : mkdcache_fb_v2
 
 endpackage
 
