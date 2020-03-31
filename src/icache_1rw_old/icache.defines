@@ -1,2 +1,0 @@
-`define Inst_addr_misaligned  0 
-`define Inst_access_fault     1 

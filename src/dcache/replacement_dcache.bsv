@@ -40,13 +40,13 @@ package replacement_dcache;
     method Action reset_repl;
   endinterface
 
-  module mkreplace#(String alg)(Ifc_replace#(sets,ways))
+  module mkreplace#(parameter Bit#(2) alg)(Ifc_replace#(sets,ways))
     provisos(Add#(a__, TLog#(ways), 4));
 
     let v_ways = valueOf(ways);
     let v_sets = valueOf(sets);
-    staticAssert(alg=="RANDOM" || alg=="RROBIN" || alg=="PLRU","Invalid replacement Algorithm");
-    if(alg == "RANDOM")begin
+    staticAssert(alg==0 || alg==1 || alg==2,"Invalid replacement Algorithm");
+    if(alg == 0)begin // RANDOM
       LFSR#(Bit#(4)) random <- mkLFSR_4();
       Reg#(Bool) rg_init <- mkReg(True);
       rule initialize_lfsr(rg_init);
@@ -85,29 +85,29 @@ package replacement_dcache;
         random.seed(1);
       endmethod
     end
-    else if(alg=="RROBIN")begin
+    else if(alg== 1)begin // RRBIN
       Vector#(sets,Reg#(Bit#(TLog#(ways)))) v_count <- replicateM(mkReg(fromInteger(v_ways-1)));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);
-        if (&(valid)==1 && &(dirty)==1)begin // if all lines are valid choose one to randomly replace
+
+        Bool alldirty =  (&valid == 1 && &dirty == 1);
+        Bool somedirty = (&valid == 1 && &dirty != 1);
+        Bool nonedirty = (&valid == 1 && |dirty == 0);
+
+        Bit#(TLog#(ways)) temp=fromInteger(v_ways-1);
+        if(alldirty || nonedirty) begin // all lines are valid and dirty
           return readVReg(v_count)[index];
         end
-        else if(&(valid)!=1) begin // if any line empty then send that
-          Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(valid[i]==0)begin
-              temp=truncate(i);
-            end
-          end
+        else if (somedirty) begin // all lines valid but not all dirty
+          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1)
+            if(dirty[i]==0)
+              temp = truncate(i);
           return temp;
         end
-        else begin // if any line empty then send that
-          Bit#(TLog#(ways)) temp=0;
-          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1) begin
-            if(dirty[i]==0)begin
-              temp=truncate(i);
-            end
-          end
+        else begin // some lines are invalid
+          for(Bit#(TAdd#(1,TLog#(ways))) i=0;i<fromInteger(v_ways);i=i+1)
+            if(valid[i]==0)
+              temp =  truncate(i);
           return temp;
         end
       endmethod
@@ -119,7 +119,7 @@ package replacement_dcache;
           v_count[i]<=fromInteger(v_ways-1);
       endmethod
     end
-    else if(alg=="PLRU")begin
+    else if(alg== 2)begin // PLRU
       Vector#(sets,Reg#(Bit#(TSub#(ways,1)))) v_count <- replicateM(mkReg(5));
     method ActionValue#(Bit#(TLog#(ways))) line_replace (Bit#(TLog#(sets))
             index, Bit#(ways) valid, Bit#(ways) dirty);

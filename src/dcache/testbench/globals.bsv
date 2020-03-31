@@ -54,33 +54,6 @@ package globals;
   } FetchResponse#(numeric type iwidth, numeric type esize) deriving (Bits, Eq, FShow);
   // -------------------------------------------------------------------------------------------//
 
-  // ---------------------- Types for DMem and Core interaction ------------------------------- //
-  typedef struct{
-    Bit#(addr)    address;
-    Bit#(esize)   epochs;
-    Bit#(3)       size;
-    Bool          fence;
-    Bit#(2)       access;
-    Bit#(data)    writedata;
-  `ifdef atomic
-    Bit#(5)       atomic_op;
-  `endif
-  `ifdef supervisor
-    Bool          sfence;
-    Bool          ptwalk_req;
-    Bool          ptwalk_trap;
-  `endif
-  } DMem_request#(numeric type addr,
-                  numeric type data,
-                  numeric type esize ) deriving(Bits, Eq, FShow);
-
-  typedef struct{
-    Bit#(data)        word;
-    Bool              trap;
-    Bit#(`causesize)  cause;
-    Bit#(esize)       epochs;
-  } DMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq, FShow);
-  // -------------------------------------------------------------------------------------------//
 
   typedef enum {Hit, Miss, None} RespState deriving(Eq, Bits, FShow);
 
