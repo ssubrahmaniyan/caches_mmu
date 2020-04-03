@@ -124,9 +124,9 @@ package dmem;
         Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
     )(Ifc_dmem);
 
-    let dcache <- mkdcache(id `ifndef supervisor `ifdef pmp ,pmp_cfg, pmp_addr `endif `endif );
+    let dcache <- mkdcache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
   `ifdef supervisor
-    Ifc_fa_dtlb dtlb <- mkfa_dtlb(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
+    Ifc_fa_dtlb dtlb <- mkfa_dtlb(id);
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
   `endif
     interface put_core_req = interface Put

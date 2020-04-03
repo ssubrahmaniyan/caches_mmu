@@ -234,9 +234,9 @@ package icache;
 `endif
   (*synthesize*)
   module mkicache#( parameter Bit#(32) id
-    `ifndef supervisor `ifdef pmp ,
+    `ifdef pmp ,
         Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
-        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif `endif
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
     )(Ifc_icache);
 
     String icache = "";
@@ -438,15 +438,15 @@ package icache;
       Bit#(`paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = `Inst_access_fault;
-      `ifdef pmp
-        let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:2};
-        let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
-                                                pmp_cfg, pmp_addr);
-        if (!lv_access_fault && pmp_err)begin
-          lv_access_fault = True;
-          lv_cause = pmp_cause;
-        end
-      `endif
+    `endif
+    `ifdef pmp
+      let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:2};
+      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+                                              pmp_cfg, pmp_addr);
+      if (!lv_access_fault && pmp_err)begin
+        lv_access_fault = True;
+        lv_cause = pmp_cause;
+      end
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);

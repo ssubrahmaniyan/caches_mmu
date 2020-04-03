@@ -93,9 +93,9 @@ package imem;
         Vector#(`pmpsize, Bit#(8)) pmp_cfg , 
         Vector#(`pmpsize, Bit#(TSub#(`paddr, `pmp_grainbits))) pmp_addr `endif
     )(Ifc_imem);
-    let icache <- mkicache(id `ifndef supervisor `ifdef pmp ,pmp_cfg, pmp_addr `endif `endif );
+    let icache <- mkicache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
   `ifdef supervisor
-    Ifc_fa_itlb itlb <- mkfa_itlb(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
+    Ifc_fa_itlb itlb <- mkfa_itlb(id);
     mkConnection(itlb.get_core_response, icache.put_pa_from_tlb);
   `endif
     interface put_core_req = interface Put

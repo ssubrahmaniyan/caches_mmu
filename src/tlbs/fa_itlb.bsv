@@ -47,11 +47,7 @@ package fa_itlb;
 
   /*doc:module: */
   (*synthesize*)
-  module mkfa_itlb#(parameter Bit#(32) hartid
-    `ifdef pmp ,
-        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
-        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
-    ) (Ifc_fa_itlb);
+  module mkfa_itlb#(parameter Bit#(32) hartid) (Ifc_fa_itlb);
 
     Vector#( `itlbsize , Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
