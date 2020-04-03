@@ -1,26 +1,6 @@
 /*
-Copyright (c) 2019, IIT Madras All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted
-provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice, this list of
-  conditions and the following disclaimer in the documentation and/or other materials provided
-  with the distribution.
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or
-  promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
-OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
---------------------------------------------------------------------------------------------------
+see LICENSE.incore
+see LICENSE.iitm
 
 Author: Neel Gala
 Email id: neelgala@gmail.com
@@ -73,12 +53,6 @@ package fa_dtlb;
 
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(`vaddr) m);
-  `ifdef pmp
-    /*doc:method: */
-    method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
-    /*doc:method: */
-    method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
-  `endif
 
     /*doc:method: */
     method Bool mv_tlb_available;
@@ -90,7 +64,11 @@ package fa_dtlb;
   /*doc:module: */
   (*synthesize*)
   (*conflict_free="put_response_frm_ptw_put, put_core_request_put"*)
-  module mkfa_dtlb#(parameter Bit#(32) hartid) (Ifc_fa_dtlb);
+  module mkfa_dtlb#(parameter Bit#(32) hartid
+    `ifdef pmp ,
+        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
+    ) (Ifc_fa_dtlb);
 
     Vector#( `dtlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
@@ -127,11 +105,6 @@ package fa_dtlb;
 
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkReg(False);
-
-  `ifdef pmp
-    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
-    Vector#(`PMPSIZE, Wire#(Bit#(`paddr))) wr_pmp_addr <- replicateM(mkWire());
-  `endif
 
   `ifdef perfmonitors
     /*doc:wire: */
@@ -324,7 +297,7 @@ package fa_dtlb;
     endmethod
 
     method Action ma_curr_priv (Bit#(2) c);
-        wr_priv <= c;
+      wr_priv <= c;
     endmethod
 
     /*doc:method: */
@@ -337,17 +310,6 @@ package fa_dtlb;
   
   `ifdef perfmonitors
     method mv_perf_counters = wr_count_misses;
-  `endif
-
-  `ifdef pmp
-    method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-      for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-        wr_pmp_cfg[i] <= pmpcfg[i];
-    endmethod
-    method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(`paddr)) pmpadr);
-      for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-        wr_pmp_addr[i] <= pmpadr[i];
-    endmethod
   `endif
 
   endmodule

@@ -1,26 +1,6 @@
 /* 
-Copyright (c) 2019, IIT Madras All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted
-provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.  
-* Redistributions in binary form must reproduce the above copyright notice, this list of 
-  conditions and the following disclaimer in the documentation and/or other materials provided 
-  with the distribution.  
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
-  promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
-OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
---------------------------------------------------------------------------------------------------
+see LICENSE.incore
+see LICENSE.iitm
 
 Author: Neel Gala
 Email id: neelgala@gmail.com
@@ -170,6 +150,9 @@ package icache;
   import common_tlb_types:: * ;
   import ecc_hamming :: * ;
   import io_func :: * ;
+`ifdef pmp
+  import pmp_func :: *;
+`endif
  
   typedef struct{
     Bit#(TLog#(blocks)) init_bank;
@@ -207,6 +190,8 @@ package icache;
     /*doc:method: input signal indicating if the cache is enabled by the core or not. The SoC can
     choose to drive this signal from any resources (CSRs or memory mapped registers, etc) */
     method Action ma_cache_enable(Bool c);
+    /*doc:method: input signal to hold the current privilege mode of the core*/
+    method Action ma_curr_priv (Bit#(2) c);
     /*doc:method: output signal indicating if the cache is busy or ready to take new inputs from the
     core. The cache is available only under the following conditions: 
       - fill-buffer is no full
@@ -248,7 +233,11 @@ package icache;
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
 `endif
   (*synthesize*)
-  module mkicache#( parameter Bit#(32) id)(Ifc_icache);
+  module mkicache#( parameter Bit#(32) id
+    `ifndef supervisor `ifdef pmp ,
+        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif `endif
+    )(Ifc_icache);
 
     String icache = "";
     let v_sets=valueOf(`isets);
@@ -366,6 +355,8 @@ package icache;
     cycle. This wire prevents any oppurtunistic releases from the fill-buffer to happen when set to
     True*/
     Wire#(Bool) wr_takingrequest <- mkDWire(False);
+    /*doc:wire: wire holds the current privilege mode of the core*/
+    Wire#(Bit#(2)) wr_priv <- mkWire();
 
   `ifdef icache_ecc
     /*doc:wire: */
@@ -447,6 +438,15 @@ package icache;
       Bit#(`paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = `Inst_access_fault;
+      `ifdef pmp
+        let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:2};
+        let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+                                                pmp_cfg, pmp_addr);
+        if (!lv_access_fault && pmp_err)begin
+          lv_access_fault = True;
+          lv_cause = pmp_cause;
+        end
+      `endif
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
@@ -802,6 +802,9 @@ package icache;
     endinterface;
     method Action ma_cache_enable(Bool c);
       wr_cache_enable <= c;
+    endmethod
+    method Action ma_curr_priv (Bit#(2) c);
+      wr_priv <= c;
     endmethod
 
     interface get_read_mem_req = toGet(ff_read_mem_request);

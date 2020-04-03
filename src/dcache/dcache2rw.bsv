@@ -1,26 +1,6 @@
 /* 
-Copyright (c) 2019, IIT Madras All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted
-provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.  
-* Redistributions in binary form must reproduce the above copyright notice, this list of 
-  conditions and the following disclaimer in the documentation and/or other materials provided 
-  with the distribution.  
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
-  promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
-OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
---------------------------------------------------------------------------------------------------
+see LICENSE.incore
+see LICENSE.iitm
 
 Author: Neel Gala
 Email id: neelgala@gmail.com
@@ -53,6 +33,9 @@ package dcache2rw;
 `ifdef dcache_ecc
   import ecc_hamming :: * ;
 `endif
+`ifdef pmp
+  import pmp_func :: *;
+`endif
 
 
   import io_func :: * ;
@@ -82,6 +65,7 @@ package dcache2rw;
     method Bit#(13) mv_perf_counters;
   `endif
     method Action ma_cache_enable(Bool c);
+    method Action ma_curr_priv (Bit#(2) c);
     method Bool mv_storebuffer_empty;
     method Action ma_perform_store(Bit#(`desize) currepoch);
     method Bool mv_cacheable_store;
@@ -102,9 +86,7 @@ package dcache2rw;
   (*conflict_free="rl_send_memory_request,rl_release_from_fillbuffer"*)
   (*conflict_free="rl_fill_from_memory, rl_release_from_fillbuffer"*)
 `ifdef dcache_ecc
-//  (*preempts="mv_ram_response,rl_release_from_fillbuffer"*)
-//  (*preempts="mv_ram_response,rl_ram_check"*)
-//  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
+  (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
   (*conflict_free="rl_perform_correction, ma_perform_store"*)
 `endif
   // the following affect fb and sb. however, store cannot be performed on a line being allotted
@@ -118,7 +100,11 @@ package dcache2rw;
   // true conflict detected.
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
   (*synthesize*)
-  module mkdcache#( parameter Bit#(32) id)(Ifc_dcache);
+  module mkdcache#( parameter Bit#(32) id
+    `ifndef supervisor `ifdef pmp ,
+        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif `endif
+    )(Ifc_dcache);
 
     String dcache = "";
     let v_sets=valueOf(`dsets);
@@ -284,6 +270,8 @@ package dcache2rw;
     value is used to indicate the storebuffer which fb entry it needs to update when committing
     the store*/
     Wire#(Bit#(TLog#(`dfbsize))) wr_fb_hitindex <- mkDWire(?);
+    /*doc:wire: wire holds the current privilege mode of the core*/
+    Wire#(Bit#(2)) wr_priv <- mkWire();
 
   `ifdef dcache_ecc
     /*doc:wire: */
@@ -462,6 +450,16 @@ dataline ))
       Bit#(`paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
+      `ifdef pmp
+        Bit#(2) pmp_access = req.access == 0 ? 0 : 1;
+        let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:pmp_access};
+        let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+                                                pmp_cfg, pmp_addr);
+        if (!lv_access_fault && pmp_err)begin
+          lv_access_fault = True;
+          lv_cause = pmp_cause;
+        end
+      `endif
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
@@ -963,6 +961,9 @@ dataline ))
 
     method Action ma_cache_enable(Bool c);
       wr_cache_enable <= c;
+    endmethod
+    method Action ma_curr_priv (Bit#(2) c);
+      wr_priv <= c;
     endmethod
 
     interface get_read_mem_req = toGet(ff_read_mem_request);

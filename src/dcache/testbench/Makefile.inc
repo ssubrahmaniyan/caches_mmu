@@ -22,14 +22,16 @@ DBUSWIDTH=64
 ECC=enable
 ONE_HOT=0
 ECC_TEST=disable
-PORT=dual
+PORT=single
+PMPSIZE=4
+GRAINBITS=3
 
 THREADS=1
 COVERAGE=none
 TRACE=disable
 
 TOP_MODULE:=mkdmem_tb
-DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/
+DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/:../../pmp/
 TOP_DIR:= ./
 TOP_FILE:= dmem_tb.bsv
 

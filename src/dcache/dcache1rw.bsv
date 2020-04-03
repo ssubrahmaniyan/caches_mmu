@@ -1,26 +1,6 @@
 /* 
-Copyright (c) 2019, IIT Madras All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted
-provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.  
-* Redistributions in binary form must reproduce the above copyright notice, this list of 
-  conditions and the following disclaimer in the documentation and/or other materials provided 
-  with the distribution.  
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or 
-  promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT 
-OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
---------------------------------------------------------------------------------------------------
+see LICENSE.incore
+see LICENSE.iitm
 
 Author: Neel Gala
 Email id: neelgala@gmail.com
@@ -178,6 +158,9 @@ package dcache1rw;
 `ifdef dcache_ecc
   import ecc_hamming :: * ;
 `endif
+`ifdef pmp
+  import pmp_func :: *;
+`endif
 
 
   import io_func :: * ;
@@ -198,6 +181,7 @@ package dcache1rw;
     method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) mv_write_mem_req;
     method Action ma_write_mem_req_deq;
     interface Put#(DCache_mem_writeresp) put_write_mem_resp;
+    method Action ma_curr_priv (Bit#(2) c);
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(`dwords,8),`desize)) get_ptw_resp;
     interface Put#(DTLB_core_response#(`paddr)) put_pa_from_tlb;
@@ -220,7 +204,7 @@ package dcache1rw;
     method Action ma_ram_request(DRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
   `endif
-  endinterface
+  endinterface : Ifc_dcache
   // both update rg_handling_miss but can never fire together
   (*conflict_free="rl_send_memory_request, rl_response_to_core"*)
   (*conflict_free="rl_response_to_core,rl_ram_check"*)
@@ -246,7 +230,11 @@ package dcache1rw;
   // both the following will update the replacement policy
   (*conflict_free="rl_release_from_fillbuffer, rl_response_to_core"*)
   (*synthesize*)
-  module mkdcache#( parameter Bit#(32) id)(Ifc_dcache);
+  module mkdcache#( parameter Bit#(32) id
+    `ifndef supervisor `ifdef pmp ,
+        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif `endif
+    )(Ifc_dcache);
 
     String dcache = "";
     let v_sets=valueOf(`dsets);
@@ -423,6 +411,8 @@ package dcache1rw;
     value is used to indicate the storebuffer which fb entry it needs to update when committing
     the store*/
     Wire#(Bit#(TLog#(`dfbsize))) wr_fb_hitindex <- mkDWire(?);
+    /*doc:wire: wire holds the current privilege mode of the core*/
+    Wire#(Bit#(2)) wr_priv <- mkWire();
 
   `ifdef dcache_ecc
     /*doc:wire: */
@@ -616,6 +606,16 @@ dataline ))
       Bit#(`paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
+      `ifdef pmp
+        Bit#(2) pmp_access = req.access == 0 ? 0 : 1;
+        let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:pmp_access};
+        let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+                                                pmp_cfg, pmp_addr);
+        if (!lv_access_fault && pmp_err)begin
+          lv_access_fault = True;
+          lv_cause = pmp_cause;
+        end
+      `endif
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
@@ -1133,6 +1133,9 @@ dataline ))
     method Action ma_cache_enable(Bool c);
       wr_cache_enable <= c;
     endmethod
+    method Action ma_curr_priv (Bit#(2) c);
+      wr_priv <= c;
+    endmethod
 
     interface get_read_mem_req = toGet(ff_read_mem_request);
     interface put_read_mem_resp = toPut(ff_read_mem_response);
@@ -1188,7 +1191,7 @@ dataline ))
         return data_response;
     endmethod
   `endif
-  endmodule
+  endmodule: mkdcache
 
 endpackage
 
