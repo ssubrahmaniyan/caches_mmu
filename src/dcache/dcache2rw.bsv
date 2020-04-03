@@ -101,9 +101,9 @@ package dcache2rw;
   (*conflict_free="rl_send_memory_request,ma_perform_store"*)
   (*synthesize*)
   module mkdcache#( parameter Bit#(32) id
-    `ifndef supervisor `ifdef pmp ,
+    `ifdef pmp ,
         Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
-        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif `endif
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
     )(Ifc_dcache);
 
     String dcache = "";
@@ -450,16 +450,16 @@ dataline ))
       Bit#(`paddr) phyaddr = truncate(req.address);
       Bool lv_access_fault = unpack(|upper_bits);
       Bit#(`causesize) lv_cause = req.access == 0?`Load_access_fault:`Store_access_fault;
-      `ifdef pmp
-        Bit#(2) pmp_access = req.access == 0 ? 0 : 1;
-        let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:pmp_access};
-        let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
-                                                pmp_cfg, pmp_addr);
-        if (!lv_access_fault && pmp_err)begin
-          lv_access_fault = True;
-          lv_cause = pmp_cause;
-        end
-      `endif
+    `endif
+    `ifdef pmp
+      Bit#(2) pmp_access = req.access == 0 ? 0 : 1;
+      let pmpreq = PMPReq{ address: phyaddr, access_type:pmp_access};
+      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+                                              pmp_cfg, pmp_addr);
+      if (!lv_access_fault && pmp_err)begin
+        lv_access_fault = True;
+        lv_cause = pmp_cause;
+      end
     `endif
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
