@@ -1,26 +1,6 @@
 /*
-Copyright (c) 2018, IIT Madras All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification, are permitted
-provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright notice, this list of conditions
-  and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright notice, this list of
-  conditions and the following disclaimer in the documentation and / or other materials provided
- with the distribution.
-* Neither the name of IIT Madras  nor the names of its contributors may be used to endorse or
-  promote products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
-OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
-IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
-OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
---------------------------------------------------------------------------------------------------
+see LICENSE.incore
+see LICENSE.iitm
 
 Author : Neel Gala
 Email id : neelgala@gmail.com
@@ -74,6 +54,9 @@ package dmem;
     method Bool mv_cacheable_store;
     method Bool mv_cache_available;
     method Bool mv_commit_store_ready;
+    (*always_ready, always_enabled*)
+    /*doc:method: method to recieve the current privilege mode of operation*/
+    method Action ma_curr_priv (Bit#(2) c);
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -83,20 +66,10 @@ package dmem;
     /*doc:method: method to receive the current satp csr from the core*/
     method Action ma_satp_from_csr (Bit#(`vaddr) s);
 
-    /*doc:method: method to recieve the current privilege mode of operation*/
-    method Action ma_curr_priv (Bit#(2) c);
-
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(`vaddr) m);
-    `ifdef pmp
-      /*doc:method: */
-      method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
-      /*doc:method: */
-      method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(`paddr)) pmpaddr);
-    `endif
     interface Get#(DCache_core_request#(`vaddr, TMul#(`dwords, 8), `desize)) get_hold_req;
   `endif
-
 `ifdef perfmonitors
   `ifdef dcache
     method Bit#(13) mv_dcache_perf_counters;
@@ -145,10 +118,15 @@ package dmem;
 `endif
 
   (*synthesize*)
-  module mkdmem#(parameter Bit#(32) id)(Ifc_dmem);
-    let dcache <- mkdcache(id);
+  module mkdmem#(parameter Bit#(32) id
+    `ifdef pmp ,
+        Vector#(`pmpsize, Bit#(8)) pmp_cfg, 
+        Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) pmp_addr `endif
+    )(Ifc_dmem);
+
+    let dcache <- mkdcache(id `ifndef supervisor `ifdef pmp ,pmp_cfg, pmp_addr `endif `endif );
   `ifdef supervisor
-    Ifc_fa_dtlb dtlb <- mkfa_dtlb(id);
+    Ifc_fa_dtlb dtlb <- mkfa_dtlb(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
   `endif
     interface put_core_req = interface Put
@@ -177,19 +155,20 @@ package dmem;
     method mv_cache_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
     method mv_commit_store_ready = `ifdef dcache dcache.mv_commit_store_ready `else True `endif ;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
-`ifdef supervisor
+    method Action ma_curr_priv (Bit#(2) c);
+    `ifdef supervisor
+      dtlb.ma_curr_priv(c);
+    `endif
+      dcache.ma_curr_priv(c);
+    endmethod
+  `ifdef supervisor
     interface get_ptw_resp = dcache.get_ptw_resp;
     interface get_req_to_ptw = dtlb.get_request_to_ptw;
     interface put_resp_from_ptw = dtlb.put_response_frm_ptw;
     method ma_satp_from_csr = dtlb.ma_satp_from_csr;
-    method ma_curr_priv = dtlb.ma_curr_priv;
     method ma_mstatus_from_csr = dtlb.ma_mstatus_from_csr;
-    `ifdef pmp
-      method ma_pmp_cfg = dtlb.ma_pmp_cfg;
-      method ma_pmp_addr = dtlb.ma_pmp_addr;
-    `endif
     interface get_hold_req = dcache.get_hold_req;
-`endif
+  `endif
 `ifdef perfmonitors
   `ifdef dcache
     method mv_dcache_perf_counters = dcache.mv_perf_counters;
