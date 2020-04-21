@@ -1190,7 +1190,7 @@ package nb_dcache;
 			wr_resp_to_core<= Resp_to_core { data: resp.data,
 																	     prf_index: ff_io_info.first.prf_index,
                                        rob: ff_io_info.first.rob,
-																	     exception: No_exception };
+																	     exception: resp.exception };
     endrule
 
 		interface subifc_req_from_core= toPut(ff_req_from_core);
