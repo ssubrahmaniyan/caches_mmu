@@ -52,7 +52,11 @@ package nb_dcache;
   `include "Logger.bsv"           // for logging
 	import FIFO::*;
 	import FIFOF::*;
+	import SEMF_FIFO::*;
+	import SESFMI_FIFO::*;
 	import ConfigReg::*;
+  import Vector::*;
+  import DReg::*;
 	import DefaultValue :: *;
 	import GetPut::*;
   import mem_config_nb::*;
@@ -159,6 +163,7 @@ package nb_dcache;
 	(*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
+  
 
 	module mknb_dcache#(parameter String alg)
 	//							 8,				 8,				 128,			4,		32,		 32,		32,		 32,		6,				 4
@@ -287,6 +292,8 @@ package nb_dcache;
 		for(Integer i=0; i<ways_val; i=i+1)
 			ff_first_stage_tag[i]<- mkBypassFIFO;
 		FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkFIFOF;
+		Ifc_SESFMI_FIFO#(2, Bool) cff_second_stage_valid <- mkSESFMI_second_stage_inst;
+		Ifc_SEMF_FIFO#(2, Bit#(rob_index)) cff_second_stage_rob_id <- mkSEMF_FIFO(0);
 		FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_info <- mkFIFO;
 
 		Reg#(Bool) rg_cache_busy <- mkConfigReg(True);	//TODO has to be reset depending upon when the leaf page is received
@@ -295,8 +302,7 @@ package nb_dcache;
 		Reg#(FB_state) rg_fb_state <- mkReg(defaultValue);
 		Reg#(Bit#(setbits)) rg_initialize_index <- mkReg(0);
 		Reg#(Bool) rg_initialize_done <- mkReg(False);
-		Reg#(Flush_type#(rob_index)) rg_flush[2] <- mkCReg(2, defaultValue);
-		Reg#(Bool) rg_mshr_flush_done <- mkReg(True);
+		Reg#(Flush_type#(rob_index)) rg_flush <- mkDReg(defaultValue);
 		Reg#(Bool) rg_fence <- mkReg(False);
 		Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
 		Reg#(Bit#(setbits)) rg_prev_fence_set_index <- mkConfigReg(0);
@@ -828,25 +834,20 @@ package nb_dcache;
 			wr_stage1_fb_deq<= lv_stage1_fb_deq;
 		endrule
 
-		rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq || wr_stage1_fb_deq_enq || wr_stage1_deq_enq);
-			`logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b stage1_deq_enq:%b ", wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_deq_enq))
-
-			ff_first_stage.deq;
-			for(Integer i = 0; i<ways_val; i = i+1) begin
-				ff_first_stage_tag[i].deq;
-			end
-		endrule
-
-		rule rl_enq_ff_second_stage;
+		rule rl_enq_ff_second_stage(!rg_flush.valid);
 			`logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
 			wr_stage1_deq_enq<= True;
 			ff_second_stage.enq(wr_stage2_enq);
+      cff_second_stage_rob_id.enq(wr_stage2_enq.rob);
+      cff_second_stage_valid.enq(True);
 		endrule
 
-		rule rl_fb_enq_ff_second_stage;
+		rule rl_fb_enq_ff_second_stage(!rg_flush.valid);
 			`logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
 			wr_stage1_fb_deq_enq<= True;
 			ff_second_stage.enq(wr_stage2_fb_enq);
+      cff_second_stage_rob_id.enq(wr_stage2_fb_enq.rob);
+      cff_second_stage_valid.enq(True);
 		endrule
 
 		rule rl_sram_resp_to_core;
@@ -859,15 +860,27 @@ package nb_dcache;
 			wr_resp_to_core<= wr_stage2_fb_resp_to_core;
 		endrule
 
-		rule rl_access_MSHRs;
+		rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq || wr_stage1_fb_deq_enq || wr_stage1_deq_enq);
+			`logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b wr_stage1_fb_deq_enq:%b stage1_deq_enq:%b ",
+      wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_fb_deq_enq, wr_stage1_deq_enq))
+
+			ff_first_stage.deq;
+			for(Integer i = 0; i<ways_val; i = i+1) begin
+				ff_first_stage_tag[i].deq;
+			end
+		endrule
+
+    //TODO Accessing MSHRs when no flush is happening. Can be optimised by by adding a should_flush fn
+    // and removing check for index 0 in rl_flush_ff_second_stage.
+		rule rl_access_MSHRs(!rg_flush.valid);
 			let req= ff_second_stage.first;
 			ff_second_stage.deq;
-			let flush= rg_flush[1];
+      req.rob= cff_second_stage_rob_id.first;
+      cff_second_stage_rob_id.deq;
+      cff_second_stage_valid.deq;
 
-			//If no flush, or when flush is happening, "req" is after flush in program order
-			//OR if fence && a store request
-			if( !(flush.valid && should_flush(flush.head, flush.flush_rob, req.rob))
-				  || (rg_fence && req.origin==Store_buffer) ) begin  
+			//If valid (not flushed) request OR if fence && a store request
+			if( cff_second_stage_valid.first || (rg_fence && req.origin==Store_buffer) ) begin  
 				let mshr_resp<- mshr.allocate(req);
 				if(mshr_resp matches tagged Valid .read_id) begin
 					Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
@@ -890,36 +903,18 @@ package nb_dcache;
 		//This rule resets the valid bit of rg_flush after a flush request is initiated.
 		//If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
     (*no_implicit_conditions, fire_when_enabled*)
-		rule rl_reset_rg_flush(rg_flush[0].valid);
-    //`ifdef atomic
-    //  if(tpl_1(rg_lr_info)) begin
-    //    if(should_flush(rg_flush[0].head, rg_flush[0].flush_rob, tpl_3(rg_lr_info))) begin
-    //      rg_lr_info<= {False, ?, ?};
-    //    end
-    //  end
-		//	else
-    //`endif
+		rule rl_flush_ff_second_stage(rg_flush.valid);
+			Vector#(2,Bool) valid= cff_second_stage_valid.contents;
+			Vector#(2,Bit#(rob_index)) rob_id= cff_second_stage_rob_id.contents;
 
-      if(!ff_second_stage.notEmpty) begin
-      //`ifdef atomic
-      //  if(rg_sc_fail) begin  //If SC has failed
-      //    let first_stage_info= ff_first_stage.first;
-      //    if(should_flush(rg_flush[0].head, rg_flush[0].flush_rob, first_stage_info.rob_index)) begin
-      //      rg_sc_fail<= False;
-      //    end
-      //  end
-      //`endif
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, rob_id[0]) && valid[0])
+        valid[0]= False;
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, rob_id[1]) && valid[1])
+        valid[1]= False;
 
-				rg_flush[0].valid<= False;
-				`logLevel( dcache, 2, $format("DCACHE : ff_second_stage empty. Finishing flush"))
-			end
-		endrule
-
-		//This rule executes in the next cycle after a flush is received. This sends the flush signal to
-		//the MSHRs.
-		rule rl_flush_mshr(rg_flush[0].valid && !rg_mshr_flush_done);
-			mshr.flush(rg_flush[0]);
-			rg_mshr_flush_done<=True;
+			cff_second_stage_valid.initialize(valid);
+			`logLevel( dcache, 2, $format("DCACHE : Flusing everything! valid: %h", valid ))
+			mshr.flush(rg_flush);
 		endrule
 
 		rule rl_MSHR_req;
@@ -1237,18 +1232,16 @@ package nb_dcache;
 		interface subifc_IO_req= toGet(ff_io_req);
     interface subifc_IO_resp= toPut(ff_io_resp);
 
-		//Cache is busy if a PTW is ongoing, or, (if a flush is ongoing and entries in ff_second_stage
-		//have not been resolved yet.
+		//Cache is busy if a PTW is ongoing, or, for a failed atomic op for one cycle, OR cache is full 
 		method Bool cache_busy;
 			return (rg_cache_busy || !ff_req_from_core.notFull);
 		endmethod
 
-		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(rg_flush[0].valid==False);
+		method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
 			let flush_signal= Flush_type {valid: True,
 																		head: head,
 																		flush_rob: flush_rob };
-			rg_mshr_flush_done<= False;
-			rg_flush[0]<= flush_signal;
+			rg_flush<= flush_signal;
 		endmethod
 
 	endmodule
