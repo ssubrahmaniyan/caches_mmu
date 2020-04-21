@@ -116,7 +116,7 @@ package mshr;
 		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
 			//(*preempts= "flush, (cff_valid[i].incCtr, cff_valid[i].decCtr, cff_valid[i].both) "*)
-			cff_valid[i] <- mkSESFMI_inst;
+			cff_valid[i] <- mkSESFMI_mshr_inst;
 			cff_rob[i] <- mkSEMF_FIFO(0);
 		end
 

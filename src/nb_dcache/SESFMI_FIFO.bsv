@@ -120,9 +120,17 @@ package SESFMI_FIFO;
 
   (*synthesize*)
 	(*preempts="initialize, (decCtr, incCtr, both)"*)
-	module mkSESFMI_inst(Ifc_SESFMI_FIFO#(`Mshrfifo_depth, Bit#(1)));
+	module mkSESFMI_mshr_inst(Ifc_SESFMI_FIFO#(`Mshrfifo_depth, Bit#(1)));
     let ifc();
     mkSESFMI_FIFO#(0) _temp(ifc);
+    return (ifc);
+  endmodule
+
+  (*synthesize*)
+	(*preempts="initialize, (decCtr, incCtr, both)"*)
+	module mkSESFMI_second_stage_inst(Ifc_SESFMI_FIFO#(2, Bool));
+    let ifc();
+    mkSESFMI_FIFO#(False) _temp(ifc);
     return (ifc);
   endmodule
 
