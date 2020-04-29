@@ -73,7 +73,9 @@ package fill_buffer;
                   Add#(h__, 32, data),
                   Add#(i__, lineoffset, paddr),
                   `endif
-									Add#(num_chunksbits, j__, lineoffset)//to find fb_index for first mem_response
+									Add#(num_chunksbits, j__, lineoffset),//to find fb_index for first mem_response
+									Add#(k__, 16, data),
+									Add#(l__, 8, data)
 								);
 
 		let paddr_val= valueOf(paddr);
@@ -107,7 +109,7 @@ package fill_buffer;
 			return writedata;
 		endfunction
 
-		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(2) size)
+		function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size)
       provisos(Add#(z__, datawidth, linewidth),
 							Add#(aa_, 8, datawidth),
 							Add#(bb_, 16, datawidth),
