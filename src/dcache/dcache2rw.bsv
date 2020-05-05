@@ -28,8 +28,9 @@ package dcache2rw;
   import dcache_types :: * ;
   import dcache_lib :: * ;
   import replacement_dcache :: * ;
-  import mem_config :: * ;
+`ifdef supervisor
   import common_tlb_types:: * ;
+`endif
 `ifdef dcache_ecc
   import ecc_hamming :: * ;
 `endif
@@ -793,7 +794,9 @@ dataline ))
       let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = req.access == 0? `Load_access_fault: `Store_access_fault;
-      let lv_response = DMem_core_response{word:truncate(response.data), trap: response.err,
+      Bit#(`wordbits) word_offset = truncate(req.address);
+      let response_word = response.data >> {word_offset,3'b0};
+      let lv_response = DMem_core_response{word:response_word, trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
       wr_nc_state <= Hit;

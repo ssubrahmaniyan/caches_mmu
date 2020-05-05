@@ -147,7 +147,9 @@ package icache;
   import icache_lib :: * ;
   import replacement_icache :: * ;
   import mem_config :: * ;
+`ifdef supervisor
   import common_tlb_types:: * ;
+`endif
   import ecc_hamming :: * ;
   import io_func :: * ;
 `ifdef pmp
@@ -652,7 +654,7 @@ package icache;
                                          v_blockbits + v_wordbits];
       let lv_io_req = isIO(phyaddr, wr_cache_enable);
       let burst_len = lv_io_req?0:(v_blocksize/valueOf(TDiv#(`ibuswidth,`respwidth)))-1;
-      Bit#(3) burst_size = fromInteger(valueOf(TLog#(TDiv#(`ibuswidth,8))));
+      Bit#(3) burst_size = lv_io_req?2:fromInteger(valueOf(TLog#(TDiv#(`ibuswidth,8))));
       let shift_amount = valueOf(TLog#(TDiv#(`ibuswidth,8)));
       Bit#(`paddr) blockmask = '1 << shift_amount;
       // allocate a pending req which points to the new fb entry that is allotted.
@@ -711,7 +713,9 @@ package icache;
       let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault ;
-      let lv_response = IMem_core_response{word:truncate(response.data), trap: response.err,
+      Bit#(TLog#(TDiv#(`ibuswidth,8))) word_offset = truncate(req.address);
+      let response_word = response.data >> {word_offset,3'b0};
+      let lv_response = IMem_core_response{word:truncate(response_word), trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
       wr_nc_state <= Hit;

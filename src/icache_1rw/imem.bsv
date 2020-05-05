@@ -21,13 +21,13 @@ package imem;
   import icache_types::*;
   import io_func::*;
   `include "icache.defines"
-  `include "common_tlb.defines"
 `ifdef icache
   import icache :: *;
 `else
   import null_icache :: *;
 `endif
 `ifdef supervisor
+  `include "common_tlb.defines"
   import fa_itlb :: * ;
   import common_tlb_types :: * ;
 `endif
