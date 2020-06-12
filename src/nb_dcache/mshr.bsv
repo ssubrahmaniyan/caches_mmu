@@ -54,7 +54,8 @@ package mshr;
 		method Action ack_from_fb;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
-		method Bool not_empty;
+		(*always_ready*) method Bool not_empty;
+    (*always_ready, always_enabled*) method Action fb_released;
 	endinterface
 
 	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
@@ -104,6 +105,7 @@ package mshr;
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
+    Wire#(Bool) wr_fb_released <- mkDWire(False);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -141,10 +143,13 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-				else begin	//An MSHR should be invalidated only after the FB has been released
+				else if(wr_fb_released) begin	//An MSHR should be invalidated only after the FB has been released
 					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
+        else begin
+					`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
+        end
 			end
 		endrule
 
@@ -348,6 +353,10 @@ package mshr;
 		method Bool not_empty;
 			return mshr_not_empty;
 		endmethod
+
+    method Action fb_released;
+      wr_fb_released<= True;
+    endmethod
 	endmodule
 
   (*synthesize*)

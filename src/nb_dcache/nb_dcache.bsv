@@ -163,7 +163,6 @@ package nb_dcache;
   (*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
-  
 
   module mknb_dcache#(parameter String alg)
   //               8,         8,         128,      4,    32,     32,    32,     32,    6,         4
@@ -937,7 +936,6 @@ package nb_dcache;
       fill_buffer.addr_from_MSHR_to_fb(mshr.addr_to_fb);
     endrule
 
-
     //This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
     //This rule polls the MSHR with the rid of memory response to know if any pending requests to that
     //rid exists in the MSHR FIFOs. Also, when there is no read response from memory, the MSHR sends
@@ -1063,7 +1061,7 @@ package nb_dcache;
     //cycle where this rule is getting executed, the request from ff_first_stage is serviced.
     rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
       fill_buffer.release_fb;
-      //mshr.fb_released;
+      mshr.fb_released;
       rg_fb_state<= Read_SRAMs;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
     endrule
@@ -1167,13 +1165,9 @@ package nb_dcache;
         rg_sc_fail<= False;
       `endif
       `logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
-      wr_resp_to_core<= Resp_to_core { data: ?,
-                                         prf_index: ?,
-                                       rob: rg_fence_rob,
-                                         exception: No_exception };
     endrule
 
-    rule rl_send_io_request(!rg_io_req_sent);
+    rule rl_send_io_request(!rg_io_req_sent); //TODO should this rule have !rg_fence?
       let req= ff_io_info.first;
       ff_io_req.enq(IO_Req { addr: req.addr,
                              size: req.access_size,
