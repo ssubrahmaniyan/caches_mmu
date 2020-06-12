@@ -24,7 +24,7 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Author: Arjun Menon
 Email id: c.arjunmenon@gmail.com
-Details:
+Details: Refer the design doc.
 
 --------------------------------------------------------------------------------------------------
 TODO
@@ -72,20 +72,20 @@ package nb_dcache;
 
   String dcache=""; // defined for Logger
    
-  interface Ifc_nbdcache#(numeric type wordsize,  //size of data in bytes 
-                          numeric type linesize,  //number of words in a cache line
-                          numeric type setsize,    //number of sets
-                          numeric type ways,      //number of ways
-                          numeric type paddr,      //physical address width in bits
-                          numeric type vaddr,      //virtual address width in bits
-                          numeric type dsram,      //no. of bits in a row of SRAM cells for the data array
-                          numeric type tsram,      //no. of bits in a row of SRAM cells for the tag array
-                          numeric type prf_index,  //no. of bits to index the prf
-                          numeric type id_bits,    //no. of bits of the bus transaction id
-                          numeric type mshrsize,  //no. of fully associative entries in the mshr
+  interface Ifc_nbdcache#(numeric type wordsize,        //size of data in bytes 
+                          numeric type linesize,        //number of words in a cache line
+                          numeric type setsize,         //number of sets
+                          numeric type ways,            //number of ways
+                          numeric type paddr,           //physical address width in bits
+                          numeric type vaddr,           //virtual address width in bits
+                          numeric type dsram,           //no. of bits in a row of SRAM cells for the data array
+                          numeric type tsram,           //no. of bits in a row of SRAM cells for the tag array
+                          numeric type prf_index,       //no. of bits to index the prf
+                          numeric type id_bits,         //no. of bits of the bus transaction id
+                          numeric type mshrsize,        //no. of fully associative entries in the mshr
                           numeric type mshrfifo_depth,  //depth of FIFO corresponding to each MSHR
-                          numeric type buswidth,
-                          numeric type rob_index);  //width of the bus in bits
+                          numeric type buswidth,        //width of the bus in bits
+                          numeric type rob_index);      //Log of number of ROB entries
     interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_from_core;
     interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index))           subifc_resp_to_core;
     interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index))  subifc_req_to_ptw;
@@ -100,41 +100,6 @@ package nb_dcache;
     method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
     method Bool cache_busy;
   endinterface
-
-//  (*synthesize*)
-//  module dataarr(Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram));
-//    let ifc();
-//    mkmem_config1r1w#(False) _temp(ifc);
-//    return ifc;
-//  endmodule
-//
-//  (*synthesize*)
-//  module tagarr(Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram));
-//    let ifc();
-//    mkmem_config1r1w#(False) _temp(ifc);
-//    return ifc;
-//  endmodule
-//
-//  (*synthesize*)
-//  module fillbuffer(Ifc_fill_buffer#(`Paddr, TMul#(`Wordsize, 8), `Buswidth, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Wordsize));
-//    let ifc();
-//    mkfill_buffer _temp(ifc);
-//    return ifc;
-//  endmodule
-//
-  //(*synthesize*)
-  //module mshrmod(Ifc_mshr#(`Paddr, TMul#(`Linesize, TMul#(`Wordsize, 8)), TMul#(`Wordsize, 8), `Mshrsize, `Mshrfifo_depth));
-  //  let ifc();
-  //  mkmshr _temp(ifc);
-  //  return ifc;
-  //endmodule
-
-  //(*synthesize*)
-  //module replace(Ifc_replace#(`Setsize, `Ways));
-  //  let ifc();
-  //  mkreplace#("PLRU") _temp(ifc);
-  //  return ifc;
-  //endmodule
 
   (*preempts = "rl_MSHR_req_to_fill_buffer, rl_stage2_req_to_fb"*)
   (*preempts = "rl_MSHR_resp_to_core, rl_stage2_fb_resp_to_core"*)
@@ -166,9 +131,8 @@ package nb_dcache;
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, (rl_access_fault_response_to_core, rl_sc_fail_response_to_core, rl_sram_resp_to_core, rl_stage2_fb_resp_to_core, rl_MSHR_resp_to_core, rl_receive_IO_resp) "*) 
 
   module mknb_dcache#(parameter String alg)
-  //               8,         8,         128,      4,    32,     32,    32,     32,    6,         4
+  //                  8,        8,      128,     4,    32,    32,    32,    32,      6,         4,       4,          3,           128,        7
     (Ifc_nbdcache#(wordsize, linesize, setsize, ways, paddr, vaddr, dsram, tsram, prf_index, id_bits, mshrsize, mshrfifo_depth, buswidth, rob_index))
-  // 4,         3,               128
     provisos(
       Log#(wordsize, wordbits),
       Mul#(wordsize, 8, datawidth),          //64 datawidth is the total bits in a word
@@ -189,15 +153,7 @@ package nb_dcache;
       Add#(h__, buswidth, linewidth),
       Add#(i__, datawidth, linewidth),
       Add#(j__, lineoffset,  paddr),
-      //Add#(k__, TDiv#(TAdd#(tagbits, 2), tsram), TAdd#(tagbits, 2)),
       Add#(l__, TLog#(ways), 4),            //required by the mkreplace module
-      //Mul#(TDiv#(TAdd#(tagbits, 2), tsram), tsram, TAdd#(tagbits, 2)),
-      //Add#(l__, TDiv#(linewidth, dsram), linewidth),
-      //Add#(m__, TSub#(TAdd#(tagbits, 2), TMul#(tsram, TDiv#(TAdd#(tagbits, 2),tsram))), tsram),
-      //Add#(n__, tsram, TAdd#(tagbits, 2)),
-      //Add#(o__, TSub#(linewidth, TMul#(dsram, TDiv#(linewidth, dsram))), dsram),
-      //Add#(p__, dsram, linewidth)
-      //Mul#(TDiv#(linewidth, dsram), dsram, linewidth)
       Mul#(m__, 8, linewidth),            //for generate_masked_data fn in FB
       Mul#(n__, 16, linewidth),            //for generate_masked_data fn in FB
       Mul#(o__, 32, linewidth),            //for generate_masked_data fn in FB
@@ -254,18 +210,6 @@ package nb_dcache;
       data_arr[i] <- mkmem_config1r1w(False, "data");
       tag_arr[i] <- mkmem_config1r1w(False, "tag");
     end
-
-    //Ifc_mem_config1r1w#(`Setsize, TMul#(`Linesize, TMul#(`Wordsize, 8)), `Dsram) data_arr [ways_val];         // data array
-    //Ifc_mem_config1r1w#(`Setsize, TAdd#(TSub#(`Paddr, TAdd#(TLog#(TMul#(`Linesize, TMul#(`Wordsize, 8))), TLog#(`Setsize))), 2), `Tsram) tag_arr [ways_val]; // extra valid and dirty bits
-    //Ifc_tlb#(vaddr, paddr) tlb <-mktlb;
-    //let fill_buffer <-fillbuffer;
-    //let mshr <-mshrmod;
-    //let repl <-replace;
-
-    //for(Integer i = 0;i<ways_val;i = i+1)begin
-    //  data_arr[i] <-dataarr;
-    //  tag_arr[i] <- tagarr;
-    //end
 
     ////////////////////////////// Interface signals ///////////////////////////////////////////////
     //These handle the interface signals
@@ -344,17 +288,11 @@ package nb_dcache;
                                                duplicate(core_data);
       Bit#(linewidth) mask = zeroExtend(temp);
       mask = mask<<{line_offset,3'd0};
-      //Bit#(wordbits) word_offset= truncate(line_offset);
-      //Bit#(datawidth) data_to_write = core_data << {word_offset,3'd0};
       Bit#(linewidth) writedata= (mask & data_to_mask) | (~mask & sram_data);
       return writedata;
     endfunction
 
     function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size);
-      //Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
-      //                       size[1 : 0] == 1?'hFFFF : 
-      //                       size[1 : 0] == 2?'hFFFFFFFF : '1;
-
       line = line>>{line_offset,3'd0};
       Bit#(datawidth) readdata= truncate(line);
       Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
@@ -1062,7 +1000,6 @@ package nb_dcache;
     //cycle where this rule is getting executed, the request from ff_first_stage is serviced.
     rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
       fill_buffer.release_fb;
-      //mshr.fb_released;
       rg_fb_state<= Read_SRAMs;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
     endrule
@@ -1195,25 +1132,13 @@ package nb_dcache;
     endrule
 
     interface subifc_req_from_core= toPut(ff_req_from_core);
-
     interface subifc_resp_to_core= toGet(wr_resp_to_core);
-    //interface Get#(Resp_to_core#(datawidth, prf_index)) subifc_resp_to_core;
-    //  method ActionValue#(Resp_to_core#(datawidth, prf_index)) get;
-    //    return wr_resp_to_core;
-    //  endmethod
-    //endinterface
-
     interface subifc_req_to_ptw= toGet(wr_req_to_ptw);
-
     interface subifc_ptw_meta= dtlb.ptw_meta;
-
     interface subifc_response_frm_ptw= dtlb.response_frm_ptw;
-  //    method ActionValue#((Cache_req#(vaddr, datawidth, prf_index))) get;
-  //      return wr
     interface subifc_read_req_to_mem= toGet(ff_read_req_to_mem);
 
     interface subifc_read_resp_from_mem= interface Put
-    //interface Put#(Read_resp_from_mem#(data, id_bits)) subifc_read_resp_from_mem;
       method Action put(Read_resp_from_mem#(buswidth, id_bits) resp);
         wr_read_resp_from_mem<= resp;
         `logLevel( dcache, 2, $format("DCACHE : Read response from mem: ", fshow(resp)))
@@ -1223,11 +1148,6 @@ package nb_dcache;
     endinterface;
 
     interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
-    //interface Get#(Write_req_to_mem#(vaddr, data)) subifc_write_req_to_mem;
-    //  method ActionValue#(Write_req_to_mem) get;
-    //    return wr_write_req_to_mem;
-    //  endmethod
-    //endinterface
 
     interface subifc_write_resp_from_mem= interface Put
       method Action put(Bool resp);

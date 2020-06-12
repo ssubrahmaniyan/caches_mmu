@@ -23,6 +23,8 @@ IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISI
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------------------------
 
+Author: Arjun Menon
+Email id: c.arjunmenon@gmail.com
 Details: Unguarded Single Enqueue and Dequeue, multiple first FIFO.
 
 --------------------------------------------------------------------------------------------------

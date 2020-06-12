@@ -84,13 +84,6 @@ package nb_dcache_types;
     Bit#(5) atomic_fn;
     `endif
 	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
-	//instance DefaultValue#(Cache_req#(addr, data, rob_index));
-	//	defaultValue= Cache_req {	addr: 'd0,
-	//														access_size: 'd3,
-	//														payload: 'd0,
-	//														origin: defaultValue,
-	//														rob: 'd0}; 
-	//endinstance
 	
 	typedef enum {No_exception, Load_access_fault, Store_access_fault} DCache_exception deriving (Bits, Eq, FShow);	//TODO check if No_exception can be removed
 	instance DefaultValue#(DCache_exception);
@@ -132,13 +125,6 @@ package nb_dcache_types;
 		Bit#(data) data;
 		Bool is_burst;
 	} Write_req_to_mem#(numeric type addr, numeric type data) deriving (Bits, Eq, FShow);
-
-	//typedef struct {
-	//	Bool is_hit;
-	//	Bool is_fault;
-	//	Bit#(addr) paddr;
-	//	Bool is_io;
-	//} Resp_from_tlb#(numeric type addr) deriving (Bits, Eq, FShow);
 
 	typedef struct {
 		Bool valid;

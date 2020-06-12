@@ -31,7 +31,7 @@ Details:
 package mshr;
   import nb_dcache_types::*; 	         
 	import DefaultValue :: *;
-  `include "Logger.bsv"           // for logging
+  `include "Logger.bsv"
 	import FIFO::*;
 	import FIFOF::*;
 	import ConfigReg::*;
@@ -55,12 +55,8 @@ package mshr;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
-    //(*always_ready, always_enabled*) method Action fb_released;
 	endinterface
 
-	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
-	//(*preempts= "cff_valid.initialize, (cff_valid.incCtr, cff_valid.decCtr, cff_valid.both) "*)
-  //(*execution_order="rl_deq_ff, ack_from_fb"*)
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index, prf_index))
 				 provisos ( Add#(addr_in_mshr, linewidthbits, paddr),
 				 						Add#(mshrfifo_depth, 0, `Mshrfifo_depth),
@@ -104,7 +100,6 @@ package mshr;
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
-    Wire#(Bool) wr_fb_released <- mkDWire(False);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -116,7 +111,6 @@ package mshr;
 		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) cff_valid [mshrsize_val];
 		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
-			//(*preempts= "flush, (cff_valid[i].incCtr, cff_valid[i].decCtr, cff_valid[i].both) "*)
 			cff_valid[i] <- mkSESFMI_mshr_inst;
 			cff_rob[i] <- mkSEMF_FIFO(0);
 		end
@@ -349,9 +343,6 @@ package mshr;
 			return mshr_not_empty;
 		endmethod
 
-    //method Action fb_released;
-    //  wr_fb_released<= True;
-    //endmethod
 	endmodule
 
   (*synthesize*)
