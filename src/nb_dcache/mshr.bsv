@@ -55,7 +55,7 @@ package mshr;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
-    (*always_ready, always_enabled*) method Action fb_released;
+    //(*always_ready, always_enabled*) method Action fb_released;
 	endinterface
 
 	//(* conflict_free= "ack_from_fb, rl_deq_ff"*)
@@ -101,7 +101,6 @@ package mshr;
 
 		FIFOF#(MSHR_FIFO#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
-		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
@@ -143,13 +142,10 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-				else if(wr_fb_released) begin	//An MSHR should be invalidated only after the FB has been released
-					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
-					rg_mshr_valid[curr_fb_id]<= False;
+        else begin 
+	  			`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
+		  		rg_mshr_valid[curr_fb_id]<= False;
 				end
-        else begin
-					`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
-        end
 			end
 		endrule
 
@@ -162,6 +158,7 @@ package mshr;
 			cff_valid[id].deq;
 		endrule
 
+    //TODO This wait state can be removed?
 		rule rl_done_fencing(!rg_wait_state && rg_fence && !mshr_not_empty);
 			rg_wait_state<= True;
 		endrule
@@ -171,6 +168,8 @@ package mshr;
 			rg_wait_state<= False;
 		endrule
 
+    //TODO can be optimized by changing one_mshr_fifo_full to checking only if the fifo corresponding 
+    //to the mshr that is being allocated is full
 		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req)
 												if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
@@ -188,8 +187,6 @@ package mshr;
 					mshr_unallocated_id= fromInteger(i);
 				end
 			end
-			if(mshr_allocated)
-				wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
 
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
@@ -209,7 +206,8 @@ package mshr;
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
 			end
-			else if(mshr_allocated) begin
+			else begin
+				wr_allocate_id<= tagged Valid mshr_allocated_id;
 				ff_mshr[mshr_allocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 																									access_size: req.access_size,
 																									payload: req.payload,
@@ -219,9 +217,6 @@ package mshr;
                                                   `endif });
 				cff_rob[mshr_allocated_id].enq(req.rob);
 				cff_valid[mshr_allocated_id].enq(1'b1);
-				return tagged Invalid;
-			end
-			else begin
 				return tagged Invalid;
 			end
 		endmethod
@@ -288,10 +283,10 @@ package mshr;
 						wr_deq_ff_id<= tagged Valid curr_rid;
 					end
 				end
-				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_curr_req_mshr_id
+				//curr_id is being serviced right now, but ff_mshr[curr_rid] is empty, then check if wr_allocate_id
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
 				//so that in the next cycle it will be assigned the value
-				else if(wr_curr_req_mshr_id matches tagged Valid .curr_req_rid &&& curr_req_rid==curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
+				else if(wr_allocate_id matches tagged Valid .curr_req_rid &&& curr_req_rid==curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
 					`logLevel( dcache, 2, $format("MSHR : New req from ff_second_stage to existing MSHR of id: %d", curr_rid))
 				end
 				else begin
@@ -354,9 +349,9 @@ package mshr;
 			return mshr_not_empty;
 		endmethod
 
-    method Action fb_released;
-      wr_fb_released<= True;
-    endmethod
+    //method Action fb_released;
+    //  wr_fb_released<= True;
+    //endmethod
 	endmodule
 
   (*synthesize*)
