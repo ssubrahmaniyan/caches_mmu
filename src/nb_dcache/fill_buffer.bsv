@@ -133,7 +133,9 @@ package fill_buffer;
 
     `ifdef atomic
     function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded)
-      provisos(Add#(z__, 32, datawidth));
+      provisos(Add#(cc__, 32, datawidth),
+							 Add#(bb_, 16, datawidth),
+               Add#(aa_, 8, datawidth));
       Bit#(datawidth) op1 = loaded;
       Bit#(datawidth) op2 = rs2;
       if(op[4] == 0)begin

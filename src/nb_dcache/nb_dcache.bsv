@@ -128,7 +128,7 @@ package nb_dcache;
   (*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
-  (*preempts = "rl_SRAM_and_MSHR_done_fencing, (rl_access_fault_response_to_core, rl_sc_fail_response_to_core, rl_sram_resp_to_core, rl_stage2_fb_resp_to_core, rl_MSHR_resp_to_core, rl_receive_IO_resp) "*) 
+  (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
 
   module mknb_dcache#(parameter String alg)
   //                  8,        8,      128,     4,    32,    32,    32,    32,      6,         4,       4,          3,           128,        7
@@ -354,7 +354,7 @@ package nb_dcache;
     endfunction
 
     function Cache_DTLB_request#(vaddr) convert_core_to_tlb_req(Req_from_core#(vaddr, datawidth, rob_index, prf_index) core_req);
-      Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;  //TODO add atomic support
+      Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;
 
       Cache_DTLB_request#(vaddr) dtlb_req= Cache_DTLB_request { address: core_req.addr,
                                                              access: access,
@@ -364,7 +364,7 @@ package nb_dcache;
       return dtlb_req;
     endfunction
 
-    function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
+    function Bool is_IO(Bit#(vaddr) addr);
       if(addr < 'h2000) begin
         return False;
       end
@@ -484,11 +484,13 @@ package nb_dcache;
         rg_fence_rob<= core_req.rob;
         rg_SRAM_fence[0]<= True;
         rg_cache_busy<= True;
+        `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
       end
       else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
         `logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
         if(resp_from_tlb.trap) begin  //Access fault
           rg_cache_busy<= True;
+          `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
           rg_access_fault_response<= tuple3(resp_from_tlb.exception, core_req.prf_index, core_req.rob);
         end
         else begin  //Access is valid
@@ -525,6 +527,7 @@ package nb_dcache;
             rg_sc_fail<= True;
             rg_access_fault_response<= tuple3(defaultValue, core_req.prf_index, core_req.rob);
             rg_cache_busy<= True;
+            `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
           end
         `endif
         end
@@ -875,6 +878,7 @@ package nb_dcache;
       fill_buffer.addr_from_MSHR_to_fb(mshr.addr_to_fb);
     endrule
 
+
     //This will fire only in those clock cycles when MSHR wants to send a R/W req to FB
     //This rule polls the MSHR with the rid of memory response to know if any pending requests to that
     //rid exists in the MSHR FIFOs. Also, when there is no read response from memory, the MSHR sends
@@ -1000,6 +1004,7 @@ package nb_dcache;
     //cycle where this rule is getting executed, the request from ff_first_stage is serviced.
     rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
       fill_buffer.release_fb;
+      mshr.fb_released;
       rg_fb_state<= Read_SRAMs;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
     endrule
@@ -1008,8 +1013,8 @@ package nb_dcache;
 
     //This rule fires whent the fill buffer is ready to be released.
     //Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
-    //in Write_SRAMs state, the fence should begin only after rg_fb_state becomes Read_SRAMs.
-    //Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
+    //in Write_SRAMs state, the fence should begin only after the current fb entry is written to the cache.
+    //TODO Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
     rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1);
       let data= tpl_2(fill_buffer.data);
       let line_addr= fill_buffer.line_addr;
@@ -1020,6 +1025,14 @@ package nb_dcache;
       ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                 data: data,
                                                 is_burst: True });
+
+      //The fill buffer entry can be released once the req has been enqueued in ff_write_req_to_mem.
+      //We need not wait for the write response for the fence to proceed, as whenever write response
+      //is received, it is automatically dequeued from the FIFO and discarded.
+      //The MSHR should also be acknowledged about the FB entry release so that it can free-up the
+      //MSHR entry.
+      fill_buffer.release_fb;
+      mshr.fb_released;
       `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
     endrule
 
@@ -1095,7 +1108,18 @@ package nb_dcache;
       end
     endrule
 
-    rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty);
+    //This rule will fire once fence operation has finished. The rg_fence register indicates that
+    //a fence operation is ongoing. !rg_SRAM_fence indicates that all entries in the SRAM have
+    //finished fencing. !mshr.no_empty indicates that there are no pending requests in the MSHR.
+    //!rg_io_req_sent indicates that there are no pending IO responses.
+    //rg_io_req_sent indicates that an IO request has been sent. In this implementation, we wait for
+    //the IO response before finishing fence operation. Though this can be avoided, currently it is 
+    //required as both, this rule, and rule rl_receive_IO_resp write into wr_resp_to_core.
+    //Also, the fill buffer need NOT be checked as if there are any entries in the fill buffer,
+    //mshr will not be empty. Moreover, the pending responses for the write requests that were
+    //issued from the fill buffer will automatically be received (even after fence is done) and 
+    //discarded.
+    rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty && !rg_io_req_sent);
       rg_cache_busy<= False;
       rg_fence<= False;
       rg_prev_fence_set_index<= 0;
@@ -1103,14 +1127,15 @@ package nb_dcache;
         rg_lr_info<= tuple3(False, ?, ?);
         rg_sc_fail<= False;
       `endif
-      `logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
+
       wr_resp_to_core<= Resp_to_core { data: ?,
                                        prf_index: ?,
                                        rob: rg_fence_rob,
                                        exception: No_exception };
+      `logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
     endrule
 
-    rule rl_send_io_request(!rg_io_req_sent); //TODO should this rule have !rg_fence?
+    rule rl_send_io_request(!rg_io_req_sent && !rg_fence); //TODO should this rule have !rg_fence?
       let req= ff_io_info.first;
       ff_io_req.enq(IO_Req { addr: req.addr,
                              size: req.access_size,
@@ -1119,11 +1144,18 @@ package nb_dcache;
       rg_io_req_sent<= True;
     endrule
 
+    //Currently, once an IO request is obtained, rg_cache_busy is asserted. This can be optimised in 
+    //the future versions
     rule rl_receive_IO_resp(rg_cache_busy && rg_io_req_sent);
       let resp= ff_io_resp.first;
       ff_io_resp.deq;
       ff_io_info.deq;
-      rg_cache_busy<= False;
+      //In this implementation, the fence finishes only after receiving any pending IO responses.
+      //Hence, if an IO response is received in the middle of a fence request, rg_cache_busy should
+      //remain True until the fence operation is over.
+      if(!rg_fence) begin
+        rg_cache_busy<= False;
+      end
       rg_io_req_sent<= False;
       wr_resp_to_core<= Resp_to_core { data: resp.data,
                                        prf_index: ff_io_info.first.prf_index,

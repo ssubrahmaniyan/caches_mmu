@@ -55,6 +55,7 @@ package mshr;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
+    (*always_ready, always_enabled*) method Action fb_released;
 	endinterface
 
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index, prf_index))
@@ -97,9 +98,11 @@ package mshr;
 
 		FIFOF#(MSHR_FIFO#(linewidthbits, data)) ff_mshr [mshrsize_val];
 
+		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_curr_req_mshr_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
+    Wire#(Bool) wr_fb_released <- mkDWire(False);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -136,10 +139,13 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-        else begin 
-	  			`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
-		  		rg_mshr_valid[curr_fb_id]<= False;
+				else if(wr_fb_released) begin	//An MSHR should be invalidated only after the FB has been released
+					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
+					rg_mshr_valid[curr_fb_id]<= False;
 				end
+        else begin
+					`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
+        end
 			end
 		endrule
 
@@ -181,6 +187,8 @@ package mshr;
 					mshr_unallocated_id= fromInteger(i);
 				end
 			end
+			if(mshr_allocated)
+				wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
 
 			if(!mshr_allocated) begin
 				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
@@ -343,6 +351,9 @@ package mshr;
 			return mshr_not_empty;
 		endmethod
 
+    method Action fb_released;
+      wr_fb_released<= True;
+    endmethod
 	endmodule
 
   (*synthesize*)
