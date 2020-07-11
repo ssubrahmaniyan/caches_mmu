@@ -69,7 +69,8 @@ unsigned='unsigned'
 
 maxaddr=4294967295
 
-nibbles=int(math.ceil((addr_width+8+bus_width)/4))
+#nibbles=int(math.ceil((addr_width+8+bus_width)/4))
+nibbles=0
 test_file=open('test.mem','w')
 gold_file=open('gold.mem','w')
 miss='0\n'
