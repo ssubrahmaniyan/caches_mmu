@@ -84,13 +84,14 @@ package test_caches;
         Bit#(TAdd#(3,TLog#(wordsize))) shift={addr[v_wordbits-1:0],3'b0};
         let temp = loaded_data>>shift;
         Bit#(respwidth) response_word = case (size)
-            'b000: zeroExtend(temp[7:0]);
-            'b001: zeroExtend(temp[15:0]);
-            'b010: zeroExtend(temp[31:0]);
+            'b000: signExtend(temp[7:0]);
+            'b001: signExtend(temp[15:0]);
+            'b010: signExtend(temp[31:0]);
+            'b011: signExtend(temp[63:0]);
             'b100: zeroExtend(temp[7:0]);
             'b101: zeroExtend(temp[15:0]);
             'b110: zeroExtend(temp[31:0]);
-            'b100: zeroExtend(temp[63:0]);
+            'b111: zeroExtend(temp[63:0]);
             default: temp;
           endcase;
 
