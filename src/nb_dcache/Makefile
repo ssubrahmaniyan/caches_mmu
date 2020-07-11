@@ -14,8 +14,9 @@ default: link_verilator simulate
 .PHONY: compile
 compile:
 	@echo Compiling...
+	@mkdir -p verilog inter
 	#bsc -u -sim -simdir inter -bdir inter -D simulate=True -info-dir inter -keep-fires -p .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:./../../../common_bsv:./../../tb -g $(TOP_MODULE)  ../../tb/$(TOP_FILE) 
-	bsc -u -verilog -elab -vdir verilog -bdir inter -D simulate=True -D XLEN=64 -D asidwidth=4 -D dtlbsize=8  +RTS -K1000M -RTS -info-dir inter -suppress-warnings G0020 -keep-fires -p .:%/Prelude:%/Libraries:%/Libraries/BlueNoC:./../../../common_bsv:./../../tb -g $(TOP_MODULE) ../../tb/$(TOP_FILE)
+	bsc -u -verilog -elab -vdir verilog -bdir inter -D simulate=True -D XLEN=64 -D asidwidth=4 -D dtlbsize=8  +RTS -K1000M -RTS -info-dir inter -suppress-warnings G0020 -keep-fires -p .:%/Prelude:%/Libraries:../../../common_bsv:../../tb -g $(TOP_MODULE) ../../tb/$(TOP_FILE)
 	@echo Compilation finished
 	#@notify-send "BSV Compilation Done"
 
