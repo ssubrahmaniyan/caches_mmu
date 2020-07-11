@@ -101,6 +101,7 @@ package nb_dcache_tb;
   Reg#(Bit#(8)) rg_write_burst_count <- mkReg(0);
   Reg#(Bit#(32)) rg_test_count <- mkReg(1);
 	Reg#(Bit#(32)) rg_read_delay <- mkConfigReg(0);
+  Reg#(Maybe#(Bit#(`Prf_index))) rg_fence_prf <- mkReg(tagged Invalid);
 
 	CompletionBuffer#(TExp#(`Prf_index), Bit#(TMul#(`Wordsize,8))) cbuf<- mkCompletionBuffer;
 	FIFO#(Bit#(TAdd#(TAdd#(TMul#(`Wordsize, 8), 8), `Paddr))) ff_req <-mkSizedFIFO(64);
@@ -123,6 +124,11 @@ package nb_dcache_tb;
   //  dcache.cache_enable(True);
   //endrule
 
+  rule core_disp(dcache.cache_busy);
+	  let ____t <- $time; 
+		$display($format("[%10d", ____t) + $format("] "),"\tTB: Cache busy");
+  endrule
+
   rule core_req(!dcache.cache_busy);
     let stime<-$stime;
     if(stime>=(20)) begin
@@ -139,40 +145,42 @@ package nb_dcache_tb;
       Bit#(1) delay=control[2];
       Bit#(1) fence=control[1];
       Bit#(TAdd#(`Paddr ,  8)) request = truncate(req);
-      Bit#(TMul#(`Wordsize, 8)) writedata=truncateLSB(req);
-			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: %h Rob:%d Delay:%h Request:%h", req, rob, delay, request);
+      Bit#(TMul#(`Wordsize, 8)) lv_data=truncateLSB(req);
+			$display($format("[%10d", ____t) + $format("] "),"\tTB: Req from file: %h Rob:%d Delay:%h Request:%h fence: %b", req, rob, delay, request, fence);
 
-			if(fence==1) begin
-				Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= defaultValue;
-				temp_req.sfence=True;
-        dcache.subifc_req_from_core.put(temp_req);
-			end
-			else if(delay==0 && request!=0) begin // // not end of simulation
+      Bit#(TMul#(`Wordsize, 8)) writedata= case (size[1:0])
+        'b00: duplicate(lv_data[7:0]);
+        'b01: duplicate(lv_data[15:0]);
+        'b10: duplicate(lv_data[31:0]);
+				'b11: duplicate(lv_data[63:0]);
+        default: lv_data;
+      endcase;
+			if((delay==0 && request!=0) || fence==1) begin // // not end of simulation
 				ff_req.enq(req);
 				let new_token<- cbuf.reserve.get;
-				if(request!='1) begin		//not finish test 
-					//CBToken#(TExp#(`Prf_index)) new_token= unpack(0);
-					Origin req_origin= (readwrite=='d1)? Load_buffer: Store_commit;
-					Bit#(`Paddr) p_addr= request[`Paddr-1:0];
-					Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
-					Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= Req_from_core{ addr: lv_addr,
-																																									 access_size: truncate(size),
-																																									 data: writedata,
-																																									 origin: req_origin,
-                                                                                   sfence: False,
-                                                                                   ptwalk_trap: False,
-																																									 rob: rob,
-																																								 	 prf_index: pack(new_token)
-                                                                                  `ifdef atomic
-                                                                                   , is_atomic: False
-                                                                                   , atomic_fn: 'b01000
-                                                                                  `endif };
-					$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
-        	dcache.subifc_req_from_core.put(temp_req);
-				end
-				else begin
-					$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
-				end
+				//CBToken#(TExp#(`Prf_index)) new_token= unpack(0);
+				Origin req_origin= (readwrite=='d1)? Load_buffer: Store_commit;
+				Bit#(`Paddr) p_addr= request[`Paddr-1:0];
+				Bit#(`Vaddr) lv_addr= zeroExtend(p_addr);	//TODO change this to `Vaddr
+			  Bool lv_fence= (fence==1);
+        if(lv_fence)
+          rg_fence_prf<= tagged Valid pack(new_token);
+        else
+          rg_fence_prf<= tagged Invalid;
+				Req_from_core#(`Vaddr, TMul#(`Wordsize, 8), `Rob_index, `Prf_index) temp_req= Req_from_core{ addr: lv_addr,
+																																								 access_size: truncate(size),
+																																								 data: writedata,
+																																								 origin: req_origin,
+                                                                                 sfence: lv_fence,
+                                                                                 ptwalk_trap: False,
+																																								 rob: rob,
+																																							 	 prf_index: pack(new_token)
+                                                                                `ifdef atomic
+                                                                                 , is_atomic: False
+                                                                                 , atomic_fn: 'b01000
+                                                                                `endif };
+				$display($format("[%10d", ____t) + $format("] "),"\tTB: Sending Req to Core: ", fshow(temp_req));
+        dcache.subifc_req_from_core.put(temp_req);
       end
 			else if(request==0) begin
 				$display($format("[%10d", ____t) + $format("] "),"\tTB: Only enqueueing req: %h into ff_req",req);
@@ -225,9 +233,11 @@ package nb_dcache_tb;
     Bool datafail=False;
 		$display("\n");
   
-		if(readwrite!='d1 || fence==1) begin
+		if(readwrite!='d1) begin
 			$display($format("[%10d", ____t) + $format("] "),"\tTB: Store/Fence request. No comparison being done.");
 		end
+    else if(fence==1) begin
+    end
     else if(truncate(expected_data)!=read_data)begin
         $display($format("[%10d", ____t) + $format("] "),"\tTB: Output from cache is wrong for Req: %h",req);
         $display($format("[%10d", ____t) + $format("] "),"\tTB: Expected: %h, Received: %h",expected_data,read_data);
@@ -260,7 +270,10 @@ package nb_dcache_tb;
 	  let ____t <- $time; 
     let resp <- dcache.subifc_resp_to_core.get();
 		$display($format("[%10d", ____t) + $format("] "),"\tTB: Resp from core: ", fshow(resp));
-		cbuf.complete.put(tuple2(unpack(resp.prf_index), resp.data));
+    if(rg_fence_prf matches tagged Valid .fence_prf)
+  		cbuf.complete.put(tuple2(unpack(fence_prf), ?));
+    else
+  		cbuf.complete.put(tuple2(unpack(resp.prf_index), resp.data));
   endrule
 
   rule read_mem_request(read_mem_req matches tagged Invalid &&& rg_read_delay==0);
