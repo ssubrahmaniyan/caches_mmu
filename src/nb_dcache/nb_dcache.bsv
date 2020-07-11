@@ -67,7 +67,7 @@ package nb_dcache;
   import fa_dtlb::*;
   import replacement_dcache::*;
   `include "parameters.txt"
-  `include "parameters.bsv"
+//  `include "parameters.bsv"
   `include "nb_dcache.defines"
 
   String dcache=""; // defined for Logger
@@ -124,9 +124,7 @@ package nb_dcache;
   (*preempts = "rl_access_fault_response_to_core, rl_sc_fail_response_to_core"*)
   (*preempts = "rl_receive_IO_resp, rl_sc_fail_response_to_core"*)
  `endif
-  (*preempts = "rl_receive_IO_resp, rl_stage2_fb_resp_to_core"*)
-  (*preempts = "rl_receive_IO_resp, rl_sram_resp_to_core"*)
-  (*preempts = "rl_receive_IO_resp, rl_MSHR_resp_to_core"*)
+  (*preempts = "rl_receive_IO_resp, (rl_stage2_fb_resp_to_core, rl_sram_resp_to_core, rl_MSHR_resp_to_core, rl_access_fault_response_to_core)"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
 
@@ -365,14 +363,11 @@ package nb_dcache;
     endfunction
 
     function Bool is_IO(Bit#(vaddr) addr);
-      if(addr < 'h2000) begin
-        return False;
-      end
-      else if(addr > 'h80000000 && addr < 'h90000000) begin
-        return False;
+      if(addr < 'h1000) begin
+        return True;
       end
       else begin
-        return True;
+        return False;
       end
     endfunction
 
@@ -1119,6 +1114,11 @@ package nb_dcache;
     //mshr will not be empty. Moreover, the pending responses for the write requests that were
     //issued from the fill buffer will automatically be received (even after fence is done) and 
     //discarded.
+
+    rule rl_disp1(rg_fence && !rg_SRAM_fence[0]);
+      `logLevel( dcache, 2, $format("DCACHE : Fence SRAM done. mshr.not_empty: %b rg_io_req_sent: %b ", mshr.not_empty, rg_io_req_sent))
+    endrule
+
     rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty && !rg_io_req_sent);
       rg_cache_busy<= False;
       rg_fence<= False;
@@ -1205,7 +1205,7 @@ package nb_dcache;
   endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, TLog#(`num_prfs), `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TLog#(`rob_size)));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
