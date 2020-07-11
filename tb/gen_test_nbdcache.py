@@ -933,10 +933,12 @@ def test22a():
 def test22b():
     global entrycount
     address=4096
+    rob_index=0
     cache_size=word_size*line_size*sets
 
     for i in range(ways+2):
         write_to_file(address,write,word,unsigned,nodelay,nofence,rob_index)
+        rob_index=rob_index+1
         entrycount=entrycount+1
         gold_file.write(miss)
         address=address+cache_size
