@@ -7,6 +7,7 @@ src/nb_dcache/inter
 src/nb_dcache/log
 src/nb_dcache/data.mem
 src/nb_dcache/gold.mem
+src/nb_dcache/test.mem
 src/nb_dcache/log
 src/nb_dcache/out
 src/nb_dcache/out.so
