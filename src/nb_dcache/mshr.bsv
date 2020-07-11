@@ -139,13 +139,13 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-				else if(wr_fb_released) begin	//An MSHR should be invalidated only after the FB has been released
+				else begin
 					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
-        else begin
-					`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
-        end
+        //else begin
+				//	`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
+        //end
 			end
 		endrule
 
