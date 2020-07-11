@@ -4,7 +4,6 @@ import math
 import random
 # parameters:
 
-tbfile=open('dcache_tb.bsv','r')
 paramsfile=open('parameters.txt','r')
 
 for lineno,line in enumerate(paramsfile):
@@ -1059,8 +1058,10 @@ def test26():
     entrycount=entrycount+1
 
 #This testcase tests if ff_second_stage has one entry, and MSHRs are full, then no new core requests can be taken as this needs to be evaluated for flushing (which can be done only when dequeueing this FIFO). One possible optimization is to add a array of registers on top of the FIFO and then set the valid bits accordingly (the same way valid bits are being maintained for MSHRs).
-# Expected output with read delay  8 is 0,1,7,8,9,a,2,b,6
-# Expected output with read delay 10 is 0,1,7,8,9,a,b,2,6
+#OLD # Expected output with read delay  8 is 0,1,7,8,9,a,2,b,6
+#OLD # Expected output with read delay 10 is 0,1,7,8,9,a,b,2,6
+#NEW # Expected output with read delay  8 is 0,7,8,9,1,a,b,2,6
+#NEW # Expected output with read delay 10 is 0,7,8,9,a,1,b,2,6
 def test27():
     global entrycount
     address=4096
@@ -1119,7 +1120,7 @@ def test27():
 #When a flush is asserted and an entry in mshr_fifo is invalidated, and when that request is popped,
 #it should be discarded. In the same cycle, if a request from Stage 2 is a hit in the fill buffer, the
 #response is sent for that request.
-#Expected output is 0,1,6,4,7,8,9,a,b
+#Expected output is 0,1,6,7,4,8,9,a,b
 def test28():
     global entrycount
     address=4096
@@ -1401,45 +1402,45 @@ def test32():
     entrycount=entrycount+1
     gold_file.write(hit)
 
+#All delays are indicated for read delay 10
 #test0() #1548
-#test1() #1658
-#test02() #1698
-#test03() #1788
-#test04() #1558
-#test1() #1658
-#test2() #39798
-#test3() #1668
-#test4() #1788
-#test5() #1858
+#test02() #1698         #1610
+#test03() #1788         #1700
+#test04() #1558         #1470
+#test1() #1658          #2880
+#test2() #39798         #39710
+#test3() #1668          #1580
+#test4() #1788          #1700
+#test5() #1858          #1770
 ##test6() 
-#test7() #1788
-#test8() #1698
-#test9() #3348
-#test10() #2748
-#test11() #2758
-#test12() #2458
-#test13() #2608
-#test14a() #1718
-#test14b() #1718
-#test15() #2298
-#test16() #1868
-#test17() #1598
-#test18() #1618
-#test19() #2308
-#test20() #2608
-#test21() #1588
-#test22a() #1988
-#test22b() #1608 
-#test23() #2808
-#test24() #2658
-#test25() #2808
-#test26() #no_end 1548
-#test27() #no_end 2328
-#test28() #no_end 1868
-#test29() #no_end 1808
-#test30()
-#test31()
-test32()
+#test7() #1788          #1700
+#test8() #1698          #1610
+#test9() #3348          #3260
+#test10() #2748         #2660
+#test11() #2758         #2670
+#test12() #2458         #2370
+#test13() #2608         #2520
+#test14a() #1718        #1630
+#test14b() #1718        #1630
+#test15() #2298         #2210
+#test16() #1868         #1780
+#test17() #1598         #1510
+#test18() #1618         #1530
+#test19() #2308         #2220
+#test20() #2608         #2520
+#test21() #1588         #1500
+#test22a() #1988        #1900
+#test22b() #1608        #1520 
+#test23() #2808         #2720
+#test24() #2658         #2570
+#test25() #2808         #2720
+#test26() #no_end 1548  #1460
+#test27() #no_end 2328  #2140/2240 for read delay 8/10
+#test28() #no_end 1868  #1760
+#test29() #no_end 1808  #1700
+#test30()               #3460
+#test31()               #1470
+#test32()               #2010
 
 write_to_file(0,endsim,byte,signed,nodelay,nofence,rob_index)
 gold_file.write(miss)
