@@ -94,10 +94,10 @@ package fill_buffer;
 		endfunction
 
 		//TODO Make a UniqueWrapper for this
-		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(buswidthbits) line_addr, Bit#(3) size);
+		function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(lineoffset) line_addr, Bit#(3) size);
     	Bit#(data) temp = size[1 : 0] == 0?'hFF : 
-    	                       size[1 : 0] == 1?'hFFFF : 
-    	                       size[1 : 0] == 2?'hFFFFFFFF : '1;
+    	                  size[1 : 0] == 1?'hFFFF : 
+    	                  size[1 : 0] == 2?'hFFFFFFFF : '1;
 
     	Bit#(linewidth) mask = zeroExtend(temp);
     	mask = mask<<{line_addr, 3'd0};
@@ -229,22 +229,8 @@ package fill_buffer;
         `ifdef atomic && !req.is_atomic `endif ) begin
 				rg_dirty<= 1;
         Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
-				let sram_data= write_linedata;
-				let core_data= req.payload;
-				let size= req.access_size;
-    		Bit#(data) temp = size[1 : 0] == 0?'hFF : 
-    		                  size[1 : 0] == 1?'hFFFF : 
-    		                  size[1 : 0] == 2?'hFFFFFFFF : '1;
-
-    		Bit#(linewidth) mask = zeroExtend(temp);
-    		mask = mask<<{write_reqaddr, 3'd0};
-				Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
-																			size=='d1? duplicate(core_data[15:0]) :
-																			size=='d2? duplicate(core_data[31:0]) :
-																								 duplicate(core_data);
-				write_linedata= (mask & data_to_mask) |(~mask & sram_data);
-			`logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h mask: %h",write_reqaddr, write_linedata, mask))
-				//write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
+				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
+			  `logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
 			end
 			//When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
@@ -272,8 +258,9 @@ package fill_buffer;
         end
         `endif
 
-				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+        Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
 				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
+			  `logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
 			end
 		endrule
