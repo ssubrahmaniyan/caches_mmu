@@ -267,7 +267,7 @@ package mshr;
 					let fifo_top= ff_mshr[curr_rid].first;
 					let cfifo_valid= cff_valid[curr_rid].first;
 
-					if(cfifo_valid==1'b1 && (!rg_fence || fifo_top.origin==Store_commit)) begin
+					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
             Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 						req= tuple2(True, MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
