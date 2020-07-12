@@ -228,7 +228,7 @@ package fill_buffer;
 			if(req.origin==Store_commit && rg_valid[lv_store_index]==1'b1 && wr_can_perform_store
         `ifdef atomic && !req.is_atomic `endif ) begin
 				rg_dirty<= 1;
-				Bit#(buswidthbits) write_reqaddr= req.addr[buswidthbits_val-1:0];
+        Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
 				let sram_data= write_linedata;
 				let core_data= req.payload;
 				let size= req.access_size;
