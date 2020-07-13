@@ -67,7 +67,7 @@ package nb_dcache;
   import fa_dtlb::*;
   import replacement_dcache::*;
   `include "parameters.txt"
-//  `include "parameters.bsv"
+  `include "parameters.bsv"
   `include "nb_dcache.defines"
 
   String dcache=""; // defined for Logger
@@ -362,26 +362,26 @@ package nb_dcache;
       return dtlb_req;
     endfunction
 
-    function Bool is_IO(Bit#(vaddr) addr);
-      if(addr < 'h1000) begin
-        return True;
-      end
-      else begin
-        return False;
-      end
-    endfunction
-
-//    function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
-//      if(addr < 'h2000) begin
-//        return False;
-//      end
-//      else if(addr > 'h80000000 && addr < 'h90000000) begin
-//        return False;
-//      end
-//      else begin
+//    function Bool is_IO(Bit#(vaddr) addr);
+//      if(addr < 'h1000) begin
 //        return True;
 //      end
+//      else begin
+//        return False;
+//      end
 //    endfunction
+
+    function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
+      if(addr < 'h2000) begin
+        return False;
+      end
+      else if(addr >= 'h80000000 && addr < 'h90000000) begin
+        return False;
+      end
+      else begin
+        return True;
+      end
+    endfunction
 
     `ifdef atomic
     function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded);
@@ -1217,8 +1217,8 @@ package nb_dcache;
   endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
-  //module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, TLog#(`num_prfs), `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TLog#(`rob_size)));
+  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, TLog#(`num_prfs), `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TLog#(`rob_size)));
+  //module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
