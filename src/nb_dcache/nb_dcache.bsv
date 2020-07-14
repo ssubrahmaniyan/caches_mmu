@@ -247,7 +247,6 @@ package nb_dcache;
     Reg#(Flush_type#(rob_index)) rg_flush <- mkDReg(defaultValue);
     Reg#(Bool) rg_fence <- mkReg(False);
     Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
-    Reg#(Bit#(setbits)) rg_prev_fence_set_index <- mkConfigReg(0);
     Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
     Reg#(Tuple3#(DCache_exception, Bit#(prf_index), Bit#(rob_index))) rg_access_fault_response <- mkReg(tuple3(defaultValue, ?, ?));
     Reg#(Bool) rg_io_req_sent <- mkReg(False);
@@ -1048,6 +1047,23 @@ package nb_dcache;
       return False;
     endfunction
 
+    //rule rl_disp_fence_cache (rg_fence && rg_SRAM_fence[0] && rg_cache_busy && rg_fb_state==Read_SRAMs && rg_fence_set_index=='d23);
+    //  Bit#(linewidth) dataline [ways_val];
+    //  Bit#(TAdd#(tagbits,2)) tag [ways_val];
+    //  Bit#(ways) dirty=0;
+    //  Bit#(ways) valid=0;
+    //  for(Integer i = 0; i<ways_val; i = i+1) begin
+    //    dataline[i]= data_arr[i].read_response;
+    //    tag[i]= tag_arr[i].read_response;
+    //    `logLevel( dcache, 2, $format("DCACHE : Data[%d]: %d and Tag [%d]: %d ", i, dataline[i], i, tag[i]))
+    //  end
+    //  for(Integer i = 0; i<ways_val; i = i+1) begin
+    //    valid[i]= tag[i][tagbits_val];    //Valid bit
+    //    dirty[i]= tag[i][tagbits_val+1];  //Dirty bit
+    //    `logLevel( dcache, 2, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
+    //  end
+    //endrule
+
     rule rl_fence_cache (rg_fence && rg_SRAM_fence[0] && rg_cache_busy && rg_fb_state==Read_SRAMs);
       Bit#(linewidth) dataline [ways_val];
       Bit#(TAdd#(tagbits,2)) tag [ways_val];
@@ -1056,15 +1072,17 @@ package nb_dcache;
       Bool incr_fence_set_index= False;
       Bool lv_evict= False;
       Bit#(TLog#(ways)) evict_index= 0;
-      `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_prev_fence_set_index))
+      `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
 
       for(Integer i = 0; i<ways_val; i = i+1) begin
         dataline[i]= data_arr[i].read_response;
         tag[i]= tag_arr[i].read_response;
+        `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %d and Tag [%d]: %d ", i, dataline[i], i, tag[i]))
       end
       for(Integer i = 0; i<ways_val; i = i+1) begin
         valid[i]= tag[i][tagbits_val];    //Valid bit
         dirty[i]= tag[i][tagbits_val+1];  //Dirty bit
+        `logLevel( dcache, 3, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
         if(valid[i]==1 && dirty[i]==1) begin
           lv_evict=True;
           evict_index= fromInteger(i);
@@ -1074,17 +1092,18 @@ package nb_dcache;
       if(lv_evict) begin
         Bit#(lineoffset) some_zeros= 0;
         Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
-        Bit#(paddr) evict_lineaddr= {evict_tag, rg_prev_fence_set_index, some_zeros};
+        Bit#(paddr) evict_lineaddr= {evict_tag, rg_fence_set_index, some_zeros};
         Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
 
         //Updating only the valid bit of the SRAM in order to save power.
-        tag_arr[evict_index].write(rg_prev_fence_set_index, lv_dirty_valid_tag);
+        tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
 
         //Evicting the line
         ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                   data: dataline[evict_index],
                                                   is_burst: True });
-        `logLevel( dcache, 2, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
+        `logLevel( dcache, 3, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
+        `logLevel( dcache, 3, $format("DCACHE : Fence. Updating index: %d way: %d with tag: %x ", rg_fence_set_index, evict_index, lv_dirty_valid_tag))
 
         Bit#(ways) evict_indices= valid & dirty;
         Bool only_one_dirty= check_only_one_evict(evict_indices);
@@ -1096,23 +1115,27 @@ package nb_dcache;
       else begin  //Nothing to evict. Hence, increment fence index and clear the valid bit of all ways in this set
         incr_fence_set_index= True;
         for(Integer i = 0; i<ways_val; i = i+1) begin
-          tag_arr[i].write(rg_prev_fence_set_index-1, 0);
+          tag_arr[i].write(rg_fence_set_index, 0);
         end
       end
 
-      if(rg_prev_fence_set_index=='1) begin
-        rg_SRAM_fence[0]<= False;
-        `logLevel( dcache, 2, $format("DCACHE : Fence. Last SRAM row done. "))
+      Bit#(setbits) lv_next_set_index= rg_fence_set_index;
+      //TODO should this if condition be inside if(incr_fence_set_index)?
+      if(incr_fence_set_index) begin
+        lv_next_set_index= rg_fence_set_index + 1;
+        `logLevel( dcache, 3, $format("DCACHE : Fence. Incrementing fence index "))
+        if(rg_fence_set_index=='1) begin
+          rg_SRAM_fence[0]<= False;
+          `logLevel( dcache, 1, $format("DCACHE : Fence. Last SRAM row done. "))
+        end
       end
-      else if(incr_fence_set_index) begin
-        rg_fence_set_index<= rg_fence_set_index + 1;
-        rg_prev_fence_set_index<= rg_fence_set_index;
-      end
+
       //Issue read request to the set which will be processed in the next cycle.
       for(Integer i = 0;i<ways_val;i = i+1) begin
-        data_arr[i].read(rg_fence_set_index);
-        tag_arr[i].read(rg_fence_set_index);
+        data_arr[i].read(lv_next_set_index);
+        tag_arr[i].read(lv_next_set_index);
       end
+      rg_fence_set_index<= lv_next_set_index;
     endrule
 
     //This rule will fire once fence operation has finished. The rg_fence register indicates that
@@ -1134,7 +1157,7 @@ package nb_dcache;
     rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty && !rg_io_req_sent);
       rg_cache_busy<= False;
       rg_fence<= False;
-      rg_prev_fence_set_index<= 0;
+      rg_fence_set_index<= 0;
       `ifdef atomic
         rg_lr_info<= tuple3(False, ?, ?);
         rg_sc_fail<= False;
