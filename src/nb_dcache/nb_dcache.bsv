@@ -613,12 +613,12 @@ package nb_dcache;
       if(way_num!='1) begin                                    //It's a line hit
         Bit#(TLog#(ways)) hit_way= truncate(way_num);
         Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-        let line= dataline[hit_way];  //TODO change this to OInt type
-        let disp_tag= tag_arr[hit_way].read_response;
+        let hit_line= dataline[hit_way];  //TODO change this to OInt type
+        let hit_tag= tag_arr[hit_way].read_response;
         `logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
-        `logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, line, disp_tag))
+        `logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, hit_line, hit_tag))
 
-        Bit#(datawidth) data_to_core= fn_extract_data(line, truncate(req.addr), req.access_size);  //TODO Make UniqueWrapper for this fn
+        Bit#(datawidth) data_to_core= fn_extract_data(hit_line, truncate(req.addr), req.access_size);  //TODO Make UniqueWrapper for this fn
 
         //If MSHR req is not sending response, the current hit response can be sent to the processor.
         //Hence, deq ff_first_stage. Also, for Store_buffer requests, no response needs to be sent,
@@ -641,8 +641,9 @@ package nb_dcache;
           //     should it wait for a free cycle where this stage can send a response?
           if(req.origin==Store_commit) begin
             Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
-            let write_data= generate_masked_data(line, req.data, line_offset, req.access_size);
+            let write_data= generate_masked_data(hit_line, req.data, line_offset, req.access_size);
             data_arr[hit_way].write(set_index, write_data);
+            tag_arr[hit_way].write(set_index, {1'b1, hit_tag[tagbits_val:0]}); //Setting the dirty bit
             `logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
           end
         end
