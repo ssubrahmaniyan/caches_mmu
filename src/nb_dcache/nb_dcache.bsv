@@ -1078,7 +1078,7 @@ package nb_dcache;
       for(Integer i = 0; i<ways_val; i = i+1) begin
         dataline[i]= data_arr[i].read_response;
         tag[i]= tag_arr[i].read_response;
-        `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %d and Tag [%d]: %d ", i, dataline[i], i, tag[i]))
+        `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %h and Tag [%d]: %h ", i, dataline[i], i, tag[i]))
       end
       for(Integer i = 0; i<ways_val; i = i+1) begin
         valid[i]= tag[i][tagbits_val];    //Valid bit
