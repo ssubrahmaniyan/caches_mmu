@@ -247,7 +247,7 @@ package fill_buffer;
 
 		rule rl_serve_remaining_mshr_requests(all_valid);
 			let req= wr_req;
-			if(req.origin==Store_commit) begin
+			if(req.origin==Store_commit && wr_can_perform_store) begin
         let store_data= req.payload;
         `ifdef atomic
         if(req.is_atomic) begin
