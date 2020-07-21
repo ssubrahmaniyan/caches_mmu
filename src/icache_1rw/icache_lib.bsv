@@ -475,6 +475,13 @@ package icache_lib;
       Bit#(respwidth) lv_selected_word = ?;
       Bit#(1) lv_err = ?;
       Bool lv_linevalid = False;
+      // for i-class
+      Bit#(respwidth) lv_selected_word_next = ?;
+      Bit#(TMul#(respwidth,2)) lv_selected_word_double = ?;
+      Bit#(respwidth) lv_selected_word_final = ?;
+      Bit#(wordbits) lv_byte_offset = address[v_wordbits-1:0];
+      Bit#(TAdd#(wordbits, 3)) lv_shift_amt = 0;
+
       for (Integer i = 0; i<v_fbsize; i = i + 1) begin
         lv_hitvector[i] = pack((truncateLSB(v_fb_addr[i]) == input_tag) && v_fb_addr_valid[i]);
       end
@@ -487,17 +494,30 @@ package icache_lib;
         lv_err = select(readVReg(v_fb_err), unpack(lv_hitvector));
         lv_linevalid = select(readVReg(v_fb_line_valid), unpack(lv_hitvector));
       end
+      // for i-class (only supporting non one-hot for now)
       else begin
         for (Integer i = 0; i<v_fbsize; i = i + 1) begin
           if (lv_hitvector[i] == 1) begin
+            lv_shift_amt = zeroExtend(lv_byte_offset) << 3;
             lv_selected_word = truncate(v_fb_data[i][block_offset]);
+            lv_selected_word_next = (block_offset == '1) ? '0 : truncate(v_fb_data[i][block_offset+1]);
+            lv_selected_word_double = {lv_selected_word_next, lv_selected_word} >> lv_shift_amt;
+            lv_selected_word_final = lv_selected_word_double[v_respwidth-1:0];
+            lv_selected_word = lv_selected_word_final;
+            //$display ("FBDEBUG: address %h word %h next %h double %h final %h # block_offset %d byte_offset %d shift_amt %d", address, lv_selected_word, lv_selected_word_next, lv_selected_word_double, lv_selected_word_final, block_offset, lv_byte_offset, lv_shift_amt);
             lv_err = v_fb_err[i];
             lv_linevalid = v_fb_line_valid[i];
           end
         end
       end
+      // for i-class (unaligned fetch)
+      //Bool lv_hit_in_fill = fill && lv_hitvector[fbindex] == 1 &&
+      //                      (rg_fb_enables[block_offset] == 1);
       Bool lv_hit_in_fill = fill && lv_hitvector[fbindex] == 1 &&
-                            (rg_fb_enables[block_offset] == 1);
+                              (   ((lv_byte_offset == 0) && (rg_fb_enables[block_offset] == 1)) 
+                               || ((block_offset == '1) && (rg_fb_enables[block_offset] == 1))
+                               || ((rg_fb_enables[block_offset] == 1) && (rg_fb_enables[block_offset+1] == 1)) ); 
+
       `logLevel( icache, 0, $format("[%2d]ICACHE: FB: Polling: linevalid:%b blockoffset:%d",id,
                                     lv_linevalid, block_offset))
       Bool lv_wordhit = (lv_linevalid || lv_hit_in_fill);

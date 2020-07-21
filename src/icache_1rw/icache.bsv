@@ -459,7 +459,13 @@ package icache;
       Bit#(`iways) lv_hitmask = lv_tag_resp.waymask & v_reg_valid[set_index];
       let lv_data_resp = m_data.mv_read_response(lv_blocknum,lv_hitmask);
       `logLevel( icache, 0, $format("[%2d]ICACHE: lv_data_resp:",id,fshow(lv_data_resp)))
-      let response_word = lv_data_resp.word >> {word_offset,3'b0};
+      // for i-class: TODO: edit the types here
+      Bit#(TAdd#(TAdd#(`wordbits,`blockbits),3)) lv_shift_amt = 0;
+      Bit#(`linewidth) lv_response_line = 0;
+      lv_shift_amt = phyaddr[v_blockbits+v_wordbits+2:0] << 3;  // -1+3
+      lv_response_line = lv_data_resp.line >> lv_shift_amt;
+      let response_word = lv_response_line[v_respwidth-1:0];
+      //let response_word = lv_data_resp.word >> {word_offset,3'b0};
 
     `ifdef icache_ecc
 
@@ -623,8 +629,10 @@ package icache;
       if(wr_nc_state == Hit && !wr_fault) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from NC",id))
       end
-      
-      lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
+
+      // NOTE: in c-class this is truncateLSB(req.address); for i-class, width=128 bits
+      lv_response.word = lv_response.trap ? zeroExtend(req.address) : lv_response.word;
+      //lv_response.word = lv_response.trap ? truncateLSB(req.address) : lv_response.word;
 
       ff_core_request.deq;
     `ifdef supervisor
