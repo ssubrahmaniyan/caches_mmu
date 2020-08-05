@@ -112,10 +112,10 @@ package mshr;
 		//function returns True, and otherwise leave the entry unchanged. Also, whenever any corresponding
 		//ff_mshr is enqueued a 1 is enqueued inside, and when ff_mshr is dequeued, cff_valid is also dequeued.
 		Ifc_SESFMI_FIFO#(mshrfifo_depth, Bit#(1)) cff_valid [mshrsize_val];
-		Ifc_SEMF_FIFO#(mshrfifo_depth, Bit#(rob_index)) cff_rob [mshrsize_val];
+		Ifc_SEMF_FIFO#(mshrfifo_depth, Tuple2#(Bit#(rob_index), Bool)) cff_rob [mshrsize_val];
 		for(Integer i=0; i< mshrsize_val; i=i+1) begin
 			cff_valid[i] <- mkSESFMI_mshr_inst;
-			cff_rob[i] <- mkSEMF_FIFO(0);
+			cff_rob[i] <- mkSEMF_FIFO(?);
 		end
 
 		Bool one_mshr_fifo_full= False;
@@ -203,7 +203,8 @@ package mshr;
                                                     `ifdef atomic 
                                                       , is_atomic: req.is_atomic
                                                     `endif });
-				cff_rob[mshr_unallocated_id].enq(req.rob);
+        Bool can_flush= req.origin!=Store_commit;
+				cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_unallocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Valid mshr_unallocated_id;
@@ -217,7 +218,8 @@ package mshr;
                                                   `ifdef atomic 
                                                     , is_atomic: req.is_atomic
                                                   `endif });
-				cff_rob[mshr_allocated_id].enq(req.rob);
+        Bool can_flush= req.origin!=Store_commit;
+				cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_allocated_id].enq(1'b1);
 				return tagged Invalid;
 			end
@@ -246,7 +248,7 @@ package mshr;
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
                                           prf_index: prf_id,
-                                          rob: cff_rob[req_rid].first
+                                          rob: tpl_1(cff_rob[req_rid].first)
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info) 
@@ -274,7 +276,7 @@ package mshr;
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
                                           prf_index: prf_id,
-                                          rob: cff_rob[curr_rid].first
+                                          rob: tpl_1(cff_rob[curr_rid].first)
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info)
@@ -328,12 +330,12 @@ package mshr;
       `logLevel( nb_dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
-				Vector#(mshrfifo_depth,Bit#(rob_index)) cff_rob_id= cff_rob[i].contents;
+				Vector#(mshrfifo_depth,Tuple2#(Bit#(rob_index), Bool)) cff_rob_id= cff_rob[i].contents;
 
 				for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
       		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
-      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial ROB[%d][%d]= %d", i,j, cff_rob_id[j]))
-					if(should_flush(bundle.head, bundle.flush_rob, cff_rob_id[j])) begin
+      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial Meta[%d][%d]= ", i,j, fshow(cff_rob_id[j])))
+					if(should_flush(bundle.head, bundle.flush_rob, tpl_1(cff_rob_id[j])) && tpl_2(cff_rob_id[j])) begin
 						valid[j]=0;
       			`logLevel( nb_dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
 					end

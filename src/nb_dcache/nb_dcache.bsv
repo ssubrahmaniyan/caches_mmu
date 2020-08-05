@@ -235,7 +235,7 @@ package nb_dcache;
       ff_first_stage_tag[i]<- mkBypassFIFO;
     FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkFIFOF;
     Ifc_SESFMI_FIFO#(2, Bool) cff_second_stage_valid <- mkSESFMI_second_stage_inst;
-    Ifc_SEMF_FIFO#(2, Bit#(rob_index)) cff_second_stage_rob_id <- mkSEMF_FIFO(0);
+    Ifc_SEMF_FIFO#(2, Tuple2#(Bit#(rob_index), Bool)) cff_second_stage_rob_id <- mkSEMF_FIFO(?);
     FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_info <- mkFIFO;
 
     Reg#(Bool) rg_cache_busy <- mkConfigReg(True);  //TODO has to be reset depending upon when the leaf page is received
@@ -788,7 +788,8 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
       wr_stage1_deq_enq<= True;
       ff_second_stage.enq(wr_stage2_enq);
-      cff_second_stage_rob_id.enq(wr_stage2_enq.rob);
+      Bool can_flush= wr_stage2_enq.origin!=Store_commit;
+      cff_second_stage_rob_id.enq(tuple2(wr_stage2_enq.rob, can_flush));
       cff_second_stage_valid.enq(True);
     endrule
 
@@ -796,7 +797,8 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
       wr_stage1_fb_deq_enq<= True;
       ff_second_stage.enq(wr_stage2_fb_enq);
-      cff_second_stage_rob_id.enq(wr_stage2_fb_enq.rob);
+      Bool can_flush= wr_stage2_fb_enq.origin!=Store_commit;
+      cff_second_stage_rob_id.enq(tuple2(wr_stage2_fb_enq.rob, can_flush));
       cff_second_stage_valid.enq(True);
     endrule
 
@@ -825,7 +827,7 @@ package nb_dcache;
     rule rl_access_MSHRs(!rg_flush.valid);
       let req= ff_second_stage.first;
       ff_second_stage.deq;
-      req.rob= cff_second_stage_rob_id.first;
+      req.rob= tpl_1(cff_second_stage_rob_id.first);
       cff_second_stage_rob_id.deq;
       cff_second_stage_valid.deq;
 
@@ -855,15 +857,15 @@ package nb_dcache;
     (*no_implicit_conditions, fire_when_enabled*)
     rule rl_flush_ff_second_stage(rg_flush.valid);
       Vector#(2,Bool) valid= cff_second_stage_valid.contents;
-      Vector#(2,Bit#(rob_index)) rob_id= cff_second_stage_rob_id.contents;
+      Vector#(2,Tuple2#(Bit#(rob_index), Bool)) meta= cff_second_stage_rob_id.contents;
 
-      if(should_flush(rg_flush.head, rg_flush.flush_rob, rob_id[0]) && valid[0])
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[0])) && valid[0] && tpl_2(meta[0]))
         valid[0]= False;
-      if(should_flush(rg_flush.head, rg_flush.flush_rob, rob_id[1]) && valid[1])
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[1])) && valid[1] && tpl_2(meta[1]))
         valid[1]= False;
 
       cff_second_stage_valid.initialize(valid);
-      `logLevel( dcache, 2, $format("DCACHE : Flusing everything! valid: %h", valid ))
+      `logLevel( dcache, 2, $format("DCACHE : Flusing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
       mshr.flush(rg_flush);
     endrule
 
@@ -1236,6 +1238,7 @@ package nb_dcache;
                                     head: head,
                                     flush_rob: flush_rob };
       rg_flush<= flush_signal;
+      `logLevel( dcache, 2, $format("DCACHE : Flush generated: ", fshow(flush_signal)))
     endmethod
 
   endmodule
