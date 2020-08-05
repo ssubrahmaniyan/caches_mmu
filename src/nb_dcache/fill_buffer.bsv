@@ -172,6 +172,7 @@ package fill_buffer;
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
     Wire#(Bit#(TSub#(paddr, lineoffset))) wr_addr_from_MSHR_to_fb <-mkWire;
 		Wire#(Bool) wr_can_perform_store <- mkDWire(False);
+    Wire#(Bool) wr_can_release_fb <- mkDWire(False);
 
 		let all_valid= (rg_valid=='1);
 		let all_invalid= (rg_valid=='0);
@@ -263,6 +264,9 @@ package fill_buffer;
 			  `logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
 			end
+      else begin
+        wr_can_release_fb<= True;
+      end
 		endrule
 	
 		//Assigning req to wr_req, for a write req will perform the write even when corresponding fb
@@ -291,7 +295,7 @@ package fill_buffer;
       wr_addr_from_MSHR_to_fb<= addr_to_fb;
 		endmethod
 
-		method Action release_fb if(all_valid);
+		method Action release_fb if(wr_can_release_fb);
 			rg_valid<= 'd0;
 			rg_dirty<= 0;
 			rg_fb_addr<= 0;
