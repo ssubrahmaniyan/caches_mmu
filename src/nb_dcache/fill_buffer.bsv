@@ -166,7 +166,7 @@ package fill_buffer;
 		Reg#(Bool) rg_first_resp <- mkReg(True);
 		Reg#(Bit#(TLog#(num_chunks))) rg_index <- mkReg('1);
 		Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fb_addr <- mkConfigReg(0);
-		Reg#(Bit#(1)) rg_dirty <- mkReg(0);
+		Reg#(Bit#(1)) rg_dirty <- mkConfigReg(0);
 
 		Wire#(MSHR_Req#(paddr, data, prf_index, rob_index)) wr_req <- mkDWire(defaultValue);
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
@@ -263,6 +263,7 @@ package fill_buffer;
 				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
 			  `logLevel( dcache, 2, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
+				rg_dirty<= 1;
 			end
       else begin
         wr_can_release_fb<= True;
@@ -295,7 +296,7 @@ package fill_buffer;
       wr_addr_from_MSHR_to_fb<= addr_to_fb;
 		endmethod
 
-		method Action release_fb if(wr_can_release_fb);
+		method Action release_fb if(wr_can_release_fb && all_valid);
 			rg_valid<= 'd0;
 			rg_dirty<= 0;
 			rg_fb_addr<= 0;
