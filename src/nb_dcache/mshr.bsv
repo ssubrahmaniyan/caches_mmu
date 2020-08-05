@@ -219,8 +219,9 @@ package mshr;
                                                     , is_atomic: req.is_atomic
                                                   `endif });
         Bool can_flush= req.origin!=Store_commit;
-				cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
+				cff_rob[mshr_allocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_allocated_id].enq(1'b1);
+				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				return tagged Invalid;
 			end
 		endmethod
