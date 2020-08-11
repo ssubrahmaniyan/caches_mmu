@@ -66,6 +66,7 @@ package nb_dcache;
   import fill_buffer::*;
   import fa_dtlb::*;
   import replacement_dcache::*;
+  import Assert  :: * ;
   `include "parameters.txt"
   `include "parameters.bsv"
   `include "nb_dcache.defines"
@@ -372,7 +373,7 @@ package nb_dcache;
 //    endfunction
 
     function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
-      if(addr < 'h2000) begin
+      if( addr>=1000 && addr<'h2000) begin
         return False;
       end
       else if(addr >= 'h80000000 && addr < 'h90000000) begin
@@ -522,6 +523,9 @@ package nb_dcache;
           if(is_IO_access) begin  //IO operation
             //Enqueue into a separate FIFO that handles IO Requests
             `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
+            `ifdef ASSERT
+              dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
+            `endif
             ff_io_info.enq(req);
             rg_cache_busy<= True;
           end
@@ -1190,7 +1194,7 @@ package nb_dcache;
       let req= ff_io_info.first;
       ff_io_req.enq(IO_Req { addr: req.addr,
                              size: req.access_size,
-                             is_store: True, //TODO done to finish sim. Change later.
+                             is_store: (req.origin==Store_commit),
                              data: req.data });
       rg_io_req_sent<= True;
     endrule
