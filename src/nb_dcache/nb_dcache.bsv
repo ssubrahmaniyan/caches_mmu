@@ -273,6 +273,7 @@ package nb_dcache;
     Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
+    Wire#(Bool) wr_ff_second_stage_store_req_to_curr_fb <- mkDWire(False);
 
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
@@ -942,14 +943,24 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : MSHR reponse", fshow(wr_mshr_resp_to_core)))
       wr_resp_to_core<= wr_mshr_resp_to_core;
     endrule
-    
+   
+    //----------------------------- Fill buffer release ---------------------------------//
+    rule rl_check_ff_second_stage_store_to_fb_addr;
+      let req= ff_second_stage.first;
+      if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val] && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
+        wr_ff_second_stage_store_req_to_curr_fb<= True;
+      end
+    endrule
+
     //Once the fill buffer indicates that it can be released(i.e. the complete line is available,
     //and no pending MSHR requests exist to the same line*), the data and tag SRAMs are issued a read
     //request to determine which way should be assigned for this line.
     //*Caveat: Though the FIFOs, corresponding to the MSHR entry (corresponding to the line address)
-    //         might be empty, there might be a request pending in the ff_second_stage. This is fine
-    //         as the fill buffer is invalidated only after 3 clock cycles.
-    rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence);
+    //         might be empty, there might be a request pending in the ff_second_stage. This is fine,
+    //         if it is a load req as the fill buffer is invalidated only after 3 clock cycles. For a 
+    //         pending store req in ff_second_stage, stall the FB release by one cycle.
+    rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence
+    && !wr_ff_second_stage_store_req_to_curr_fb);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -1018,7 +1029,9 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
     endrule
 
-    //Fence logic
+    //---------------------------------------------------------------------//
+
+    //----------------------------- Fence ---------------------------------//
 
     //This rule fires whent the fill buffer is ready to be released.
     //Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
