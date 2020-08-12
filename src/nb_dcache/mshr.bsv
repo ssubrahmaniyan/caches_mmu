@@ -314,7 +314,7 @@ package mshr;
 
 		method Action ack_from_fb if(mshr_not_empty && !isValid(wr_deq_ff_id));
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
-      	`logLevel( nb_dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
+      	`logLevel( dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
 				cff_rob[fb_id].deq;
 				cff_valid[fb_id].deq;
@@ -328,20 +328,21 @@ package mshr;
 		
 		method Action flush (Flush_type#(rob_index) bundle);
 			rg_flush[0]<= bundle;
-      `logLevel( nb_dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
+      $display("MSHR : Fluss ", fshow(bundle));
+      `logLevel( dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
 				Vector#(mshrfifo_depth,Tuple2#(Bit#(rob_index), Bool)) cff_rob_id= cff_rob[i].contents;
 
 				for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
-      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
-      		`logLevel( nb_dcache, 1, $format("MSHR : Flush: Initial Meta[%d][%d]= ", i,j, fshow(cff_rob_id[j])))
+      		`logLevel( dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
+      		`logLevel( dcache, 1, $format("MSHR : Flush: Initial Meta[%d][%d]= ", i,j, fshow(cff_rob_id[j])))
 					if(should_flush(bundle.head, bundle.flush_rob, tpl_1(cff_rob_id[j])) && tpl_2(cff_rob_id[j])) begin
 						valid[j]=0;
-      			`logLevel( nb_dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
+      			`logLevel( dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
 					end
 				end
-      	`logLevel( nb_dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
+      	`logLevel( dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
 				cff_valid[i].initialize(valid);
 			end
 		endmethod
