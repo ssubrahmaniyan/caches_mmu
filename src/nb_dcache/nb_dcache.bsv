@@ -128,6 +128,7 @@ package nb_dcache;
   (*preempts = "rl_receive_IO_resp, (rl_stage2_fb_resp_to_core, rl_sram_resp_to_core, rl_MSHR_resp_to_core, rl_access_fault_response_to_core)"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
+  (*preempts = "rl_flush_ff_req_from_core, rl_handle_req_from_core"*)
 
   module mknb_dcache#(parameter String alg)
   //                  8,        8,      128,     4,    32,    32,    32,    32,      6,         4,       4,          3,           128,        7
@@ -449,106 +450,118 @@ package nb_dcache;
       `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as prev was store. Core_req: ", fshow(core_req)))
     endrule
 
+    rule rl_disp123 (core_req.addr=='h800918e0);
+      `logLevel( dcache, 2, $format("DCACHE : Arjunn ff_req_from_core: ", fshow(core_req)))
+    endrule
+
+    //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
+    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
+      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
+      ff_req_from_core.deq;
+    endrule
+
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
                                  );
       let core_req= ff_req_from_core.first;
       ff_req_from_core.deq;
       Bool is_actual_store= (core_req.origin == Store_commit);
-      rg_prev_req_info<= tuple2(is_actual_store, truncateLSB(core_req.addr));
-      Bit#(setbits) set_index;
-      //For a fence instruction, start from cache index 0.
-      if(core_req.sfence) begin
-        set_index= rg_fence_set_index;
-        `ifdef ASSERT
-          dynamicAssert(rg_fence_set_index==0,"Fence starting with index!=0");
-        `endif
-      end
-      else begin
-        set_index= core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-      end
-      `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
-      
-      for(Integer i = 0;i<ways_val;i = i+1) begin
-        data_arr[i].read(set_index);
-        tag_arr[i].read(set_index);
-      end
-      let resp_from_tlb<- dtlb.translate(convert_core_to_tlb_req(core_req));
-      Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{  addr: resp_from_tlb.address,
-                                                                      access_size: core_req.access_size,
-                                                                      data: core_req.data,
-                                                                      origin: core_req.origin,
-                                                                      sfence: core_req.sfence,
-                                                                      ptwalk_trap: core_req.ptwalk_trap,
-                                                                      rob: core_req.rob,
-                                                                      prf_index: core_req.prf_index 
-                                                                      `ifdef atomic
-                                                                        , is_atomic: core_req.is_atomic
-                                                                        , atomic_fn: core_req.atomic_fn
-                                                                      `endif };
-      Bool is_IO_access= is_IO(core_req.addr);
-      if(core_req.sfence) begin
-        mshr.fence;
-        rg_fence<= True;
-        rg_fence_rob<= core_req.rob;
-        rg_SRAM_fence[0]<= True;
-        rg_cache_busy<= True;
-        `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
-      end
-      else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
-        `logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
-        if(resp_from_tlb.trap) begin  //Access fault
+      //if(!rg_flush.valid || is_actual_store || !should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob)) begin
+        rg_prev_req_info<= tuple2(is_actual_store, truncateLSB(core_req.addr));
+        Bit#(setbits) set_index;
+        //For a fence instruction, start from cache index 0.
+        if(core_req.sfence) begin
+          set_index= rg_fence_set_index;
+          `ifdef ASSERT
+            dynamicAssert(rg_fence_set_index==0,"Fence starting with index!=0");
+          `endif
+        end
+        else begin
+          set_index= core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+        end
+        `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
+        
+        for(Integer i = 0;i<ways_val;i = i+1) begin
+          data_arr[i].read(set_index);
+          tag_arr[i].read(set_index);
+        end
+        let resp_from_tlb<- dtlb.translate(convert_core_to_tlb_req(core_req));
+        Req_from_core#(paddr, datawidth, rob_index, prf_index) req= Req_from_core{  addr: resp_from_tlb.address,
+                                                                        access_size: core_req.access_size,
+                                                                        data: core_req.data,
+                                                                        origin: core_req.origin,
+                                                                        sfence: core_req.sfence,
+                                                                        ptwalk_trap: core_req.ptwalk_trap,
+                                                                        rob: core_req.rob,
+                                                                        prf_index: core_req.prf_index 
+                                                                        `ifdef atomic
+                                                                          , is_atomic: core_req.is_atomic
+                                                                          , atomic_fn: core_req.atomic_fn
+                                                                        `endif };
+        Bool is_IO_access= is_IO(core_req.addr);
+        if(core_req.sfence) begin
+          mshr.fence;
+          rg_fence<= True;
+          rg_fence_rob<= core_req.rob;
+          rg_SRAM_fence[0]<= True;
           rg_cache_busy<= True;
-          `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
-          rg_access_fault_response<= tuple3(resp_from_tlb.exception, core_req.prf_index, core_req.rob);
+          `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
         end
-        else begin  //Access is valid
-          Bool lv_sc_pass= True;
-        `ifdef atomic
-          if(core_req.is_atomic) begin
-            if(core_req.atomic_fn=='d2 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
-              rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
-            else
-              rg_lr_info<= tuple3(False, ?, ?);
+        else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
+          `logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
+          if(resp_from_tlb.trap) begin  //Access fault
+            rg_cache_busy<= True;
+            `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
+            rg_access_fault_response<= tuple3(resp_from_tlb.exception, core_req.prf_index, core_req.rob);
+          end
+          else begin  //Access is valid
+            Bool lv_sc_pass= True;
+          `ifdef atomic
+            if(core_req.is_atomic) begin
+              if(core_req.atomic_fn=='d2 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
+                rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
+              else
+                rg_lr_info<= tuple3(False, ?, ?);
 
-            if(core_req.atomic_fn=='d3) begin   //SC
-              Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
-              if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
-                lv_sc_pass= False;
+              if(core_req.atomic_fn=='d3) begin   //SC
+                Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
+                if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
+                  lv_sc_pass= False;
+              end
             end
-          end
-          else 
-            rg_lr_info<= tuple3(False, ?, ?);
-        `endif
+            else 
+              rg_lr_info<= tuple3(False, ?, ?);
+          `endif
 
-          if(is_IO_access) begin  //IO operation
-            //Enqueue into a separate FIFO that handles IO Requests
-            `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
-            `ifdef ASSERT
-              dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
-            `endif
-            ff_io_info.enq(req);
-            rg_cache_busy<= True;
+            if(is_IO_access) begin  //IO operation
+              //Enqueue into a separate FIFO that handles IO Requests
+              `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
+              `ifdef ASSERT
+                dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
+              `endif
+              ff_io_info.enq(req);
+              rg_cache_busy<= True;
+            end
+            else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
+              `logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
+              ff_first_stage.enq(req);
+            end
+          `ifdef atomic
+            else begin
+              rg_sc_fail<= True;
+              rg_access_fault_response<= tuple3(defaultValue, core_req.prf_index, core_req.rob);
+              rg_cache_busy<= True;
+              `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
+            end
+          `endif
           end
-          else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
-            `logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
-            ff_first_stage.enq(req);
-          end
-        `ifdef atomic
-          else begin
-            rg_sc_fail<= True;
-            rg_access_fault_response<= tuple3(defaultValue, core_req.prf_index, core_req.rob);
-            rg_cache_busy<= True;
-            `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
-          end
-        `endif
         end
-      end
-      else begin    //Miss in the TLB and not IO or fence operation
-        `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
-        wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
-        rg_cache_busy<= True;
-      end
-      `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
+        else begin    //Miss in the TLB and not IO or fence operation
+          `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
+          wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
+          rg_cache_busy<= True;
+        end
+        `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
+      //end
     endrule
 
     rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core &&
