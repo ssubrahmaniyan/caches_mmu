@@ -659,20 +659,21 @@ package nb_dcache;
         end
         `endif
       end
-      else if(wr_is_mshr_req_to_fb_valid) begin    //Some pending MSHR request to FB
-        if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
-          `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
-          wr_stage2_enq<= convert_to_Cache_req(req);
-          if(req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif ) begin
-            wr_sram_resp_to_core<= Resp_to_core { data: ?,
-                                                  prf_index: req.prf_index,
-                                                  rob: req.rob,
-                                                  exception: No_exception };
-          end
-        end
-        else begin
-          `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store/atomic req: ", fshow(req)))
-        end
+      //MSHR is sending a req to FB and the curr line addr of FB = ff_first_stage request's line addr
+      else if(wr_is_mshr_req_to_fb_valid && fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin
+        `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store/atomic req: ", fshow(req)))
+        //if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
+        //  `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
+        //  wr_stage2_enq<= convert_to_Cache_req(req);
+        //  if(req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif ) begin
+        //    wr_sram_resp_to_core<= Resp_to_core { data: ?,
+        //                                          prf_index: req.prf_index,
+        //                                          rob: req.rob,
+        //                                          exception: No_exception };
+        //  end
+        //end
+        //else begin
+        //end
       end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
@@ -953,6 +954,7 @@ package nb_dcache;
       let req= ff_second_stage.first;
       if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val] && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
         wr_ff_second_stage_store_req_to_curr_fb<= True;
+        `logLevel( dcache, 2, $format("DCACHE : ff_second_stage req to curr FB. Req: ", fshow(req)))
       end
     endrule
 
