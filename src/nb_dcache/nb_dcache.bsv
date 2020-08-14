@@ -235,7 +235,7 @@ package nb_dcache;
     FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
     for(Integer i=0; i<ways_val; i=i+1)
       ff_first_stage_tag[i]<- mkBypassFIFO;
-    FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkFIFOF;
+    FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkGFIFOF(True, False);
     Ifc_SESFMI_FIFO#(2, Bool) cff_second_stage_valid <- mkSESFMI_second_stage_inst;
     Ifc_SEMF_FIFO#(2, Tuple2#(Bit#(rob_index), Bool)) cff_second_stage_rob_id <- mkSEMF_FIFO(?);
     FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index)) ff_io_info <- mkFIFO;
@@ -249,11 +249,12 @@ package nb_dcache;
     Reg#(Flush_type#(rob_index)) rg_flush <- mkDReg(defaultValue);
     Reg#(Bool) rg_fence <- mkReg(False);
     Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
-    Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, True);
+    Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, False);
     Reg#(Tuple3#(DCache_exception, Bit#(prf_index), Bit#(rob_index))) rg_access_fault_response <- mkReg(tuple3(defaultValue, ?, ?));
     Reg#(Bool) rg_io_req_sent <- mkReg(False);
     Reg#(Tuple2#(Bool, Bit#(TSub#(vaddr,wordbits)))) rg_prev_req_info <- mkReg(tuple2(False, ?));
     Reg#(Bit#(rob_index)) rg_fence_rob <- mkRegU;
+    Reg#(Bool) rg_fence_wait_for_ff_first_stage_empty <- mkConfigReg(False);
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -275,7 +276,7 @@ package nb_dcache;
     Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
-    Wire#(Bool) wr_ff_second_stage_store_req_to_curr_fb <- mkDWire(False);
+    Wire#(Bool) wr_ff_first_stage_store_req_to_curr_fb <- mkDWire(False);
 
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
@@ -461,7 +462,7 @@ package nb_dcache;
     endrule
 
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
-                                 );
+                                 && !rg_fence_wait_for_ff_first_stage_empty);
       let core_req= ff_req_from_core.first;
       ff_req_from_core.deq;
       Bool is_actual_store= (core_req.origin == Store_commit);
@@ -500,9 +501,10 @@ package nb_dcache;
         Bool is_IO_access= is_IO(core_req.addr);
         if(core_req.sfence) begin
           mshr.fence;
-          rg_fence<= True;
+          //rg_fence<= True;
           rg_fence_rob<= core_req.rob;
           rg_SRAM_fence[0]<= True;
+          rg_fence_wait_for_ff_first_stage_empty<= True;
           rg_cache_busy<= True;
           `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
         end
@@ -603,7 +605,7 @@ package nb_dcache;
     //This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
     //to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
     //cache, then the request is sent to the fill buffer.
-    rule rl_tag_and_data_array_read_response(!rg_fence `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif );
+    rule rl_tag_and_data_array_read_response(!rg_SRAM_fence[0] `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif );
       let req= ff_first_stage.first;
       `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
 
@@ -673,8 +675,9 @@ package nb_dcache;
         `endif
       end
       //MSHR is sending a req to FB and the curr line addr of FB = ff_first_stage request's line addr
+      //TODO 14082020. Can we check if MSHR is not full and ff_second_stage is Empty, and if so, forward the req to MSHR?
       else if(wr_is_mshr_req_to_fb_valid && fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin
-        `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling store/atomic req: ", fshow(req)))
+        `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling req: ", fshow(req)))
         //if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
         //  `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
         //  wr_stage2_enq<= convert_to_Cache_req(req);
@@ -771,6 +774,10 @@ package nb_dcache;
       else if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin  //Req to same line that is being filled in the FB
         `logLevel( dcache, 2, $format("DCACHE : Req to same line_addr: %h that is being filled in the FB. Stalling... ", fill_buffer.line_addr))
       end
+      else if(mshr.entries_full && ff_second_stage.notEmpty)  begin
+        //dynamicAssert(!ff_second_stage.notFull,"ff_second_stage is FULL when MSHR entries are full");
+        `logLevel( dcache, 2, $format("DCACHE : MSHR entries are full, and ff_second_stage has one entry. Stalling... "))
+      end
       else begin
         `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
         Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
@@ -781,8 +788,10 @@ package nb_dcache;
         //Also, this will have no impact on throughput as the same store instruction would have arrived from the store buffer
         //a couple of clock cycles before. Therefore, even if the store is a miss in the cache, a "prefetch" would
         //have already started.
-        if(!is_store_instruction || !wr_is_mshr_resp_to_core) begin
-          wr_stage2_fb_enq<= convert_to_Cache_req(req);
+        if((!is_store_instruction || !wr_is_mshr_resp_to_core) && ff_second_stage.notFull) begin
+          let second_stage_req= convert_to_Cache_req(req);
+          ff_second_stage.enq(second_stage_req);
+          wr_stage2_fb_enq<= second_stage_req;
           `logLevel( dcache, 2, $format("DCACHE : Converted to cache request"))
         end
         
@@ -804,18 +813,18 @@ package nb_dcache;
     endrule
 
     rule rl_enq_ff_second_stage(!rg_flush.valid);
-      `logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
-      wr_stage1_deq_enq<= True;
-      ff_second_stage.enq(wr_stage2_enq);
-      Bool can_flush= wr_stage2_enq.origin!=Store_commit;
-      cff_second_stage_rob_id.enq(tuple2(wr_stage2_enq.rob, can_flush));
-      cff_second_stage_valid.enq(True);
+    //  `logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
+    //  wr_stage1_deq_enq<= True;
+    //  ff_second_stage.enq(wr_stage2_enq);
+    //  Bool can_flush= wr_stage2_enq.origin!=Store_commit;
+    //  cff_second_stage_rob_id.enq(tuple2(wr_stage2_enq.rob, can_flush));
+    //  cff_second_stage_valid.enq(True);
     endrule
 
     rule rl_fb_enq_ff_second_stage(!rg_flush.valid);
       `logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
       wr_stage1_fb_deq_enq<= True;
-      ff_second_stage.enq(wr_stage2_fb_enq);
+      //ff_second_stage.enq(wr_stage2_fb_enq);
       Bool can_flush= wr_stage2_fb_enq.origin!=Store_commit;
       cff_second_stage_rob_id.enq(tuple2(wr_stage2_fb_enq.rob, can_flush));
       cff_second_stage_valid.enq(True);
@@ -846,6 +855,7 @@ package nb_dcache;
     rule rl_access_MSHRs(!rg_flush.valid);
       let req= ff_second_stage.first;
       ff_second_stage.deq;
+      `logLevel( dcache, 2, $format("DCACHE : Stage3 req: ", fshow(req)))
       req.rob= tpl_1(cff_second_stage_rob_id.first);
       cff_second_stage_rob_id.deq;
       cff_second_stage_valid.deq;
@@ -963,11 +973,11 @@ package nb_dcache;
     endrule
    
     //----------------------------- Fill buffer release ---------------------------------//
-    rule rl_check_ff_second_stage_store_to_fb_addr;
-      let req= ff_second_stage.first;
+    rule rl_check_ff_first_stage_store_to_fb_addr;
+      let req= ff_first_stage.first;
       if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val] && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
-        wr_ff_second_stage_store_req_to_curr_fb<= True;
-        `logLevel( dcache, 2, $format("DCACHE : ff_second_stage req to curr FB. Req: ", fshow(req)))
+        wr_ff_first_stage_store_req_to_curr_fb<= True;
+        `logLevel( dcache, 2, $format("DCACHE : ff_first_stage req to curr FB. Req: ", fshow(req)))
       end
     endrule
 
@@ -979,7 +989,7 @@ package nb_dcache;
     //         if it is a load req as the fill buffer is invalidated only after 3 clock cycles. For a 
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
     rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence
-    && !wr_ff_second_stage_store_req_to_curr_fb);
+    && !wr_ff_first_stage_store_req_to_curr_fb);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -1051,6 +1061,12 @@ package nb_dcache;
     //---------------------------------------------------------------------//
 
     //----------------------------- Fence ---------------------------------//
+
+    rule rl_fence_wait_for_ff_first_stage_empty(rg_fence_wait_for_ff_first_stage_empty && !rg_fence
+    && !ff_first_stage.notEmpty);
+      rg_fence<= True;
+      rg_fence_wait_for_ff_first_stage_empty<= False;
+    endrule
 
     //This rule fires whent the fill buffer is ready to be released.
     //Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
@@ -1234,7 +1250,12 @@ package nb_dcache;
     endrule
 
     interface subifc_req_from_core= toPut(ff_req_from_core);
-    interface subifc_resp_to_core= toGet(wr_resp_to_core);
+    interface subifc_resp_to_core= interface Get
+      method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
+      if(!rg_fence_wait_for_ff_first_stage_empty);
+        return wr_resp_to_core;
+      endmethod
+    endinterface;
     interface subifc_req_to_ptw= toGet(wr_req_to_ptw);
     interface subifc_ptw_meta= dtlb.ptw_meta;
     interface subifc_response_frm_ptw= dtlb.response_frm_ptw;

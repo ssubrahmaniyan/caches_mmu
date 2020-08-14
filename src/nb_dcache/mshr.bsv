@@ -55,6 +55,7 @@ package mshr;
 		method Action flush (Flush_type#(rob_index) bundle);
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
+    (*always_ready*) method Bool entries_full;
     (*always_ready, always_enabled*) method Action fb_released;
 	endinterface
 
@@ -354,6 +355,10 @@ package mshr;
 		method Bool not_empty;
 			return mshr_not_empty;
 		endmethod
+
+    method Bool entries_full;
+      return mshr_full;
+    endmethod
 
     method Action fb_released;
       wr_fb_released<= True;
