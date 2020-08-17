@@ -187,6 +187,7 @@ package fill_buffer;
 		rule rl_set_rg_first_resp(rg_first_resp && !all_valid && !tpl_2(wr_data_from_mem));
 			rg_fb_addr<= wr_addr_from_MSHR_to_fb;
 			rg_first_resp<= False;
+			`logLevel( dcache, 2, $format("FB : Assigning rg_fb_addr: %h", wr_addr_from_MSHR_to_fb))
     endrule
 
     rule rl_reset_rg_first_resp(!rg_first_resp && tpl_2(wr_data_from_mem));

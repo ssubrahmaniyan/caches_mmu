@@ -39,6 +39,7 @@ package SESFMI_FIFO;
 		method Action enq(a item);
 		method Action deq;
 		method a first;
+    method Bool notFull;
 		method Vector#(depth, a) contents;
 		method Action initialize(Vector#(depth,a) init);
 		method Action clear;
@@ -98,10 +99,14 @@ package SESFMI_FIFO;
 			return q[0];
 		endmethod
 	
-		method Action enq(x) if (!full && !wr_initialize);
+		method Action enq(x) if (!wr_initialize);
 			enqueueing.send;
 			x_wire <= x;
 		endmethod
+
+    method Bool notFull;
+      return !full;
+    endmethod
 	
 		method Action initialize(Vector#(depth,a) init);
 			for(Integer i=0; i<n; i=i+1) begin

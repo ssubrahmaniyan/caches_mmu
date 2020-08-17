@@ -255,6 +255,7 @@ package nb_dcache;
     Reg#(Tuple2#(Bool, Bit#(TSub#(vaddr,wordbits)))) rg_prev_req_info <- mkReg(tuple2(False, ?));
     Reg#(Bit#(rob_index)) rg_fence_rob <- mkRegU;
     Reg#(Bool) rg_fence_wait_for_ff_first_stage_empty <- mkConfigReg(False);
+    Reg#(Bool) rg_fence_fb_release <- mkDReg(False);
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -821,7 +822,7 @@ package nb_dcache;
     //  cff_second_stage_valid.enq(True);
     endrule
 
-    rule rl_fb_enq_ff_second_stage(!rg_flush.valid);
+    rule rl_fb_enq_ff_second_stage(!rg_flush.valid && cff_second_stage_valid.notFull);
       `logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
       wr_stage1_fb_deq_enq<= True;
       //ff_second_stage.enq(wr_stage2_fb_enq);
@@ -854,30 +855,42 @@ package nb_dcache;
     // and removing check for index 0 in rl_flush_ff_second_stage.
     rule rl_access_MSHRs(!rg_flush.valid);
       let req= ff_second_stage.first;
-      ff_second_stage.deq;
-      `logLevel( dcache, 2, $format("DCACHE : Stage3 req: ", fshow(req)))
+      `logLevel( dcache, 2, $format("DCACHE : Stage 3 req: ", fshow(req)))
       req.rob= tpl_1(cff_second_stage_rob_id.first);
-      cff_second_stage_rob_id.deq;
-      cff_second_stage_valid.deq;
 
-      //If valid (not flushed) request OR if fence && a store request
+      Bool deq_prev_fifo= False;
+      //If valid (not flushed) request OR if (fence ongoing && a store request)
+      //TODO check if fence and store is required here.
       if( cff_second_stage_valid.first || (rg_fence && req.origin==Store_buffer) ) begin  
         let mshr_resp<- mshr.allocate(req);
-        if(mshr_resp matches tagged Valid .read_id) begin
+        if(tpl_1(mshr_resp)==Not_allocated) begin
+          let new_mshr_id= tpl_2(mshr_resp);
           Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
           Bit#(busoffset) zeros= 'd0;
           Bit#(paddr) mem_addr= {line_addr, zeros};
-          `logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",read_id, mem_addr))
+          `logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",new_mshr_id, mem_addr))
+          deq_prev_fifo= True;
           ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
-                                                  id: zeroExtend(read_id),
+                                                  id: zeroExtend(new_mshr_id),
                                                   is_burst: True });
         end
-        else begin
+        else if(tpl_1(mshr_resp)==Allocated) begin
+          deq_prev_fifo= True;
           `logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
+        end
+        else begin
+          `logLevel( dcache, 2, $format("DCACHE : MSHR is busy. Stalling Stage3."))
         end
       end
       else begin
+        deq_prev_fifo= True;
         `logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req)))
+      end
+
+      if(deq_prev_fifo) begin
+        ff_second_stage.deq;
+        cff_second_stage_rob_id.deq;
+        cff_second_stage_valid.deq;
       end
     endrule
 
@@ -1047,6 +1060,7 @@ package nb_dcache;
         `logLevel( dcache, 2, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
       end
       rg_fb_state<= Release_FB;
+      mshr.fb_released;
     endrule
 
     //Releasing the fill buffer entry happens in a cycle after the tag and data arrays have been updated,
@@ -1054,7 +1068,6 @@ package nb_dcache;
     //cycle where this rule is getting executed, the request from ff_first_stage is serviced.
     rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
       fill_buffer.release_fb;
-      mshr.fb_released;
       rg_fb_state<= Read_SRAMs;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
     endrule
@@ -1076,7 +1089,8 @@ package nb_dcache;
     //Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
     //in Write_SRAMs state, the fence should begin only after the current fb entry is written to the cache.
     //TODO Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
-    rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1);
+    rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1
+    && wr_is_mshr_req_to_fb_valid==False);
       let data= tpl_2(fill_buffer.data);
       let line_addr= fill_buffer.line_addr;
       Bit#(setbits) set_index= line_addr[setbits_val-1:0];
@@ -1092,9 +1106,13 @@ package nb_dcache;
       //is received, it is automatically dequeued from the FIFO and discarded.
       //The MSHR should also be acknowledged about the FB entry release so that it can free-up the
       //MSHR entry.
-      fill_buffer.release_fb;
       mshr.fb_released;
+      rg_fence_fb_release<= True;
       `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
+    endrule
+
+    rule rl_fence_fb_release(rg_fence && rg_fence_fb_release);
+      fill_buffer.release_fb;
     endrule
 
     //TODO To reduce one cycle per dirty set, implement this function to check if exactly one dirty way exists
@@ -1290,7 +1308,7 @@ package nb_dcache;
       return (rg_cache_busy || !ff_req_from_core.notFull);
     endmethod
 
-    method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
+    method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(!rg_cache_busy);
       let flush_signal= Flush_type {valid: True,
                                     head: head,
                                     flush_rob: flush_rob };

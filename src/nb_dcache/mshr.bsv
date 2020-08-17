@@ -47,7 +47,7 @@ package mshr;
 											numeric type mshrfifo_depth,
 											numeric type rob_index,
                       numeric type prf_index );
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
+		method ActionValue#(Tuple2#(MSHR_status_resp, Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
 		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
     method Bit#(TSub#(paddr,linewidthbits)) addr_to_fb;
@@ -56,7 +56,7 @@ package mshr;
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
     (*always_ready*) method Bool entries_full;
-    (*always_ready, always_enabled*) method Action fb_released;
+    method Action fb_released;
 	endinterface
 
 	module mkmshr (Ifc_mshr#(paddr, linewidthbits, data, mshrsize, mshrfifo_depth, rob_index, prf_index))
@@ -103,7 +103,7 @@ package mshr;
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_allocate_id <- mkDWire(tagged Invalid);
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
-    Wire#(Bool) wr_fb_released <- mkDWire(False);
+    Reg#(Bool) rg_fb_released <- mkConfigReg(False);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -140,14 +140,17 @@ package mshr;
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle ", curr_fb_id))
 				end
-				else begin
+        else if(rg_fb_released) begin //if(rg_fb_released) begin
 					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
-        //else begin
-				//	`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
-        //end
+        else begin
+					`logLevel( dcache, 2, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
+        end
 			end
+      //else begin
+			//	`logLevel( dcache, 2, $format("MSHR: rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
+      //end
 		endrule
 
 		rule rl_deq_ff(wr_deq_ff_id matches tagged Valid .deq_ff_id);
@@ -171,8 +174,8 @@ package mshr;
 
     //TODO can be optimized by changing one_mshr_fifo_full to checking only if the fifo corresponding 
     //to the mshr that is being allocated is full
-		method ActionValue#(Maybe#(Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req)
-												if(!one_mshr_fifo_full && !mshr_full);
+		method ActionValue#(Tuple2#(MSHR_status_resp, Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
+												//if(!one_mshr_fifo_full && !mshr_full);
 			Bool mshr_allocated= False;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
@@ -188,29 +191,37 @@ package mshr;
 					mshr_unallocated_id= fromInteger(i);
 				end
 			end
-			if(mshr_allocated)
-				wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
+			//if(mshr_allocated)
+			//	wr_curr_req_mshr_id<= tagged Valid mshr_allocated_id;
 
-			if(!mshr_allocated) begin
-				rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
-        `ifdef atomic
-          rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
-        `endif
-				wr_allocate_id<= tagged Valid mshr_unallocated_id;
-				ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
-																										access_size: req.access_size,
-																										payload: req.payload,
-																										origin: req.origin
-                                                    `ifdef atomic 
-                                                      , is_atomic: req.is_atomic
-                                                    `endif });
-        Bool can_flush= req.origin!=Store_commit;
-				cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
-				cff_valid[mshr_unallocated_id].enq(1'b1);
-				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
-				return tagged Valid mshr_unallocated_id;
+      //If a new request for which MSHR has not been allocated, and MSHR entries are not full,
+      if(!mshr_allocated) begin
+        if(!mshr_full) begin
+				  rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
+          `ifdef atomic
+            rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
+          `endif
+				  wr_allocate_id<= tagged Valid mshr_unallocated_id;
+				  ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
+				  																						access_size: req.access_size,
+				  																						payload: req.payload,
+				  																						origin: req.origin
+                                                      `ifdef atomic 
+                                                        , is_atomic: req.is_atomic
+                                                      `endif });
+          Bool can_flush= req.origin!=Store_commit;
+				  cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
+				  cff_valid[mshr_unallocated_id].enq(1'b1);
+				  `logLevel( dcache, 2, $format("MSHR : New Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
+				  return tuple2(Not_allocated, mshr_unallocated_id);
+        end
+        else begin
+				  `logLevel( dcache, 2, $format("MSHR : New MSHR not allocated as MSHRs are full. ", mshr_allocated_id))
+          return tuple2(Busy, ?);
+        end
 			end
-			else begin
+      //Else req is to an already allocated MSHR; so, check if the corresponding fifos are notFull
+			else if(ff_mshr[mshr_allocated_id].notFull) begin
 				wr_allocate_id<= tagged Valid mshr_allocated_id;
 				ff_mshr[mshr_allocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 																									access_size: req.access_size,
@@ -222,9 +233,13 @@ package mshr;
         Bool can_flush= req.origin!=Store_commit;
 				cff_rob[mshr_allocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_allocated_id].enq(1'b1);
-				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
-				return tagged Invalid;
+				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_allocated_id, req.addr))
+				return tuple2(Allocated, ?);
 			end
+      else begin
+				`logLevel( dcache, 2, $format("MSHR : Already allocated index %d but ff_mshr is full. ", mshr_allocated_id))
+         return tuple2(Busy, ?);
+      end
 		endmethod
 
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
@@ -267,6 +282,14 @@ package mshr;
 				end
 			end
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
+				if(rg_fb_released) begin
+					rg_curr_fb_id<= tagged Invalid;
+          rg_fb_released<= False;
+          `ifdef ASSERT
+            dynamicAssert(!ff_mshr[curr_rid].notEmpty,"ff_mshr[%d] is not Empty when FB is being released",curr_rid);
+          `endif
+					`logLevel( dcache, 2, $format("MSHR : No more pending requests of id: %d", curr_rid))
+				end
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
 					let cfifo_valid= cff_valid[curr_rid].first;
@@ -294,10 +317,6 @@ package mshr;
 				//so that in the next cycle it will be assigned the value
 				else if(wr_allocate_id matches tagged Valid .curr_req_rid &&& curr_req_rid==curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
 					`logLevel( dcache, 2, $format("MSHR : New req from ff_second_stage to existing MSHR of id: %d", curr_rid))
-				end
-				else begin
-					rg_curr_fb_id<= tagged Invalid;
-					`logLevel( dcache, 2, $format("MSHR : No more pending requests of id: %d", curr_rid))
 				end
 
 			end
@@ -360,8 +379,8 @@ package mshr;
       return mshr_full;
     endmethod
 
-    method Action fb_released;
-      wr_fb_released<= True;
+    method Action fb_released if(!rg_fb_released);
+      rg_fb_released<= True;
     endmethod
 	endmodule
 

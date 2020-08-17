@@ -36,6 +36,7 @@ package SEMF_FIFO;
 	interface Ifc_SEMF_FIFO#(numeric type depth, type a);
 		method Action enq(a item);
     method a first;
+    method Bool notFull;
 		method Action deq;
 		method Vector#(depth, a) contents;
 		method Action clear;
@@ -88,10 +89,14 @@ package SEMF_FIFO;
 			if (!empty) dequeueing.send;
 		endmethod
 	
-		method Action enq(x) if (!full);
+		method Action enq(x);
 			enqueueing.send;
 			x_wire <= x;
 		endmethod
+
+    method Bool notFull;
+      return !full;
+    endmethod
 	
     method a first;
       return q[0];
