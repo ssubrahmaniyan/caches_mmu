@@ -988,7 +988,8 @@ package nb_dcache;
     //         might be empty, there might be a request pending in the ff_second_stage. This is fine,
     //         if it is a load req as the fill buffer is invalidated only after 3 clock cycles. For a 
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
-    rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False && rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence
+    rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False &&
+    rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
     && !wr_ff_first_stage_store_req_to_curr_fb);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
@@ -1062,8 +1063,11 @@ package nb_dcache;
 
     //----------------------------- Fence ---------------------------------//
 
+    //Wait for ff_first_stage to get empty so that once fence is received from the core, the response 
+    //of ff_first_stage req is not sent to the processor.
+    //Also, wait if FB is updating the caches.
     rule rl_fence_wait_for_ff_first_stage_empty(rg_fence_wait_for_ff_first_stage_empty && !rg_fence
-    && !ff_first_stage.notEmpty);
+    && !ff_first_stage.notEmpty && rg_fb_state==Read_SRAMs);
       rg_fence<= True;
       rg_fence_wait_for_ff_first_stage_empty<= False;
     endrule
