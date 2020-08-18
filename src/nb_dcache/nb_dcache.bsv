@@ -264,7 +264,7 @@ package nb_dcache;
   `endif
 
     Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
-    Wire#(MSHR_Req#(paddr, datawidth, prf_index, rob_index)) wr_mshr_req_to_fb <- mkWire;
+    Wire#(Maybe#(MSHR_Req#(paddr, datawidth, prf_index, rob_index))) wr_mshr_req_to_fb <- mkDWire(tagged Invalid);
     Wire#(Bool) wr_stage2_check_fb <-mkWire;
     Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
     Wire#(Bool) wr_stage2_req_to_fb <- mkWire;
@@ -920,9 +920,9 @@ package nb_dcache;
         lv_id_to_mshr= tagged Valid truncate(resp_from_mem.id);
       let maybe_req_from_mshr<- mshr.req_to_fb(lv_id_to_mshr);    //Receive the request from MSHR corresponding to the rid
       `logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(maybe_req_from_mshr)))
-      if(tpl_1(maybe_req_from_mshr)) begin
-        wr_mshr_req_to_fb<= tpl_2(maybe_req_from_mshr);
-      end
+      //if(tpl_1(maybe_req_from_mshr)) begin
+        wr_mshr_req_to_fb<= maybe_req_from_mshr;
+      //end
     endrule
 
     rule rl_mshr_addr_to_fb;
@@ -940,8 +940,8 @@ package nb_dcache;
     //that FIFO entry, and send the next request. If it's a miss, no ack is sent, and in the subsequent
     //clock cycles, the same request is sent by the MSHR to the fill buffer.
     //Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
-    rule rl_MSHR_req_to_fill_buffer;
-      let req_from_mshr= wr_mshr_req_to_fb;
+    rule rl_MSHR_req_to_fill_buffer(wr_mshr_req_to_fb matches tagged Valid .req_from_mshr);
+      //let req_from_mshr= wr_mshr_req_to_fb;
       `logLevel( dcache, 2, $format("DCACHE :Sending  Request from MSHR to FB. "))
       wr_is_mshr_req_to_fb_valid<= True;
       let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
@@ -1001,7 +1001,7 @@ package nb_dcache;
     //         might be empty, there might be a request pending in the ff_second_stage. This is fine,
     //         if it is a load req as the fill buffer is invalidated only after 3 clock cycles. For a 
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
-    rule rl_release_fb_cycle1(fill_buffer.can_release && wr_is_mshr_req_to_fb_valid==False &&
+    rule rl_release_fb_cycle1(fill_buffer.can_release && !isValid(wr_mshr_req_to_fb) &&
     rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
     && !wr_ff_first_stage_store_req_to_curr_fb);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
@@ -1090,7 +1090,7 @@ package nb_dcache;
     //in Write_SRAMs state, the fence should begin only after the current fb entry is written to the cache.
     //TODO Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
     rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1
-    && wr_is_mshr_req_to_fb_valid==False);
+    && !isValid(wr_mshr_req_to_fb));
       let data= tpl_2(fill_buffer.data);
       let line_addr= fill_buffer.line_addr;
       Bit#(setbits) set_index= line_addr[setbits_val-1:0];

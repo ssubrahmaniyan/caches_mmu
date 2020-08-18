@@ -48,7 +48,7 @@ package mshr;
 											numeric type rob_index,
                       numeric type prf_index );
 		method ActionValue#(Tuple2#(MSHR_status_resp, Bit#(TLog#(mshrsize)))) allocate (Cache_req#(paddr, data, rob_index, prf_index) req);
-		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 		(*always_ready*) method Bit#(linewidthbits) mem_req_offset(Bit#(TLog#(mshrsize)) id);
     method Bit#(TSub#(paddr,linewidthbits)) addr_to_fb;
 		method Action ack_from_fb;
@@ -245,8 +245,9 @@ package mshr;
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 
 		//For whatever MSHR the response has come, that FIFO is not empty.
-		method ActionValue#(Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
-			Tuple2#(Bool, MSHR_Req#(paddr, data, prf_index, rob_index)) req= tuple2(False, ?);
+		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
+			Maybe#(MSHR_Req#(paddr, data, prf_index, rob_index)) req= tagged Invalid;
+      Bit#(addr_in_mshr) lv_fb_addr= 'd0;
 			`logLevel( dcache, 2, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
 			`logLevel( dcache, 2, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
@@ -254,13 +255,14 @@ package mshr;
 					rg_curr_fb_id<= tagged Valid req_rid;
 					let fifo_top= ff_mshr[req_rid].first;
 					let cfifo_valid= cff_valid[req_rid].first;
+          lv_fb_addr= rg_mshr_line_addr[req_rid];
 
 					//If a store_commit is pending, perform it irrespective of whether the cfifo_valid bit is 
 					//set, or if it is a fence instruction as this store got committed before the flush or fence 
 					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
             Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
-						req= tuple2(True, MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
@@ -269,7 +271,7 @@ package mshr;
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info) 
-                                          `endif });
+                                          `endif };
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
@@ -293,10 +295,11 @@ package mshr;
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
 					let cfifo_valid= cff_valid[curr_rid].first;
+          lv_fb_addr= rg_mshr_line_addr[curr_rid];
 
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
             Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
-						req= tuple2(True, MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
 																					origin: fifo_top.origin,
@@ -305,7 +308,7 @@ package mshr;
                                           `ifdef atomic
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info)
-                                          `endif });
+                                          `endif };
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
@@ -320,7 +323,7 @@ package mshr;
 				end
 
 			end
-			wr_addr_to_fb<= truncateLSB(tpl_2(req).addr);
+			wr_addr_to_fb<= lv_fb_addr; //truncateLSB(tpl_2(req).addr);
 			return req;
 		endmethod
 
