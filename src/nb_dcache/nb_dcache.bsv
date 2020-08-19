@@ -264,7 +264,6 @@ package nb_dcache;
     Reg#(Bool) rg_sc_fail <- mkReg(False);
   `endif
 
-    Wire#(Bool) wr_is_mshr_req_to_fb_valid <- mkDWire(False);
     Wire#(Maybe#(MSHR_Req#(paddr, datawidth, prf_index, rob_index))) wr_mshr_req_to_fb <- mkDWire(tagged Invalid);
     Wire#(Bool) wr_stage2_check_fb <-mkWire;
     Wire#(Bool) wr_is_mshr_resp_to_core <- mkDWire(False);
@@ -672,7 +671,7 @@ package nb_dcache;
       end
       //MSHR is sending a req to FB and the curr line addr of FB = ff_first_stage request's line addr
       //TODO 14082020. Can we check if MSHR is not full and ff_second_stage is Empty, and if so, forward the req to MSHR?
-      else if(wr_is_mshr_req_to_fb_valid && fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin
+      else if(isValid(wr_mshr_req_to_fb) && fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin
         `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling req: ", fshow(req)))
         //if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
         //  `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
@@ -921,7 +920,6 @@ package nb_dcache;
     rule rl_MSHR_req_to_fill_buffer(wr_mshr_req_to_fb matches tagged Valid .req_from_mshr);
       //let req_from_mshr= wr_mshr_req_to_fb;
       `logLevel( dcache, 2, $format("DCACHE :Sending  Request from MSHR to FB. "))
-      wr_is_mshr_req_to_fb_valid<= True;
       let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
       //Send the req to fill buffer and check if it's a hit
       let fill_buffer_resp<- fill_buffer.request(req_from_mshr);       //Send request to fill buffer
@@ -1274,6 +1272,7 @@ package nb_dcache;
       let resp= ff_io_resp.first;
       ff_io_resp.deq;
       ff_io_info.deq;
+      `logLevel( dcache, 2, $format("DCACHE : IO Resp: ", fshow(ff_io_resp.first)))
       //In this implementation, the fence finishes only after receiving any pending IO responses.
       //Hence, if an IO response is received in the middle of a fence request, rg_cache_busy should
       //remain True until the fence operation is over.
