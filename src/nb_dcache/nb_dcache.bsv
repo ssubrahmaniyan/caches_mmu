@@ -129,6 +129,7 @@ package nb_dcache;
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
   (*preempts = "rl_flush_ff_req_from_core, rl_handle_req_from_core"*)
+  (*preempts = "rl_flush_ff_first_stage, (rl_tag_and_data_array_read_response, rl_core_resp_for_atomic)"*)
 
   module mknb_dcache#(parameter String alg)
   //                  8,        8,      128,     4,    32,    32,    32,    32,      6,         4,       4,          3,           128,        7
@@ -454,12 +455,6 @@ package nb_dcache;
 
     rule rl_disp123 (core_req.addr=='h800918e0);
       `logLevel( dcache, 2, $format("DCACHE : Arjunn ff_req_from_core: ", fshow(core_req)))
-    endrule
-
-    //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
-    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
-      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
-      ff_req_from_core.deq;
     endrule
 
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
@@ -894,23 +889,6 @@ package nb_dcache;
       end
     endrule
 
-    //This rule resets the valid bit of rg_flush after a flush request is initiated.
-    //If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
-    (*no_implicit_conditions, fire_when_enabled*)
-    rule rl_flush_ff_second_stage(rg_flush.valid);
-      Vector#(2,Bool) valid= cff_second_stage_valid.contents;
-      Vector#(2,Tuple2#(Bit#(rob_index), Bool)) meta= cff_second_stage_rob_id.contents;
-
-      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[0])) && valid[0] && tpl_2(meta[0]))
-        valid[0]= False;
-      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[1])) && valid[1] && tpl_2(meta[1]))
-        valid[1]= False;
-
-      cff_second_stage_valid.initialize(valid);
-      `logLevel( dcache, 2, $format("DCACHE : Flusing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
-      mshr.flush(rg_flush);
-    endrule
-
     rule rl_MSHR_req;
       let resp_from_mem= wr_read_resp_from_mem;
       Maybe#(Bit#(TLog#(mshrsize))) lv_id_to_mshr;
@@ -1070,6 +1048,44 @@ package nb_dcache;
       fill_buffer.release_fb;
       rg_fb_state<= Read_SRAMs;
       `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
+    endrule
+
+    //---------------------------------------------------------------------//
+
+    //----------------------------- Flush ---------------------------------//
+
+    //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
+    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
+      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
+      ff_req_from_core.deq;
+    endrule
+
+    let first_stage_req= ff_first_stage.first;
+    rule rl_flush_ff_first_stage(rg_flush.valid && first_stage_req.origin!=Store_commit
+    && should_flush(rg_flush.head, rg_flush.flush_rob, first_stage_req.rob));
+      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_first_stage: ", fshow(first_stage_req)))
+      wr_stage1_deq<= True;
+      `ifdef atomic
+      rg_atomic_hit_info<= tagged Invalid;
+      `endif
+      ff_first_stage.deq;
+    endrule
+
+    //This rule resets the valid bit of rg_flush after a flush request is initiated.
+    //If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
+    (*no_implicit_conditions, fire_when_enabled*)
+    rule rl_flush_ff_second_stage(rg_flush.valid);
+      Vector#(2,Bool) valid= cff_second_stage_valid.contents;
+      Vector#(2,Tuple2#(Bit#(rob_index), Bool)) meta= cff_second_stage_rob_id.contents;
+
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[0])) && valid[0] && tpl_2(meta[0]))
+        valid[0]= False;
+      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[1])) && valid[1] && tpl_2(meta[1]))
+        valid[1]= False;
+
+      cff_second_stage_valid.initialize(valid);
+      `logLevel( dcache, 2, $format("DCACHE : Flusing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
+      mshr.flush(rg_flush);
     endrule
 
     //---------------------------------------------------------------------//
