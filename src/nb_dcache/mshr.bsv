@@ -199,6 +199,7 @@ package mshr;
         if(!mshr_full) begin
 				  rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
           `ifdef atomic
+          if(req.is_atomic)
             rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
           `endif
 				  wr_allocate_id<= tagged Valid mshr_unallocated_id;
@@ -222,6 +223,10 @@ package mshr;
 			end
       //Else req is to an already allocated MSHR; so, check if the corresponding fifos are notFull
 			else if(ff_mshr[mshr_allocated_id].notFull) begin
+        `ifdef atomic
+        if(req.is_atomic)
+          rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
+        `endif
 				wr_allocate_id<= tagged Valid mshr_allocated_id;
 				ff_mshr[mshr_allocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 																									access_size: req.access_size,
