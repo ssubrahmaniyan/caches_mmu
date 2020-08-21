@@ -514,12 +514,12 @@ package nb_dcache;
             Bool lv_sc_pass= True;
           `ifdef atomic
             if(core_req.is_atomic) begin
-              if(core_req.atomic_fn=='d2 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
+              if(core_req.atomic_fn=='d5 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
                 rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
               else
                 rg_lr_info<= tuple3(False, ?, ?);
 
-              if(core_req.atomic_fn=='d3) begin   //SC
+              if(core_req.atomic_fn=='d7) begin   //SC
                 Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
                 if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
                   lv_sc_pass= False;
@@ -573,6 +573,7 @@ package nb_dcache;
 
   `ifdef atomic
     rule rl_sc_fail_response_to_core(!wr_is_mshr_resp_to_core && rg_sc_fail && !rg_fence && rg_cache_busy);
+      `logLevel( dcache, 2, $format("DCACHE : SC failed for prf: %h rob: %h", tpl_2(rg_access_fault_response), tpl_3(rg_access_fault_response)))
       wr_resp_to_core<= Resp_to_core {data: 'd1,
                                       prf_index: tpl_2(rg_access_fault_response),
                                       rob: tpl_3(rg_access_fault_response),
@@ -701,13 +702,16 @@ package nb_dcache;
       data_arr[hit_way].write(set_index, write_data);
       wr_stage1_deq<= True;
       rg_atomic_hit_info<= tagged Invalid;
-      if(atomic_fn=='d3) begin  //if SC
+      if(atomic_fn=='d7) begin  //if SC
         cache_data= 'd0;
       end
-      wr_sram_resp_to_core<= Resp_to_core { data: cache_data, //TODO check if correct for atomics
-                                            prf_index: req.prf_index,
-                                            rob: req.rob,
-                                            exception: No_exception };
+      Resp_to_core#(datawidth, prf_index, rob_index) resp= Resp_to_core { data: cache_data, //TODO check if correct for atomics
+                                                                          prf_index: req.prf_index,
+                                                                          rob: req.rob,
+                                                                          exception: No_exception };
+      `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit req: ", fshow(req)))
+      `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit resp: ", fshow(resp)))
+      wr_sram_resp_to_core<= resp;
     endrule
   `endif
 
@@ -750,7 +754,7 @@ package nb_dcache;
         Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
         Bool send_resp= req.origin!=Store_buffer;
       `ifdef atomic
-        if(req.is_atomic && req.atomic_fn=='d3) begin //SC
+        if(req.is_atomic && req.atomic_fn=='d7) begin //SC
           data_to_core= 0;
         end
       `endif
@@ -934,7 +938,7 @@ package nb_dcache;
         if(send_resp) begin
           Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
         `ifdef atomic
-          if(req_from_mshr.is_atomic && req_from_mshr.atomic_fn=='d3) begin //SC
+          if(req_from_mshr.is_atomic && req_from_mshr.atomic_fn=='d7) begin //SC
             data_to_core= 0;
           end
         `endif
@@ -1289,6 +1293,7 @@ package nb_dcache;
     interface subifc_resp_to_core= interface Get
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
       if(!rg_fence_wait_for_ff_first_stage_empty);
+        `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
     endinterface;
