@@ -615,10 +615,6 @@ package nb_dcache;
         dataline[i] = tempdata;
         tag = ff_first_stage_tag[i].first;
         //If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
-        if(tag[tagbits_val]==1) begin
-          Bit#(setbits) dummy_set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-          `logLevel( dcache, 2, $format("DCACHE : Valid tag at index: %d and way: %d", dummy_set_index, i ))
-        end
         if(tag[tagbits_val]==1 && tag[tagbits_val-1:0]== req_tag) begin    
           `logLevel( dcache, 2, $format("DCACHE : Hit at way num: %d tag: %h req_tag: %h", i, tag, req_tag ))
           way_num= fromInteger(i);  //Store the index of the tag match
@@ -1067,6 +1063,9 @@ package nb_dcache;
       rg_atomic_hit_info<= tagged Invalid;
       `endif
       ff_first_stage.deq;
+      for(Integer i = 0; i<ways_val; i = i+1) begin
+        ff_first_stage_tag[i].deq;
+      end
     endrule
 
     //This rule resets the valid bit of rg_flush after a flush request is initiated.
