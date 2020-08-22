@@ -387,33 +387,6 @@ package nb_dcache;
       end
     endfunction
 
-    `ifdef atomic
-    function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded);
-      //provisos(Add#(z__, 32, datawidth));
-      Bit#(datawidth) op1 = loaded;
-      Bit#(datawidth) op2 = rs2;
-      if(op[4] == 0)begin
-        op1 = signExtend(loaded[31 : 0]);
-        op2 = signExtend(rs2[31 : 0]);
-      end
-      Int#(datawidth) s_op1 = unpack(op1);
-      Int#(datawidth) s_op2 = unpack(op2);
-      
-      case (op[3 : 0])
-          'b0011 : return op2;
-          'b0000 : return (op1 + op2);
-          'b0010 : return (op1^op2);
-          'b0110 : return (op1 & op2);
-          'b0100 : return (op1|op2);
-          'b1100 : return min(op1, op2);
-          'b1110 : return max(op1, op2);
-          'b1000 : return pack(min(s_op1, s_op2));
-          'b1010 : return pack(max(s_op1, s_op2));
-          default : return op1;
-        endcase
-    endfunction
-    `endif
-
     rule rl_initialize(!rg_initialize_done);
       `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
       for(Integer i=0; i<ways_val; i=i+1) begin
@@ -698,10 +671,14 @@ package nb_dcache;
       Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
       let cache_line= data_arr[hit_way].read_response;
       let write_data= generate_masked_data(cache_line, atomic_result, line_offset, req.access_size); //TODO make UniqueWrapper
-      Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
-      data_arr[hit_way].write(set_index, write_data);
+      `logLevel( dcache, 3, $format("DCACHE : Atomic cache_data: %h cache_line: %h atomic_result: %h line_offset: %h access_size: %d fn: %b write_data: %h", cache_data, cache_line, atomic_result, line_offset, req.access_size, atomic_fn, write_data))
       wr_stage1_deq<= True;
       rg_atomic_hit_info<= tagged Invalid;
+      Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+
+      Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
+      data_arr[hit_way].write(set_index, write_data);
+      tag_arr[hit_way].write(set_index, {1'b1, 1'b1, req_tag}); //Setting the valid (which is already 1) and dirty bit
       if(atomic_fn=='d7) begin  //if SC
         cache_data= 'd0;
       end
