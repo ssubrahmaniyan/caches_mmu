@@ -267,4 +267,33 @@ package nb_dcache_types;
     DCache_exception exception;
   } IO_Resp#(numeric type data) deriving (Bits, Eq, FShow);
 
+  `ifdef atomic
+  function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded)
+  provisos(Add#(a__, 32, datawidth));
+    Bit#(datawidth) op1 = loaded;
+    Bit#(datawidth) op2 = rs2;
+    `ifdef RV64
+    if(op[4] == 0)begin
+      op1 = signExtend(loaded[31 : 0]);
+      op2 = signExtend(rs2[31 : 0]);
+    end
+    `endif
+    Int#(datawidth) s_op1 = unpack(op1);
+    Int#(datawidth) s_op2 = unpack(op2);
+    
+    case (op[3 : 0])
+        'b0101 : return op1;
+        'b0000 : return (op1 + op2);
+        'b0010 : return (op1^op2);
+        'b0110 : return (op1 & op2);
+        'b0100 : return (op1|op2);
+        'b1100 : return min(op1, op2);
+        'b1110 : return max(op1, op2);
+        'b1000 : return pack(min(s_op1, s_op2));
+        'b1010 : return pack(max(s_op1, s_op2));
+        default : return op2;
+      endcase
+  endfunction
+  `endif
+
 endpackage

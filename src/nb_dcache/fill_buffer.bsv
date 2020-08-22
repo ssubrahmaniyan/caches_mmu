@@ -131,35 +131,6 @@ package fill_buffer;
 			return readdata;
 		endfunction
 
-    `ifdef atomic
-    function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded)
-      provisos(Add#(cc__, 32, datawidth),
-							 Add#(bb_, 16, datawidth),
-               Add#(aa_, 8, datawidth));
-      Bit#(datawidth) op1 = loaded;
-      Bit#(datawidth) op2 = rs2;
-      if(op[4] == 0)begin
-	  		op1 = signExtend(loaded[31 : 0]);
-        op2 = signExtend(rs2[31 : 0]);
-      end
-      Int#(datawidth) s_op1 = unpack(op1);
-	  	Int#(datawidth) s_op2 = unpack(op2);
-      
-      case (op[3 : 0])
-	  			'b0011 : return op2;
-	  			'b0000 : return (op1 + op2);
-	  			'b0010 : return (op1^op2);
-	  			'b0110 : return (op1 & op2);
-	  			'b0100 : return (op1|op2);
-	  			'b1100 : return min(op1, op2);
-	  			'b1110 : return max(op1, op2);
-	  			'b1000 : return pack(min(s_op1, s_op2));
-	  			'b1010 : return pack(max(s_op1, s_op2));
-	  			default : return op1;
-	  		endcase
-    endfunction
-    `endif
-
 		Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
 		Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
 		Reg#(Bool) rg_can_release <- mkReg(False);
