@@ -1305,7 +1305,7 @@ package nb_dcache;
       return (rg_cache_busy || !ff_req_from_core.notFull);
     endmethod
 
-    method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob) if(!rg_cache_busy);
+    method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
       let flush_signal= Flush_type {valid: True,
                                     head: head,
                                     flush_rob: flush_rob };
