@@ -261,12 +261,12 @@ package mshr;
 					let fifo_top= ff_mshr[req_rid].first;
 					let cfifo_valid= cff_valid[req_rid].first;
           lv_fb_addr= rg_mshr_line_addr[req_rid];
+          Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 
 					//If a store_commit is pending, perform it irrespective of whether the cfifo_valid bit is 
 					//set, or if it is a fence instruction as this store got committed before the flush or fence 
 					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
-            Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
@@ -280,7 +280,19 @@ package mshr;
 						`logLevel( dcache, 2, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
-						wr_deq_ff_id<= tagged Valid req_rid;
+            if(ff_mshr[req_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
+						  req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
+						  															access_size: fifo_top.access_size,
+						  															payload: fifo_top.payload,
+						  															origin: Store_buffer,
+                                            prf_index: prf_id,
+                                            rob: tpl_1(cff_rob[req_rid].first)
+                                            `ifdef atomic
+                                            , is_atomic: fifo_top.is_atomic
+                                            , atomic_fn: tpl_1(rg_atomic_info) 
+                                            `endif };
+            end
+						wr_deq_ff_id<= tagged Valid req_rid;  //Deq req as this is a flushed req
 					end
 				end
 				//Else no pending req of current MSHR are pending, hence wait for the fill buffer to get filled
@@ -301,9 +313,9 @@ package mshr;
 					let fifo_top= ff_mshr[curr_rid].first;
 					let cfifo_valid= cff_valid[curr_rid].first;
           lv_fb_addr= rg_mshr_line_addr[curr_rid];
+          Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 
 					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
-            Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
@@ -317,6 +329,18 @@ package mshr;
 						`logLevel( dcache, 2, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
+            if(ff_mshr[curr_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
+						  req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
+						  															access_size: fifo_top.access_size,
+						  															payload: fifo_top.payload,
+						  															origin: Store_buffer,
+                                            prf_index: prf_id,
+                                            rob: tpl_1(cff_rob[curr_rid].first)
+                                            `ifdef atomic
+                                            , is_atomic: fifo_top.is_atomic
+                                            , atomic_fn: tpl_1(rg_atomic_info)
+                                            `endif };
+            end
 						wr_deq_ff_id<= tagged Valid curr_rid;
 					end
 				end
