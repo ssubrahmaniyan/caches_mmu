@@ -380,7 +380,9 @@ package mshr;
 		
 		method Action flush (Flush_type#(rob_index) bundle);
 			rg_flush[0]<= bundle;
-      $display("MSHR : Fluss ", fshow(bundle));
+      if (`VERBOSITY > 1) begin
+        $display("MSHR : Fluss ", fshow(bundle));
+      end
       `logLevel( dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
