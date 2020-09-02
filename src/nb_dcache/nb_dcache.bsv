@@ -194,11 +194,15 @@ package nb_dcache;
     let datawidth_val= valueOf(datawidth);
     let buswidth_val= valueOf(buswidth);
     let busoffset_val= valueOf(busoffset);
-    let linewidthbits_val= valueOf(lineoffset);
+    let lineoffset_val= valueOf(lineoffset);
     let setbits_val= valueOf(setbits);
     let tagbits_val= valueOf(tagbits);
     let tagpos_val= valueOf(tagpos);
     let evict_iter_val= valueOf(evict_iter);
+
+    function Bit#(TSub#(paddr,lineoffset)) get_line_addr(Bit#(paddr) addr);
+      return addr[paddr_val-1:lineoffset_val];
+    endfunction
 
     Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val];         // data array
     //TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
@@ -258,6 +262,7 @@ package nb_dcache;
     Reg#(Bit#(rob_index)) rg_fence_rob <- mkRegU;
     Reg#(Bool) rg_fence_wait_for_ff_first_stage_empty <- mkConfigReg(False);
     Reg#(Bool) rg_fence_fb_release <- mkDReg(False);
+    Reg#(Bit#(TSub#(paddr,lineoffset))) rg_prev_second_stage_line_addr <- mkReg(0);
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -447,7 +452,7 @@ package nb_dcache;
           `endif
         end
         else begin
-          set_index= core_req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+          set_index= core_req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
         end
         `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
         
@@ -599,7 +604,7 @@ package nb_dcache;
 
       if(way_num!='1) begin                                    //It's a line hit
         Bit#(TLog#(ways)) hit_way= truncate(way_num);
-        Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+        Bit#(setbits) set_index = req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
         let hit_line= dataline[hit_way];  //TODO change this to OInt type
         let hit_tag= tag_arr[hit_way].read_response;
         `logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
@@ -627,7 +632,7 @@ package nb_dcache;
           //TODO If MSHR is sending response in a cycle, should the store happen in that or
           //     should it wait for a free cycle where this stage can send a response?
           if(req.origin==Store_commit) begin
-            Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
+            Bit#(lineoffset) line_offset= req.addr[lineoffset_val-1:0];
             let write_data= generate_masked_data(hit_line, req.data, line_offset, req.access_size);
             data_arr[hit_way].write(set_index, write_data);
             tag_arr[hit_way].write(set_index, {1'b1, hit_tag[tagbits_val:0]}); //Setting the dirty bit
@@ -644,7 +649,7 @@ package nb_dcache;
       end
       //MSHR is sending a req to FB and the curr line addr of FB = ff_first_stage request's line addr
       //TODO 14082020. Can we check if MSHR is not full and ff_second_stage is Empty, and if so, forward the req to MSHR?
-      else if(isValid(wr_mshr_req_to_fb) && fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin
+      else if(isValid(wr_mshr_req_to_fb) && fill_buffer.line_addr == get_line_addr(req.addr)) begin
         `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling req: ", fshow(req)))
         //if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
         //  `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
@@ -659,6 +664,12 @@ package nb_dcache;
         //else begin
         //end
       end
+      //If current req is to same line as that of the prev req that was enqueued, and it is the second
+      //entry in the FIFO (which can be found by checking if ff_second_stage is Full),
+      //then don't send req to fill buffer, but stall
+      else if(get_line_addr(req.addr) == rg_prev_second_stage_line_addr && !ff_second_stage.notFull) begin
+        `logLevel( dcache, 2, $format("DCACHE : MSHR busy, ff_second_stage full, and prev req enqueued in second stage is to same line addr. Stalling... "))
+      end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
         `logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
@@ -671,13 +682,13 @@ package nb_dcache;
       let atomic_fn= req.atomic_fn;
       match {.hit_way, .cache_data}= atomic_hit_info;
       let atomic_result= fn_atomic_op(atomic_fn, req.data, cache_data);
-      Bit#(lineoffset) line_offset= req.addr[linewidthbits_val-1:0];
+      Bit#(lineoffset) line_offset= req.addr[lineoffset_val-1:0];
       let cache_line= data_arr[hit_way].read_response;
       let write_data= generate_masked_data(cache_line, atomic_result, line_offset, req.access_size); //TODO make UniqueWrapper
       `logLevel( dcache, 3, $format("DCACHE : Atomic cache_data: %h cache_line: %h atomic_result: %h line_offset: %h access_size: %d fn: %b write_data: %h", cache_data, cache_line, atomic_result, line_offset, req.access_size, atomic_fn, write_data))
       wr_stage1_deq<= True;
       rg_atomic_hit_info<= tagged Invalid;
-      Bit#(setbits) set_index = req.addr[setbits_val + linewidthbits_val - 1 : linewidthbits_val];
+      Bit#(setbits) set_index = req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
 
       Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
       data_arr[hit_way].write(set_index, write_data);
@@ -746,7 +757,7 @@ package nb_dcache;
         end
         //else do nothing
       end
-      else if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val]) begin  //Req to same line that is being filled in the FB
+      else if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
         `logLevel( dcache, 2, $format("DCACHE : Req to same line_addr: %h that is being filled in the FB. Stalling... ", fill_buffer.line_addr))
       end
       else if(mshr.entries_full && ff_second_stage.notEmpty)  begin
@@ -799,6 +810,7 @@ package nb_dcache;
     rule rl_fb_enq_ff_second_stage(!rg_flush.valid && cff_second_stage_valid.notFull);
       `logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
       wr_stage1_fb_deq_enq<= True;
+      rg_prev_second_stage_line_addr<= get_line_addr(wr_stage2_fb_enq.addr);
       //ff_second_stage.enq(wr_stage2_fb_enq);
       Bool can_flush= wr_stage2_fb_enq.origin!=Store_commit;
       cff_second_stage_rob_id.enq(tuple2(wr_stage2_fb_enq.rob, can_flush));
@@ -900,7 +912,7 @@ package nb_dcache;
     rule rl_MSHR_req_to_fill_buffer(wr_mshr_req_to_fb matches tagged Valid .req_from_mshr);
       //let req_from_mshr= wr_mshr_req_to_fb;
       `logLevel( dcache, 2, $format("DCACHE :Sending  Request from MSHR to FB. "))
-      let fb_addr= req_from_mshr.addr[paddr_val-1:linewidthbits_val];
+      let fb_addr= get_line_addr(req_from_mshr.addr);
       //Send the req to fill buffer and check if it's a hit
       let fill_buffer_resp<- fill_buffer.request(req_from_mshr);       //Send request to fill buffer
       `ifdef atomic
@@ -944,7 +956,7 @@ package nb_dcache;
     //----------------------------- Fill buffer release ---------------------------------//
     rule rl_check_ff_first_stage_store_to_fb_addr;
       let req= ff_first_stage.first;
-      if(fill_buffer.line_addr == req.addr[paddr_val-1:linewidthbits_val] && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
+      if(fill_buffer.line_addr == get_line_addr(req.addr) && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
         wr_ff_first_stage_store_req_to_curr_fb<= True;
         `logLevel( dcache, 2, $format("DCACHE : ff_first_stage req to curr FB. Req: ", fshow(req)))
       end
