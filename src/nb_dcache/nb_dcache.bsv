@@ -110,7 +110,7 @@ package nb_dcache;
   (*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
   (*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
   `ifdef atomic
-    (*conflict_free = "rl_release_fb_cycle2, rl_core_resp_for_atomic"*)
+    (*preempts = "rl_release_fb_cycle2, rl_core_resp_for_atomic"*)
   `endif 
   (*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
   (*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache, rl_core_resp_for_atomic)"*)
@@ -279,6 +279,7 @@ package nb_dcache;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
     Wire#(Bool) wr_ff_first_stage_store_req_to_curr_fb <- mkDWire(False);
+    Wire#(Bool) wr_stall_fb_release <- mkDWire(False);
 
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
@@ -636,6 +637,7 @@ package nb_dcache;
         `ifdef atomic
         else if(req.is_atomic) begin
           //let data= perform_atomic_op(data_to_core, req.data, req.atomic_fn);
+          wr_stall_fb_release<= True;
           rg_atomic_hit_info<= tagged Valid tuple2(hit_way, data_to_core);
         end
         `endif
@@ -951,13 +953,15 @@ package nb_dcache;
     //Once the fill buffer indicates that it can be released(i.e. the complete line is available,
     //and no pending MSHR requests exist to the same line*), the data and tag SRAMs are issued a read
     //request to determine which way should be assigned for this line.
+    //This rule shouldn't fire if an atomic hit happened, because atomic operation would actually be 
+    //performed after one cycle, and in that one cycle, the output of the SRAMs should be held.
     //*Caveat: Though the FIFOs, corresponding to the MSHR entry (corresponding to the line address)
     //         might be empty, there might be a request pending in the ff_second_stage. This is fine,
     //         if it is a load req as the fill buffer is invalidated only after 3 clock cycles. For a 
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
     rule rl_release_fb_cycle1(fill_buffer.can_release && !isValid(wr_mshr_req_to_fb) &&
     rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
-    && !wr_ff_first_stage_store_req_to_curr_fb);
+    && !wr_ff_first_stage_store_req_to_curr_fb && !wr_stall_fb_release);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin
