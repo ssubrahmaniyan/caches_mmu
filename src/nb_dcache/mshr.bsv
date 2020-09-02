@@ -56,6 +56,7 @@ package mshr;
 		method Action fence;
 		(*always_ready*) method Bool not_empty;
     (*always_ready*) method Bool entries_full;
+    (*always_ready*) method Bool one_fifo_full;
     method Action fb_released;
 	endinterface
 
@@ -411,6 +412,10 @@ package mshr;
 
     method Bool entries_full;
       return mshr_full;
+    endmethod
+
+    method Bool one_fifo_full;
+      return one_mshr_fifo_full;
     endmethod
 
     method Action fb_released if(!rg_fb_released);

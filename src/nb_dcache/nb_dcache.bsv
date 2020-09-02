@@ -664,15 +664,9 @@ package nb_dcache;
         //else begin
         //end
       end
-      //If current req is to same line as that of the prev req that was enqueued, and it is the second
-      //entry in the FIFO (which can be found by checking if ff_second_stage is Full),
-      //then don't send req to fill buffer, but stall
-      else if(get_line_addr(req.addr) == rg_prev_second_stage_line_addr && !ff_second_stage.notFull) begin
-        `logLevel( dcache, 2, $format("DCACHE : MSHR busy, ff_second_stage full, and prev req enqueued in second stage is to same line addr. Stalling... "))
-      end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
-        `logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
+        //`logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
       end
     endrule
 
@@ -760,9 +754,19 @@ package nb_dcache;
       else if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
         `logLevel( dcache, 2, $format("DCACHE : Req to same line_addr: %h that is being filled in the FB. Stalling... ", fill_buffer.line_addr))
       end
-      else if(mshr.entries_full && ff_second_stage.notEmpty)  begin
-        //dynamicAssert(!ff_second_stage.notFull,"ff_second_stage is FULL when MSHR entries are full");
-        `logLevel( dcache, 2, $format("DCACHE : MSHR entries are full, and ff_second_stage has one entry. Stalling... "))
+      //else if(mshr.entries_full && ff_second_stage.notEmpty)  begin
+      //  //dynamicAssert(!ff_second_stage.notFull,"ff_second_stage is FULL when MSHR entries are full");
+      //  `logLevel( dcache, 2, $format("DCACHE : MSHR entries are full, and ff_second_stage has one entry. Stalling... "))
+      //end
+
+      //If current req is to same line as that of the prev req that was enqueued, and it is the second
+      //entry in the FIFO (which can be found by checking if ff_second_stage is Full),
+      //then don't send req to fill buffer, but stall
+      //else if(get_line_addr(req.addr) == rg_prev_second_stage_line_addr && !ff_second_stage.notFull) begin
+      //  `logLevel( dcache, 2, $format("DCACHE : MSHR busy, ff_second_stage full, and prev req enqueued in second stage is to same line addr. Stalling... "))
+      //end
+      else if(mshr.entries_full || mshr.one_fifo_full) begin
+        `logLevel( dcache, 2, $format("DCACHE : MSHR busy. Stalling second stage... "))
       end
       else begin
         `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
