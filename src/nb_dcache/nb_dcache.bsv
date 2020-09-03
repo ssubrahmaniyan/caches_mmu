@@ -142,11 +142,12 @@ package nb_dcache;
       Add#(wordbits, TLog#(linesize), lineoffset),  //6 lineoffset is no. of bits to indicate byte offset within a line
       Log#(setsize, setbits),                //7 setbits is the no. of bits used as index in BRAMs
       //Add#(, a__, id_bits),                // id_bits should be greater than Log(mshrsize+2)
-      Add#(lineoffset, setbits, tagpos),    //13 tagpos total bits for index + offset, 
+      Add#(a__, paddr, datawidth),           // In case of exception, sending address back to core as resp data
+      Add#(lineoffset, setbits, tagpos),     //13 tagpos total bits for index + offset, 
       Add#(tagbits, tagpos, paddr),          //19 tagbits = paddr - (lineoffset + setbits)
-      Log#(TDiv#(buswidth, 8), busoffset),  //4 busoffset is no. of bits to indicate a byte offset within a buswidth data 
-      Div#(linewidth, buswidth, evict_iter),//4 evict_iter is the burst length while evicting a cache line
-      Add#(b__, prf_index, datawidth),      //Load responses after stage2 will have prf encoded in the payload field
+      Log#(TDiv#(buswidth, 8), busoffset),   //4 busoffset is no. of bits to indicate a byte offset within a buswidth data 
+      Div#(linewidth, buswidth, evict_iter), //4 evict_iter is the burst length while evicting a cache line
+      Add#(b__, prf_index, datawidth),       //Load responses after stage2 will have prf encoded in the payload field
       //Add#(c__, lineoffset, TLog#(TAdd#(ways, 1))),  //check again
       Add#(d__, TLog#(ways), TLog#(TAdd#(ways, 1))),      //Bluespec cribs
       Add#(e__, TLog#(mshrsize), id_bits),
@@ -256,7 +257,7 @@ package nb_dcache;
     Reg#(Bool) rg_fence <- mkReg(False);
     Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
     Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, False);
-    Reg#(Tuple3#(DCache_exception, Bit#(prf_index), Bit#(rob_index))) rg_access_fault_response <- mkReg(tuple3(defaultValue, ?, ?));
+    Reg#(Tuple4#(DCache_exception, Bit#(prf_index), Bit#(rob_index), Bit#(paddr))) rg_access_fault_response <- mkReg(tuple4(defaultValue, ?, ?, ?));
     Reg#(Bool) rg_io_req_sent <- mkReg(False);
     Reg#(Tuple2#(Bool, Bit#(TSub#(vaddr,wordbits)))) rg_prev_req_info <- mkReg(tuple2(False, ?));
     Reg#(Bit#(rob_index)) rg_fence_rob <- mkRegU;
@@ -488,7 +489,7 @@ package nb_dcache;
           if(resp_from_tlb.trap) begin  //Access fault
             rg_cache_busy<= True;
             `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
-            rg_access_fault_response<= tuple3(resp_from_tlb.exception, core_req.prf_index, core_req.rob);
+            rg_access_fault_response<= tuple4(resp_from_tlb.exception, core_req.prf_index, core_req.rob, resp_from_tlb.address);
           end
           else begin  //Access is valid
             Bool lv_sc_pass= True;
@@ -525,7 +526,7 @@ package nb_dcache;
           `ifdef atomic
             else begin
               rg_sc_fail<= True;
-              rg_access_fault_response<= tuple3(defaultValue, core_req.prf_index, core_req.rob);
+              rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
               rg_cache_busy<= True;
               `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
             end
@@ -543,12 +544,12 @@ package nb_dcache;
 
     rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core &&
     tpl_1(rg_access_fault_response)!=defaultValue && rg_cache_busy);
-      wr_resp_to_core<= Resp_to_core {data: ?,
+      wr_resp_to_core<= Resp_to_core {data: zeroExtend(tpl_4(rg_access_fault_response)),
                                       prf_index: tpl_2(rg_access_fault_response),
                                       rob: tpl_3(rg_access_fault_response),
                                       exception: tpl_1(rg_access_fault_response) };
       rg_cache_busy<= False;
-      rg_access_fault_response<= tuple2(defaultValue, ?);
+      rg_access_fault_response<= tuple4(defaultValue, ?, ?, ?);
     endrule
 
   `ifdef atomic
@@ -1270,6 +1271,7 @@ package nb_dcache;
     //Currently, once an IO request is obtained, rg_cache_busy is asserted. This can be optimised in 
     //the future versions
     rule rl_receive_IO_resp(rg_cache_busy && rg_io_req_sent);
+      let req= ff_io_info.first;
       let resp= ff_io_resp.first;
       ff_io_resp.deq;
       ff_io_info.deq;
@@ -1281,7 +1283,7 @@ package nb_dcache;
         rg_cache_busy<= False;
       end
       rg_io_req_sent<= False;
-      wr_resp_to_core<= Resp_to_core { data: resp.data,
+      wr_resp_to_core<= Resp_to_core { data: resp.exception==defaultValue ? resp.data: zeroExtend(req.addr),
                                        prf_index: ff_io_info.first.prf_index,
                                        rob: ff_io_info.first.rob,
                                        exception: resp.exception };
