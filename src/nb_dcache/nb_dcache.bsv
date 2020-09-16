@@ -523,7 +523,7 @@ package nb_dcache;
           `ifdef atomic
             else begin
               rg_sc_fail<= True;
-              rg_access_fault_response<= tuple4(defaultValue, ?, ?, ?);
+              rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
               rg_cache_busy<= True;
               `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
             end
