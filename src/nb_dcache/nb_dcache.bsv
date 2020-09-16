@@ -231,7 +231,7 @@ package nb_dcache;
     FIFO#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFO(4);
     Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
     FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
-    Wire#(Bool) wr_write_resp_from_mem <- mkWire;
+    Wire#(Bool) wr_write_resp_from_mem <- mkDWire(False);
 
     FIFO#(IO_Req#(paddr, datawidth)) ff_io_req <- mkSizedFIFO(1);
     FIFO#(IO_Resp#(datawidth)) ff_io_resp <- mkSizedFIFO(1);
@@ -264,6 +264,8 @@ package nb_dcache;
     Reg#(Bool) rg_fence_wait_for_ff_first_stage_empty <- mkConfigReg(False);
     Reg#(Bool) rg_fence_fb_release <- mkDReg(False);
     Reg#(Bit#(TSub#(paddr,lineoffset))) rg_prev_second_stage_line_addr <- mkReg(0);
+    Reg#(Bool) rg_evict_lineaddr_valid[2] <- mkCReg(2,False);
+    Reg#(Bit#(TSub#(paddr,lineoffset))) rg_evict_lineaddr <- mkReg(?);
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -576,10 +578,13 @@ package nb_dcache;
       end
     endrule
 
+    Bool stall_due_to_eviction_buf_release= rg_evict_lineaddr_valid[0] && (get_line_addr(ff_first_stage.first.addr) == rg_evict_lineaddr);
     //This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
     //to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
     //cache, then the request is sent to the fill buffer.
-    rule rl_tag_and_data_array_read_response(!rg_SRAM_fence[0] `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif );
+    //This rule fires only if the request is not to the line that is present in the eviction buffer.
+    rule rl_tag_and_data_array_read_response(!rg_SRAM_fence[0] `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif
+    &&& !stall_due_to_eviction_buf_release);
       let req= ff_first_stage.first;
       `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
 
@@ -669,7 +674,8 @@ package nb_dcache;
     endrule
 
   `ifdef atomic
-    rule rl_core_resp_for_atomic(rg_atomic_hit_info matches tagged Valid .atomic_hit_info &&& !wr_is_mshr_resp_to_core);
+    rule rl_core_resp_for_atomic(rg_atomic_hit_info matches tagged Valid .atomic_hit_info 
+    &&& !stall_due_to_eviction_buf_release);
       let req= ff_first_stage.first;
       let atomic_fn= req.atomic_fn;
       match {.hit_way, .cache_data}= atomic_hit_info;
@@ -1023,6 +1029,8 @@ package nb_dcache;
       if(valid[waynum]==1 && dirty[waynum]==1) begin
         Bit#(lineoffset) some_zeros= 0;
         Bit#(paddr) evict_lineaddr= {tag[waynum], set_index, some_zeros};
+        rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
+        rg_evict_lineaddr_valid[1]<= True;
         ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                   data: dataline[waynum],
                                                   is_burst: True });
@@ -1110,6 +1118,8 @@ package nb_dcache;
       Bit#(tagbits) tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
       Bit#(lineoffset) some_zeros= 0;
       Bit#(paddr) evict_lineaddr= {tag, set_index, some_zeros};
+      rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
+      rg_evict_lineaddr_valid[1]<= True;
       ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                 data: data,
                                                 is_burst: True });
@@ -1126,6 +1136,15 @@ package nb_dcache;
 
     rule rl_fence_fb_release(rg_fence && rg_fence_fb_release);
       fill_buffer.release_fb;
+    endrule
+
+    //Invalidating the evict lineaddr whenever eviction buffer is emptied. The cache is stalled
+    //in the first stage till then.
+    //TODO can optimize this to stall in second stage so that cache can still respond to hits.
+    //Since the write resp from memory will never cause a fault, this is fine.
+    //This will not work once you change eviction buffer to a multi-entry buffer.
+    rule rl_invalidate_evict_lineaddr(!ff_write_req_to_mem.notEmpty && wr_write_resp_from_mem);
+      rg_evict_lineaddr_valid[0]<= False;
     endrule
 
     //TODO To reduce one cycle per dirty set, implement this function to check if exactly one dirty way exists
@@ -1312,7 +1331,7 @@ package nb_dcache;
 
     interface subifc_write_resp_from_mem= interface Put
       method Action put(Bool resp);
-         wr_write_resp_from_mem<= resp;
+        wr_write_resp_from_mem<= resp;
       endmethod
     endinterface;
 
