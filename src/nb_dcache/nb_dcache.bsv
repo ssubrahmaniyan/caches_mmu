@@ -493,12 +493,12 @@ package nb_dcache;
             Bool lv_sc_pass= True;
           `ifdef atomic
             if(core_req.is_atomic) begin
-              if(core_req.atomic_fn=='d5 && !tpl_1(rg_lr_info)) //LR and rg_lr_info is false
+              if((core_req.atomic_fn=='h5 || core_req.atomic_fn=='h15) && !tpl_1(rg_lr_info)) //(LR.W or LR.D) and rg_lr_info is false
                 rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
               else
                 rg_lr_info<= tuple3(False, ?, ?);
 
-              if(core_req.atomic_fn=='d7) begin   //SC
+              if(core_req.atomic_fn=='h7 || core_req.atomic_fn=='h17) begin   //SC.W or SC.D
                 Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
                 if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
                   lv_sc_pass= False;
@@ -691,7 +691,7 @@ package nb_dcache;
       Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
       data_arr[hit_way].write(set_index, write_data);
       tag_arr[hit_way].write(set_index, {1'b1, 1'b1, req_tag}); //Setting the valid (which is already 1) and dirty bit
-      if(atomic_fn=='d7) begin  //if SC
+      if(atomic_fn=='h7 || atomic_fn=='h17) begin  //if SC.W or SC.D
         cache_data= 'd0;
       end
       Resp_to_core#(datawidth, prf_index, rob_index) resp= Resp_to_core { data: cache_data, //TODO check if correct for atomics
@@ -743,7 +743,7 @@ package nb_dcache;
         Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
         Bool send_resp= req.origin!=Store_buffer;
       `ifdef atomic
-        if(req.is_atomic && req.atomic_fn=='d7) begin //SC
+        if(req.is_atomic && (req.atomic_fn=='h7 || req.atomic_fn=='h17)) begin //SC.W or SC.D
           data_to_core= 0;
         end
       `endif
@@ -938,7 +938,7 @@ package nb_dcache;
         if(send_resp) begin
           Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
         `ifdef atomic
-          if(req_from_mshr.is_atomic && req_from_mshr.atomic_fn=='d7) begin //SC
+          if(req_from_mshr.is_atomic && (req_from_mshr.atomic_fn=='h7 || req_from_mshr.atomic_fn=='h17)) begin //SC
             data_to_core= 0;
           end
         `endif
