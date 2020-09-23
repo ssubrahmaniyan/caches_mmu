@@ -1036,6 +1036,11 @@ package dcache_lib;
 
     /*doc:reg: */
     Reg#(Bool) rg_sb_busy <- mkReg(False);
+    
+    rule rl_print_stats;
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: sb_full:%b sb_empty:%b sbhead:%d sbtail:%d", 
+        id, sb_full, sb_empty, rg_head, rg_tail))
+    endrule
 
   `ifdef atomic
     /*doc:reg: */
@@ -1168,6 +1173,12 @@ package dcache_lib;
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_fb_v2
+  (*synthesize*)
+  module mkstorebuffer#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
+    let ifc();
+    mk_storebuffer#(id) _temp(ifc);
+    return (ifc);
+  endmodule: mkstorebuffer
 
 endpackage
 

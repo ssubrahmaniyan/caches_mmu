@@ -152,7 +152,9 @@ package dcache1rw;
   import dcache_types :: * ;
   import dcache_lib :: * ;
   import replacement_dcache :: * ;
+`ifdef supervisor
   import common_tlb_types:: * ;
+`endif
 `ifdef dcache_ecc
   import ecc_hamming :: * ;
 `endif
@@ -253,6 +255,7 @@ package dcache1rw;
     let m_data <- mkdcache_data(id);
     let m_tag <- mkdcache_tag(id);
     let m_fillbuffer <- mkdcache_fb_v2(id);
+    let m_storebuffer <- mkstorebuffer(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
     FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkSizedFIFOF(2);
@@ -435,13 +438,6 @@ package dcache1rw;
 
     Ifc_replace#(`dsets,`dways) replacement <- mkreplace(`drepl);
     // --------------------- Store buffer related structures ----------------------------------//
-    Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize) m_storebuffer <- mk_storebuffer(id);
-
-    /*doc:wire: holds the byte-enables for the store operation being performed*/
-    Wire#(Bit#(TDiv#(`linewidth,8))) wr_store_be <- mkDWire(0);
-
-    /*doc:wire: holds the data to be updated in the fill-buffer*/
-    Wire#(Bit#(`linewidth)) wr_store_data <- mkDWire(0);
 
     /*doc:wire: when true indicates that a store-buffer entry is being allocated. This is used to
      ensure that a release of the fill-buffer does not happen.*/
@@ -477,7 +473,7 @@ package dcache1rw;
       4. The set being released to is not the most recent set accessed by the core.
     */
     Bool fill_oppurtunity = (!ff_core_request.notEmpty && !wr_takingrequest)  &&
-         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req) && !wr_store_in_progress;
+         /*countOnes(fb_valid)>0 &&*/ (fillindex != rg_recent_req) && !wr_allocating_storebuffer;
     
     // --------------------------- Rule operations ------------------------------------- //
 
@@ -677,10 +673,11 @@ dataline ))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
     endrule
-    rule rl_fillbuffer_check(!ff_core_request.first.fence
+    rule rl_fillbuffer_check(!ff_core_request.first.fence && !fb_full
                               `ifdef atomic && !m_storebuffer.mv_sb_busy `endif 
                               `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
+      wr_allocating_storebuffer <=req.access != 0;
       `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
     `ifdef supervisor
       Bit#(`paddr) phyaddr = ff_from_tlb.first.address;
@@ -874,7 +871,6 @@ dataline ))
                                           isIO(phyaddr, wr_cache_enable)
                                 `ifdef atomic ,req.access == 2,lv_response.word, req.atomic_op `endif );
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
-        wr_allocating_storebuffer <= True;
       end
     endrule
     
