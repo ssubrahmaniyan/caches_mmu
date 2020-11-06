@@ -1309,7 +1309,7 @@ package nb_dcache;
     interface subifc_req_from_core= toPut(ff_req_from_core);
     interface subifc_resp_to_core= interface Get
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
-      if(!rg_fence_wait_for_ff_first_stage_empty && !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob));
+      if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob) ));
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
