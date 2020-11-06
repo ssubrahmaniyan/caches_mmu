@@ -543,6 +543,7 @@ package nb_dcache;
 
     rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core &&
     tpl_1(rg_access_fault_response)!=defaultValue && rg_cache_busy);
+      `logLevel( dcache, 2, $format("DCACHE : Access fault! ", fshow(rg_access_fault_response)))
       wr_resp_to_core<= Resp_to_core {data: zeroExtend(tpl_4(rg_access_fault_response)),
                                       rob: tpl_3(rg_access_fault_response),
                                       prf_index: tpl_2(rg_access_fault_response),
@@ -1308,7 +1309,7 @@ package nb_dcache;
     interface subifc_req_from_core= toPut(ff_req_from_core);
     interface subifc_resp_to_core= interface Get
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
-      if(!rg_fence_wait_for_ff_first_stage_empty);
+      if(!rg_fence_wait_for_ff_first_stage_empty && !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob));
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
