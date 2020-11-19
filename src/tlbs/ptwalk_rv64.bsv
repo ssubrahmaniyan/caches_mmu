@@ -155,7 +155,7 @@ package ptwalk_rv64;
       Bit#(9) ppn2 = response.word[36 : 28];
       
       Bool fault = False;
-      Bit#(6) cause = 0;
+      Bit#(`causesize) cause = 0;
       Bool trap = False;
       // capture the permissions of the hit entry from the TLBs
       // 7 6 5 4 3 2 1 0
