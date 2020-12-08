@@ -77,7 +77,8 @@ package mem_config_nb;
   module mkmem_config1r1w#(parameter Bool ramreg, parameter String memname) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width));
 
 		Reg#(Bit#(TLog#(n_entries))) rg_index <-mkReg(0);
-		RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd127);
+		//RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd127);
+		RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd63);
 
     method Action write(Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
       `logLevel( dcache, 2, $format(memname,": writing data: %h at index: %d", data, index))

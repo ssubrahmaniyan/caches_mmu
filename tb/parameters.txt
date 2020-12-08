@@ -1,6 +1,6 @@
 	`define Wordsize	8
 	`define Linesize	8
-	`define Setsize		128
+	`define Setsize		64
 	`define Ways			4
 	`define Paddr			32
 	`define Vaddr			64

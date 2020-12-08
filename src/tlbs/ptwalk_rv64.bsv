@@ -37,7 +37,11 @@ package ptwalk_rv64;
     method Action ma_curr_priv (Bit#(2) curr_priv);
   endinterface
 
+`ifdef iclass
+  typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
+`else
   typedef enum {ReSendReq, WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
+`endif
 
   module mkptwalk_rv64(Ifc_ptwalk_rv64#(asid_width));
     String ptwalk="";
@@ -48,10 +52,10 @@ package ptwalk_rv64;
     FIFOF#(PTWalk_tlb_response#(54, 3)) ff_response <- mkSizedFIFOF(2);
     FIFOF#(DMem_request#(64, 64, `desize )) ff_memory_req <- mkSizedFIFOF(2);
     FIFOF#(DMem_core_response#(TMul#(`dwords, 8),`desize)) ff_memory_response <- mkSizedFIFOF(2);
-
+`ifndef iclass
     FIFOF#(DCache_core_request#(64, 64, `desize)) ff_hold_req <- mkFIFOF1();
-
     Reg#(Bit#(`desize)) rg_hold_epoch <- mkReg(0);
+`endif
 
     // wire which hold the inputs from csr
     Wire#(Bit#(64)) wr_satp <- mkWire();
@@ -74,12 +78,18 @@ package ptwalk_rv64;
 
     Reg#(State) rg_state <- mkReg(GeneratePTE);
 
+`ifndef iclass
     Wire#(Bool) wr_deq_holding_ff <- mkWire();
+`endif
 
     function DMem_request#(64, 64, `desize) gen_dcache_packet (PTWalk_tlb_request#(64) req, 
                                                    Bool reqtype, Bool trap, Bit#(`causesize) cause);
       return DMem_request{address     : req.address,
+`ifdef iclass
+                          epochs      : 0,
+`else
                           epochs      : rg_hold_epoch,
+`endif
                           size        : 3,
                           access      : 0,
                           fence       : False,
@@ -92,6 +102,19 @@ package ptwalk_rv64;
                           ptwalk_trap : trap};
     endfunction
 
+    rule rl_display_fifo_corereq;
+      `logLevel( ptwalk, 2, $format("PTW : core req_queue ", fshow(ff_req_queue.first)))
+    endrule
+
+    rule rl_display_fifo_memreq;
+      `logLevel( ptwalk, 2, $format("PTW : mem req_queue ", fshow(ff_memory_req.first)))
+    endrule
+
+    rule rl_display_ptw_state;
+      `logLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
+    endrule
+
+`ifndef iclass
     rule resend_core_req_to_cache(rg_state == ReSendReq);
       `logLevel( ptwalk, 2, $format("PTW : Resending Core request back to DCache: ", 
                                     fshow(ff_hold_req.first)))
@@ -117,6 +140,7 @@ package ptwalk_rv64;
     rule deq_holding_fifo(wr_deq_holding_ff);
       ff_hold_req.deq;
     endrule
+`endif
 
     rule generate_pte(rg_state == GeneratePTE);
       let request = ff_req_queue.first;
@@ -216,8 +240,10 @@ package ptwalk_rv64;
                                         levels  : rg_levels,
                                         trap    : trap,
                                         cause   : cause});
+`ifndef iclass
         if(request.access != 3)
            wr_deq_holding_ff <= True;
+`endif
         ff_req_queue.deq();
         rg_state <= GeneratePTE;
         rg_levels <= satp_mode == 8?2 : 3;
@@ -236,12 +262,17 @@ package ptwalk_rv64;
                                         cause   : cause});
         `logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
                                       rg_levels))
+`ifdef iclass
+        rg_state <= GeneratePTE;
+        ff_req_queue.deq;
+`else
         if(request.access != 3)
           rg_state <= ReSendReq;
         else begin
           rg_state <= GeneratePTE;
           ff_req_queue.deq;
         end
+`endif
         rg_levels <= satp_mode == 8?2 : 3;
       end
     endrule
@@ -249,13 +280,15 @@ package ptwalk_rv64;
     interface from_tlb            = toPut(ff_req_queue);
 
     interface to_tlb              = toGet(ff_response);
-    
+
+`ifndef iclass
     interface hold_req            = interface Put
       method Action put(DCache_core_request#(64, 64, `desize) req);
         rg_hold_epoch<=req.epochs;
         ff_hold_req.enq(req);
       endmethod
     endinterface;
+`endif
 
     interface request_to_cache    = toGet(ff_memory_req);
 

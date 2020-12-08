@@ -39,6 +39,10 @@ package fa_dtlb;
   import GetPut :: * ;
   import ConfigReg :: * ;
   import nb_dcache_types :: * ;
+  import common_tlb_types :: * ;
+`ifdef supervisor
+  import io_func :: * ;
+`endif
 
   // structure of the virtual tag for fully-associative look-up
   typedef struct{
@@ -74,6 +78,9 @@ package fa_dtlb;
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req);
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
     interface Ifc_ptw_meta#(xlen) ptw_meta;
+`ifdef supervisor
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) early_lookup(Bit#(xlen) vaddr, Bit#(1) is_store);
+`endif
   endinterface
 
   /*doc:module: */
@@ -143,6 +150,12 @@ package fa_dtlb;
     Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
   `endif
 
+    rule rl_display_tlb_regs;
+      if (`VERBOSITY > 1) begin
+        $display($time, " PT: DTLB: tlb_miss %d sfence %d miss_va %h", rg_tlb_miss, rg_sfence, rg_miss_queue);
+      end
+    endrule
+
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
      all the tlb entries*/
     rule rl_fence(rg_sfence && !rg_tlb_miss);
@@ -182,8 +195,15 @@ package fa_dtlb;
          exception = req.access == 0? Load_access_fault: Store_access_fault;
       end
 
+      if (`VERBOSITY > 1) begin
+        $display($time, " PT: DTLB: satp mode %h priv %d ptw_req %d ptw_trap %d trap %d exception %h mprv %d mpp %d", satp_mode, priv, req.ptwalk_req, req.ptwalk_trap, trap, exception, mprv, mpp);
+      end
+
       if(req.sfence && !req.ptwalk_req)begin
         rg_sfence <= True;
+        if (`VERBOSITY > 1) begin
+          $display($time, " PT: DTLB: case: sfence");
+        end
       end
       else begin
         Bit#(12) page_offset = va[11 : 0];
@@ -192,6 +212,9 @@ package fa_dtlb;
                                          trap: trap,
                                          exception: exception,
                                          tlbmiss: False});
+          if (`VERBOSITY > 1) begin
+            $display($time, " PT: DTLB: translation done; sending response %h", va);
+          end
         end
         else begin
           Bool page_fault = False;
@@ -213,6 +236,9 @@ package fa_dtlb;
           `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
           `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
           `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+          if (`VERBOSITY > 1) begin
+            $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h", va, unused_va, permissions, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn);
+          end
 
           // check for permission faults
         `ifndef sv32
@@ -244,14 +270,23 @@ package fa_dtlb;
                                            trap     : False,
                                            exception: exception,
                                            tlbmiss  : True});
+            if (`VERBOSITY > 1) begin
+              $display($time, " PT: DTLB: miss in tlb");
+            end
           end
           else begin
             `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
             `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
+`ifdef supervisor
+            exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
+`endif
             core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
                                            trap     : page_fault,
                                            exception: exception,
                                            tlbmiss  : False});
+            if (`VERBOSITY > 1) begin
+              $display($time, " PT: DTLB: hit in tlb: paddr %h trap %h exception %h", physicaladdress, page_fault, exception);
+            end
           end
         end
       end
@@ -269,6 +304,100 @@ package fa_dtlb;
 
       return core_resp;
     endmethod
+
+`ifdef supervisor
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) early_lookup(Bit#(xlen) vaddr, Bit#(1) is_store);
+      Bit#(1) lv_hit = 0;
+      Bit#(1) lv_cacheable = 0;
+      Bit#(1) lv_excp = 0;
+      Bit#(xlen) lv_paddr = '0;
+      Bool trap = False;
+      Bool page_fault = False;
+
+      // Subset of the translate method above + no side-effects
+      // TODO: sfence check not needed now.
+      Bit#(`vpnsize) fullvpn = truncate(vaddr >> 12);
+
+      /*doc:func: */
+      function Bool fn_vtag_match (VPNTag t);
+        return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
+                               && (t.asid == satp_asid || t.permissions.g);
+      endfunction
+
+      Bit#(xlen) va = vaddr;
+      Bool translation_done = False;
+      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
+      Bool tlbmiss = !isValid(hit_entry);
+      VPNTag pte = fromMaybe(?,hit_entry);
+      Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(vaddr);
+      Bit#(2) priv = mprv == 0?wr_priv : mpp;
+      translation_done = (satp_mode == 0 || priv == 3);
+
+      if(!trap && translation_done)begin
+         trap = |upper_bits == 1;
+      end
+
+      Bit#(12) page_offset = va[11 : 0];
+      if (translation_done) begin
+        lv_paddr = vaddr;
+      end
+      // translate
+      else begin
+        Bit#(TSub#(xlen, `maxvaddr)) unused_va = va[valueOf(xlen) - 1 : `maxvaddr];
+        let permissions = pte.permissions;
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+        Bit#(`lastppnsize) highest_ppn = truncateLSB(pte.ppn);
+        `ifdef sv32
+          lv_paddr = truncate({highest_ppn, lower_pa, page_offset});
+        `else
+          lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
+        `endif
+
+        // check for permission faults
+        `ifndef sv32
+          if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            page_fault = True;
+          end
+        `endif
+        // pte.a == 0 || pte.d == 0 and access != Load
+        if(!permissions.a || (!permissions.d && (is_store == 1)))begin
+          page_fault = True;
+        end
+        if((is_store == 0) && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
+          page_fault = True;
+        end
+        if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+          page_fault = True;
+        end
+        if(!permissions.u && priv == 0)begin
+          page_fault = True;
+        end
+
+        // for Store access
+        if((is_store == 1) && !permissions.w)begin // if not readable and not mxr executable
+          page_fault = True;
+        end
+      end // translate
+
+      // tlb miss
+      if (tlbmiss) begin
+        lv_hit = 0;
+        lv_cacheable = 0;
+        lv_excp = 0;
+      end
+      // tlb hit
+      else begin
+        lv_hit = 1;
+        lv_cacheable = pack(!isIO(lv_paddr[`paddr-1:0], True));
+        lv_excp = pack(trap || page_fault);
+      end
+
+      return tuple3(lv_hit, lv_cacheable, lv_excp);
+    endmethod
+`endif
 
     interface response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
@@ -301,6 +430,9 @@ package fa_dtlb;
           rg_replace <= rg_replace + 1;
         end
 
+        if (`VERBOSITY > 1) begin
+          $display($time, " PT: DTLB: Response received from PTW: pte %h levels %d trap %d cause %h", resp.pte, resp.levels, resp.trap, resp.cause);
+        end
       endmethod
     endinterface;
 

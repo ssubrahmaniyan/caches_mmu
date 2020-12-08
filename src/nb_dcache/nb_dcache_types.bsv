@@ -49,20 +49,22 @@ package nb_dcache_types;
 		Origin origin;
 		Bool ptwalk_trap;
 		Bool sfence;
+                Bit#(lsq_index) lsq_id;
 		Bit#(rob_index) rob;
 		Bit#(prf_index) prf_index;
     `ifdef atomic
     Bool is_atomic;
     Bit#(5) atomic_fn;
     `endif
-	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
-	instance DefaultValue#(Req_from_core#(addr, data, rob_index, prf_index));
+	} Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index, numeric type lsq_index) deriving (Bits, Eq, FShow);
+	instance DefaultValue#(Req_from_core#(addr, data, rob_index, prf_index, lsq_index));
 		defaultValue= Req_from_core {	addr: 'd0,
 															access_size: 'd3,
 															data: 'd0,
 															origin: defaultValue,
 															ptwalk_trap: False,
 															sfence: False,
+                                                                                                                        lsq_id: 'd0,
 															rob: 'd0,
 															prf_index: 'd0
                               `ifdef atomic
@@ -85,7 +87,7 @@ package nb_dcache_types;
     `endif
 	} Cache_req#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
 	
-	typedef enum {No_exception, Load_access_fault, Store_access_fault} DCache_exception deriving (Bits, Eq, FShow);	//TODO check if No_exception can be removed
+	typedef enum {No_exception, Load_access_fault, Store_access_fault `ifdef supervisor , Load_page_fault, Store_page_fault `endif } DCache_exception deriving (Bits, Eq, FShow);	//TODO check if No_exception can be removed
 	instance DefaultValue#(DCache_exception);
 		defaultValue= No_exception;
 	endinstance
@@ -203,11 +205,11 @@ package nb_dcache_types;
     Bool              tlbmiss;
   } DTLB_Cache_response# (numeric type addr) deriving(Bits, Eq, FShow);
 
-  typedef struct{
-    Bit#(addr)            pte;
-    Bit#(TLog#(level))    levels;
-    Bool                  trap;
-  }PTWalk_tlb_response#(numeric type addr, numeric type level) deriving(Bits, Eq, FShow);
+//  typedef struct{
+//    Bit#(addr)            pte;
+//    Bit#(TLog#(level))    levels;
+//    Bool                  trap;
+//  }PTWalk_tlb_response#(numeric type addr, numeric type level) deriving(Bits, Eq, FShow);
 
   typedef struct {
   	Bool v;					//valid
