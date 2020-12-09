@@ -859,7 +859,7 @@ package nb_dcache;
       wr_stage1_fb_deq_enq<= True;
       rg_prev_second_stage_line_addr<= get_line_addr(wr_stage2_fb_enq.addr);
       //ff_second_stage.enq(wr_stage2_fb_enq);
-      Bool can_flush= wr_stage2_fb_enq.origin!=Store_commit;
+      Bool can_flush= (wr_stage2_fb_enq.origin!=Store_commit) && (wr_stage2_fb_enq.origin!=PTW);
       cff_second_stage_rob_id.enq(tuple2(wr_stage2_fb_enq.rob, can_flush));
       cff_second_stage_valid.enq(True);
     endrule
@@ -1096,13 +1096,13 @@ package nb_dcache;
     //----------------------------- Flush ---------------------------------//
 
     //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
-    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
+    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && core_req.origin!=PTW && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
       `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
       ff_req_from_core.deq;
     endrule
 
     let first_stage_req= ff_first_stage.first;
-    rule rl_flush_ff_first_stage(rg_flush.valid && first_stage_req.origin!=Store_commit
+    rule rl_flush_ff_first_stage(rg_flush.valid && first_stage_req.origin!=Store_commit && first_stage_req.origin!=PTW
     && should_flush(rg_flush.head, rg_flush.flush_rob, first_stage_req.rob));
       `logLevel( dcache, 2, $format("DCACHE : Flushing ff_first_stage: ", fshow(first_stage_req)))
       wr_stage1_deq<= True;
@@ -1347,7 +1347,9 @@ package nb_dcache;
     interface subifc_req_from_core= toPut(ff_req_from_core);
     interface subifc_resp_to_core= interface Get
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
-      if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob) ));
+      // TODO: check that response is not for store or ptw before flushing. Alternatively, don't check for flush here and let core handle this.
+      //if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob) ));
+      if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod

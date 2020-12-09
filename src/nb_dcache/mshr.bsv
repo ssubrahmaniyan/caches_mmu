@@ -211,7 +211,7 @@ package mshr;
                                                       `ifdef atomic 
                                                         , is_atomic: req.is_atomic
                                                       `endif });
-          Bool can_flush= req.origin!=Store_commit;
+          Bool can_flush= (req.origin!=Store_commit && req.origin!=PTW);
 				  cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
 				  cff_valid[mshr_unallocated_id].enq(1'b1);
 				  `logLevel( dcache, 2, $format("MSHR : New Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
@@ -236,7 +236,7 @@ package mshr;
                                                   `ifdef atomic 
                                                     , is_atomic: req.is_atomic
                                                   `endif });
-        Bool can_flush= req.origin!=Store_commit;
+        Bool can_flush= (req.origin!=Store_commit && req.origin!=PTW);
 				cff_rob[mshr_allocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_allocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_allocated_id, req.addr))
