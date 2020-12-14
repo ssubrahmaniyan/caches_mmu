@@ -340,6 +340,7 @@ package fa_dtlb;
       Bit#(12) page_offset = va[11 : 0];
       if (translation_done) begin
         lv_paddr = vaddr;
+        tlbmiss = False;
       end
       // translate
       else begin

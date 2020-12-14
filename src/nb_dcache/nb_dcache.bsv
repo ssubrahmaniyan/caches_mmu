@@ -558,9 +558,14 @@ package nb_dcache;
           end
         end
         else begin    //Miss in the TLB and not IO or fence operation
-          `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
-          wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
-          rg_cache_busy<= True;
+          if (core_req.origin != Store_buffer) begin
+            `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
+            wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
+            rg_cache_busy<= True;
+          end
+          else begin
+            `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
+          end
         end
         `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
       //end
