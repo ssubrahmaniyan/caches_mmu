@@ -110,6 +110,10 @@ package ptwalk_rv64;
       `logLevel( ptwalk, 2, $format("PTW : mem req_queue ", fshow(ff_memory_req.first)))
     endrule
 
+    rule rl_displayfifo_memresp;
+      `logLevel( ptwalk, 2, $format("PTW : mem response first ", fshow(ff_memory_response.first)))
+    endrule
+
     rule rl_display_ptw_state;
       `logLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
     endrule

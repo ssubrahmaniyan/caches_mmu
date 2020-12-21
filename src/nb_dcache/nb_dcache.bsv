@@ -375,9 +375,13 @@ package nb_dcache;
     endfunction
 
     function Cache_DTLB_request#(vaddr) convert_core_to_tlb_req(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index) core_req);
-      Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;
+      `ifdef atomic
+        // Load or Prefetch or LR: read else write
+        Bit#(2) access= ((core_req.origin == Store_commit) && (core_req.atomic_fn != 'h5) && (core_req.atomic_fn != 'h15)) ? 2'b01 : 2'b00;
+      `else
+        Bit#(2) access= core_req.origin==Store_commit ? 2'b01 : 2'b00;
+      `endif
 
-      // TODO: access should be 00 for LR
       Cache_DTLB_request#(vaddr) dtlb_req= Cache_DTLB_request { address: core_req.addr,
                                                              access: access,
                                                              ptwalk_trap: core_req.ptwalk_trap,
@@ -534,14 +538,19 @@ package nb_dcache;
           `endif
 
             if(is_IO_access) begin  //IO operation
-              //Enqueue into a separate FIFO that handles IO Requests
-              `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
-              `ifdef ASSERT
-                dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
-              `endif
-              ff_io_info.enq(req);
-              rg_access_fault_response<= tuple4(defaultValue, ?, ?, core_req.addr);
-              rg_cache_busy<= True;
+              if (req.origin != Store_buffer) begin
+                //Enqueue into a separate FIFO that handles IO Requests
+                `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
+                `ifdef ASSERT
+                  dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
+                `endif
+                ff_io_info.enq(req);
+                rg_access_fault_response<= tuple4(defaultValue, ?, ?, core_req.addr);
+                rg_cache_busy<= True;
+              end
+              else begin
+                `logLevel( dcache, 2, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
+              end
             end
             else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
               `logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
@@ -1352,9 +1361,9 @@ package nb_dcache;
     interface subifc_req_from_core= toPut(ff_req_from_core);
     interface subifc_resp_to_core= interface Get
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
-      // TODO: check that response is not for store or ptw before flushing. Alternatively, don't check for flush here and let core handle this.
-      //if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob) ));
-      if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
+      // flushing the response is handled in core (instead of checking here for non-store, non-ptw)
+      //if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
+      if(!rg_fence_wait_for_ff_first_stage_empty);
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
