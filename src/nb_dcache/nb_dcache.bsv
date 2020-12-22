@@ -450,8 +450,14 @@ package nb_dcache;
     endrule
 
 `ifdef supervisor
+    // cache busy only for lsu/prefetcher
     Bool lv_cache_busy = (core_req.origin == PTW) ? False : rg_cache_busy;
-    rule rl_handle_req_from_core(!lv_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
+    // conservatively adding stall for atomic if mshr is not empty (alternatively, arbitrate amongst responses)
+    // TODO: requests in 1st/2nd stage
+    `ifdef atomic
+    Bool stall_atomic_mshr_not_empty = core_req.is_atomic && mshr.not_empty;
+    `endif
+    rule rl_handle_req_from_core(!lv_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail && !stall_atomic_mshr_not_empty `endif
                                  && !rg_fence_wait_for_ff_first_stage_empty);
 `else
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
