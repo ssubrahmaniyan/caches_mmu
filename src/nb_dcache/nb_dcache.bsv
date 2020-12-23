@@ -592,7 +592,12 @@ package nb_dcache;
       wr_resp_to_core<= Resp_to_core {data: zeroExtend(tpl_4(rg_access_fault_response)),
                                       rob: tpl_3(rg_access_fault_response),
                                       prf_index: tpl_2(rg_access_fault_response),
-                                      exception: tpl_1(rg_access_fault_response) };
+                                      exception: tpl_1(rg_access_fault_response)
+                                      `ifdef atomic
+                                        `ifdef simulate `ifdef new_spike
+                                        ,  atomic_result: 0
+                                        `endif `endif
+                                      `endif };
       rg_cache_busy<= False;
       rg_access_fault_response<= tuple4(defaultValue, ?, ?, ?);
     endrule
@@ -603,7 +608,12 @@ package nb_dcache;
       wr_resp_to_core<= Resp_to_core {data: 'd1,
                                       prf_index: tpl_2(rg_access_fault_response),
                                       rob: tpl_3(rg_access_fault_response),
-                                      exception: defaultValue };
+                                      exception: defaultValue
+                                      `ifdef atomic
+                                        `ifdef simulate `ifdef new_spike
+                                        ,  atomic_result: 0
+                                        `endif `endif
+                                      `endif };
       rg_sc_fail<= False;
       rg_cache_busy<= False;
     endrule
@@ -684,9 +694,14 @@ package nb_dcache;
         //If MSHR req is not sending response, then this stage can send a response for hit.
         if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
           wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
-                                                 prf_index: req.prf_index,
+                                                prf_index: req.prf_index,
                                                 rob: req.rob,
-                                                 exception: No_exception };
+                                                exception: No_exception
+                                                `ifdef atomic
+                                                  `ifdef simulate `ifdef new_spike
+                                                    ,  atomic_result: 0
+                                                  `endif `endif
+                                                `endif };
           repl.update_set(set_index, hit_way);  //Update the replacement bits on a hit
           `logLevel( dcache, 2, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
         
@@ -756,7 +771,12 @@ package nb_dcache;
       Resp_to_core#(datawidth, prf_index, rob_index) resp= Resp_to_core { data: cache_data, //TODO check if correct for atomics
                                                                           prf_index: req.prf_index,
                                                                           rob: req.rob,
-                                                                          exception: No_exception };
+                                                                          exception: No_exception
+                                                                          `ifdef atomic
+                                                                            `ifdef simulate `ifdef new_spike
+                                                                            ,  atomic_result: atomic_result
+                                                                            `endif `endif
+                                                                          `endif };
       `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit req: ", fshow(req)))
       `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit resp: ", fshow(resp)))
       wr_sram_resp_to_core<= resp;
@@ -808,9 +828,14 @@ package nb_dcache;
       `endif
         if(send_resp && !wr_is_mshr_resp_to_core) begin
           wr_stage2_fb_resp_to_core<= Resp_to_core { data: data_to_core,
-                                                      prf_index: req.prf_index,
+                                                     prf_index: req.prf_index,
                                                      rob: req.rob,
-                                                      exception: No_exception };
+                                                     exception: No_exception
+                                                     `ifdef atomic
+                                                       `ifdef simulate `ifdef new_spike
+                                                       ,  atomic_result: 0
+                                                       `endif `endif
+                                                     `endif };
         end
         //else do nothing
       end
@@ -855,9 +880,14 @@ package nb_dcache;
           else begin
             `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
             wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
-                                                         prf_index: req.prf_index,
+                                                       prf_index: req.prf_index,
                                                        rob: req.rob,
-                                                         exception: No_exception };
+                                                       exception: No_exception
+                                                       `ifdef atomic
+                                                         `ifdef simulate `ifdef new_spike
+                                                         ,  atomic_result: 0
+                                                         `endif `endif
+                                                       `endif };
           end
         end
       end
@@ -1000,11 +1030,19 @@ package nb_dcache;
           if(req_from_mshr.is_atomic && (req_from_mshr.atomic_fn=='h7 || req_from_mshr.atomic_fn=='h17)) begin //SC
             data_to_core= 0;
           end
+          `ifdef simulate `ifdef new_spike
+            let lv_atomic_result = fn_atomic_op(req_from_mshr.atomic_fn, req_from_mshr.payload, data_to_core);
+          `endif `endif
         `endif
           wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
                                                 prf_index: req_from_mshr.prf_index,
                                                 rob: req_from_mshr.rob,
-                                                exception: No_exception };
+                                                exception: No_exception
+                                                `ifdef atomic
+                                                  `ifdef simulate `ifdef new_spike
+                                                  ,  atomic_result: lv_atomic_result
+                                                  `endif `endif
+                                                `endif };
           wr_is_mshr_resp_to_core<= True;
         end
         //else do nothing
@@ -1341,7 +1379,12 @@ package nb_dcache;
       wr_resp_to_core<= Resp_to_core { data: ?,
                                        prf_index: ?,
                                        rob: rg_fence_rob,
-                                       exception: No_exception };
+                                       exception: No_exception
+                                       `ifdef atomic
+                                         `ifdef simulate `ifdef new_spike
+                                         ,  atomic_result: 0
+                                         `endif `endif
+                                       `endif };
       `logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
     endrule
 
@@ -1372,7 +1415,12 @@ package nb_dcache;
       wr_resp_to_core<= Resp_to_core { data: resp.exception==defaultValue ? resp.data: zeroExtend(tpl_4(rg_access_fault_response)),
                                        prf_index: ff_io_info.first.prf_index,
                                        rob: ff_io_info.first.rob,
-                                       exception: resp.exception };
+                                       exception: resp.exception
+                                       `ifdef atomic
+                                         `ifdef simulate `ifdef new_spike
+                                         ,  atomic_result: 0
+                                         `endif `endif
+                                       `endif };
     endrule
 
     interface subifc_req_from_core= toPut(ff_req_from_core);

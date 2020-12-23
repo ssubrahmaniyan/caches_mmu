@@ -95,14 +95,25 @@ package nb_dcache_types;
 	typedef struct {
 		Bit#(data) data;
 		Bit#(prf_index) prf_index;
-    Bit#(rob_index) rob;
+		Bit#(rob_index) rob;
 		DCache_exception exception;
+`ifdef atomic
+  `ifdef simulate `ifdef new_spike
+		Bit#(data) atomic_result;
+  `endif `endif
+`endif
 	} Resp_to_core#(numeric type data, numeric type prf_index, numeric type rob_index) deriving (Bits, Eq, FShow);
 	instance DefaultValue#(Resp_to_core#(data, prf_index, rob_index));
 		defaultValue= Resp_to_core {data: 0,
 																prf_index: 0,
-                                rob: 0,
-																exception: defaultValue };
+																rob: 0,
+																exception: defaultValue
+															`ifdef atomic
+																`ifdef simulate `ifdef new_spike
+																, atomic_result: 0
+																`endif `endif
+															`endif
+																 };
 	endinstance
 	
 	typedef struct {
