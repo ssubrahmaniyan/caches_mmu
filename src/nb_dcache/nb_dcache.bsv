@@ -1169,19 +1169,31 @@ package nb_dcache;
     //Also, rg_fb_state should be Read_SRAMs because when a new fence is initiated, if fill buffer is
     //in Write_SRAMs state, the fence should begin only after the current fb entry is written to the cache.
     //TODO Moreover, the fb contents need to be written to the next level of memory only if the line is dirty
-    rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1
-    && !isValid(wr_mshr_req_to_fb));
+    //rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && tpl_1(fill_buffer.data)==1
+    //&& !isValid(wr_mshr_req_to_fb));
+    // NOTE: Changing rule below (rule and eviction condition) to release fb and free mshr even if the line is not dirty.
+    // Otherwise, the fence may not "complete" after fencing cache sets. This can happen if ptw or prefetch requests are
+    // waiting in the mshr.
+    rule rl_fence_fb (rg_fence && fill_buffer.can_release && rg_fb_state==Read_SRAMs && !isValid(wr_mshr_req_to_fb));
       let data= tpl_2(fill_buffer.data);
       let line_addr= fill_buffer.line_addr;
       Bit#(setbits) set_index= line_addr[setbits_val-1:0];
       Bit#(tagbits) tag= line_addr[tagbits_val+setbits_val-1:setbits_val];
       Bit#(lineoffset) some_zeros= 0;
       Bit#(paddr) evict_lineaddr= {tag, set_index, some_zeros};
-      rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
-      rg_evict_lineaddr_valid[1]<= True;
-      ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
-                                                data: data,
-                                                is_burst: True });
+
+      // send to eviction buffer if the line is dirty
+      if (tpl_1(fill_buffer.data)==1) begin
+        rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
+        rg_evict_lineaddr_valid[1]<= True;
+        ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+                                                  data: data,
+                                                  is_burst: True });
+        `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
+      end
+      else begin
+        `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer released and MSHR freed (clean line). Addr: %x Data: %x ", evict_lineaddr, data))
+      end
 
       //The fill buffer entry can be released once the req has been enqueued in ff_write_req_to_mem.
       //We need not wait for the write response for the fence to proceed, as whenever write response
@@ -1190,7 +1202,6 @@ package nb_dcache;
       //MSHR entry.
       mshr.fb_released;
       rg_fence_fb_release<= True;
-      `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
     endrule
 
     rule rl_fence_fb_release(rg_fence && rg_fence_fb_release);
