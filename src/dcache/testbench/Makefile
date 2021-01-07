@@ -37,7 +37,7 @@ else
 endif
 
 ifneq ($(PMPSIZE) , 0)
-  override define_macros += -D pmp -D pmpsize=$(PMPSIZE)
+  override define_macros += -D pmp -D pmpentries=$(PMPSIZE)
 endif
 
 ifeq ($(TRACE), enable)

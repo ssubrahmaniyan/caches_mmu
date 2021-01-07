@@ -89,8 +89,8 @@ package imem;
   (*synthesize*)
   module mkimem#(parameter Bit#(32) id
     `ifdef pmp ,
-        Vector#(`pmpsize, Bit#(8)) pmp_cfg , 
-        Vector#(`pmpsize, Bit#(TSub#(`paddr, `pmp_grainbits))) pmp_addr `endif
+        Vector#(`pmpentries, Bit#(8)) pmp_cfg , 
+        Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
     )(Ifc_imem);
     let icache <- mkicache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
   `ifdef supervisor
