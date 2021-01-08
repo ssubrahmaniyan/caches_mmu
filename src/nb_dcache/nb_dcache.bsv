@@ -68,6 +68,7 @@ package nb_dcache;
   import fa_dtlb::*;
   import replacement_dcache::*;
   import Assert  :: * ;
+  import io_func::*;
   `include "parameters.txt"
   `include "parameters.bsv"
   `include "nb_dcache.defines"
@@ -398,18 +399,18 @@ package nb_dcache;
 //        return False;
 //      end
 //    endfunction
-
-    function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
-      if( addr>=1000 && addr<'h2000) begin
-        return False;
-      end
-      else if(addr >= 'h80000000 && addr < 'h90000000) begin
-        return False;
-      end
-      else begin
-        return True;
-      end
-    endfunction
+//
+//    function Bool is_IO(Bit#(vaddr) addr); //TODO remove this dummy is_IO function
+//      if( addr>='h1000 && addr<'h2000) begin
+//        return False;
+//      end
+//      else if(addr >= 'h80000000 && addr < 'h90000000) begin
+//        return False;
+//      end
+//      else begin
+//        return True;
+//      end
+//    endfunction
 
     rule rl_initialize(!rg_initialize_done);
       `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
@@ -500,9 +501,9 @@ package nb_dcache;
                                                                                               , atomic_fn: core_req.atomic_fn
                                                                                               `endif };
 `ifdef supervisor
-        Bool is_IO_access= is_IO(resp_from_tlb.address[`paddr-1:0]);
+        Bool is_IO_access= isIO(resp_from_tlb.address[`paddr-1:0], True);
 `else
-        Bool is_IO_access= is_IO(core_req.addr);
+        Bool is_IO_access= isIO(core_req.addr, True);
 `endif
         if(core_req.sfence) begin
           mshr.fence;
