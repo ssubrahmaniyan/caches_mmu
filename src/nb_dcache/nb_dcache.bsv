@@ -114,7 +114,7 @@ package nb_dcache;
   (*conflict_free = "rl_stage2_fb_resp_to_core, rl_sram_resp_to_core"*)
   (*execution_order = "rl_tag_and_data_array_read_response, rl_stage2_req_to_fb"*)
   (*preempts = "rl_release_fb_cycle1, rl_handle_req_from_core"*)
-  (*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
+  //(*conflict_free = "rl_release_fb_cycle2, rl_tag_and_data_array_read_response"*)
   `ifdef atomic
     (*preempts = "rl_release_fb_cycle2, rl_core_resp_for_atomic"*)
   `endif 
@@ -297,6 +297,7 @@ package nb_dcache;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
     Wire#(Bool) wr_ff_first_stage_store_req_to_curr_fb <- mkDWire(False);
+    Wire#(Bool) wr_ff_second_stage_req_to_curr_fb <- mkDWire(False);
     Wire#(Bool) wr_stall_fb_release <- mkDWire(False);
 
     
@@ -1068,6 +1069,14 @@ package nb_dcache;
       end
     endrule
 
+    rule rl_check_ff_second_stage_req_to_fb_addr;
+      let req= ff_second_stage.first;
+      if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
+        wr_ff_second_stage_req_to_curr_fb<= True;
+        `logLevel( dcache, 2, $format("DCACHE : ff_second_stage req to curr FB. (FB release stall if valid) Req: ", fshow(req)))
+      end
+    endrule
+
     //Once the fill buffer indicates that it can be released(i.e. the complete line is available,
     //and no pending MSHR requests exist to the same line*), the data and tag SRAMs are issued a read
     //request to determine which way should be assigned for this line.
@@ -1079,7 +1088,7 @@ package nb_dcache;
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
     rule rl_release_fb_cycle1(fill_buffer.can_release && !isValid(wr_mshr_req_to_fb) &&
     rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
-    && !wr_ff_first_stage_store_req_to_curr_fb && !wr_stall_fb_release);
+    && !wr_ff_first_stage_store_req_to_curr_fb && !wr_ff_second_stage_req_to_curr_fb && !wr_stall_fb_release);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin

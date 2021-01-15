@@ -105,7 +105,6 @@ package mshr;
 		Wire#(Maybe#(Bit#(TLog#(mshrsize)))) wr_deq_ff_id <- mkDWire(tagged Invalid);
 		Wire#(Bit#(addr_in_mshr)) wr_addr_to_fb <- mkDWire(0);
     Reg#(Bool) rg_fb_released <- mkConfigReg(False);
-		Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_last_alloc_serviced <- mkReg (tagged Invalid);
 
 		//Create a structure with unguarded single enq, deq and first; and another initialize method which updates
 		//all the entries. Can enqueue be stalled for a cycle? Will any deadlock happen if stalled? Will
@@ -134,7 +133,6 @@ package mshr;
 		end
 
 		rule rl_update_mshr_valid;
-			`logLevel( dcache, 2, $format("MSHR: In rl_update_mshr_valid: %d", wr_allocate_id))
 			if(wr_allocate_id matches tagged Valid .allocate_id) begin
 				`logLevel( dcache, 2, $format("MSHR: setting mshr[%d] valid", allocate_id))
 				rg_mshr_valid[allocate_id]<= True;
@@ -143,8 +141,6 @@ package mshr;
 			if(rg_curr_fb_id matches tagged Valid .curr_fb_id &&&  !ff_mshr[curr_fb_id].notEmpty) begin
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
 					`logLevel( dcache, 2, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle. fb_released %d ", curr_fb_id, rg_fb_released))
-                                        // TODO: temp. hack, check other cases (mshr not serviced next cycle, new fill, atomic)
-					rg_last_alloc_serviced <= tagged Valid allocate_id;
 				end
         else if(rg_fb_released) begin //if(rg_fb_released) begin
 					`logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
@@ -158,14 +154,6 @@ package mshr;
 			//	`logLevel( dcache, 2, $format("MSHR: rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
       //end
 		endrule
-
-                rule rl_update_mshr_valid_last_alloc;
-		    if (rg_last_alloc_serviced matches tagged Valid .allocate_id &&& rg_fb_released) begin
-		      `logLevel( dcache, 2, $format("MSHR: rg_mshr_valid[%d] is assigned False after last req serviced, fb_released", allocate_id))
-                      rg_mshr_valid[allocate_id] <= False;
-                      rg_last_alloc_serviced <= tagged Invalid;
-                    end
-                endrule
 
 		rule rl_deq_ff(wr_deq_ff_id matches tagged Valid .deq_ff_id);
 			let id= deq_ff_id;
@@ -318,7 +306,6 @@ package mshr;
 				if(rg_fb_released) begin
 					rg_curr_fb_id<= tagged Invalid;
           rg_fb_released<= False;
-          // TODO: stall in the previous stage or remove the following assert for corner case
           `ifdef ASSERT
             dynamicAssert(!ff_mshr[curr_rid].notEmpty,"ff_mshr[%d] is not Empty when FB is being released",curr_rid);
           `endif
