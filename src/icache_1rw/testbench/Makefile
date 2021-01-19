@@ -37,7 +37,7 @@ ifeq ($(TRACE), enable)
   trace := --trace
 endif
 ifneq ($(PMPSIZE) , 0)
-  override define_macros += -D pmp -D pmpsize=$(PMPSIZE)
+  override define_macros += -D pmp -D pmpentries=$(PMPSIZE)
 endif
 
 override define_macros += -D ASSERT=True -D iwords=$(IWORDS) -D iblocks=$(IBLOCKS) -D iways=$(IWAYS) \
