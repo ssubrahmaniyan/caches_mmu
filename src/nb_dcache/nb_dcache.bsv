@@ -1069,6 +1069,7 @@ package nb_dcache;
       end
     endrule
 
+    // NOTE: 2nd stage should stall on fill address match (150121)
     rule rl_check_ff_second_stage_req_to_fb_addr;
       let req= ff_second_stage.first;
       if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
@@ -1261,9 +1262,10 @@ package nb_dcache;
     //TODO can optimize this to stall in second stage so that cache can still respond to hits.
     //Since the write resp from memory will never cause a fault, this is fine.
     //This will not work once you change eviction buffer to a multi-entry buffer.
-    rule rl_invalidate_evict_lineaddr(!ff_write_req_to_mem.notEmpty && wr_write_resp_from_mem);
-      rg_evict_lineaddr_valid[0]<= False;
-    endrule
+    // NOTE: invalidation moved to write request cycle (for aggressive dequeue, sync dequeue and invalidate) - 240121
+//    rule rl_invalidate_evict_lineaddr(!ff_write_req_to_mem.notEmpty && wr_write_resp_from_mem);
+//      rg_evict_lineaddr_valid[0]<= False;
+//    endrule
 
     //TODO To reduce one cycle per dirty set, implement this function to check if exactly one dirty way exists
     function Bool check_only_one_evict(Bit#(ways) evict);
@@ -1467,11 +1469,25 @@ package nb_dcache;
       endmethod
     endinterface;
 
-    interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
+    //interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
+    // NOTE: changed from invalidating eviction buffer on response from mem to invalidating on request sent (240121)
+    // TODO: multi-entry eviction fifo/conservative
+    interface subifc_write_req_to_mem = interface Get
+      method ActionValue#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) get();
+        let lv_req = ff_write_req_to_mem.first;
+        ff_write_req_to_mem.deq;
+        rg_evict_lineaddr_valid[0] <= False;
+        return lv_req;
+      endmethod
+    endinterface;
 
     interface subifc_write_resp_from_mem= interface Put
       method Action put(Bool resp);
         wr_write_resp_from_mem<= resp;
+        // TODO: retry/nack for failed response
+        `ifdef ASSERT
+          dynamicAssert(resp, "Write request to memory failed (error response).");
+        `endif
       endmethod
     endinterface;
 
