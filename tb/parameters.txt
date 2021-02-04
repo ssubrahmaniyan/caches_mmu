@@ -1,16 +1,16 @@
 	`define Wordsize	8
 	`define Linesize	8
 	`define Setsize		64
-	`define Ways			4
-	`define Paddr			32
-	`define Vaddr			64
-	`define Dsram			32
-	`define Tsram			32
+	`define Ways		4
+	`define Paddr		32
+	`define Vaddr		64
+	`define Dsram		32
+	`define Tsram		32
 	`define Prf_index	6
 	`define Id_bits		4
 	`define Mshrsize	8
-	`define Mshrfifo_depth 3
-	`define Buswidth 128
-	`define Rob_index 7
+	`define Mshrfifo_depth	3
+	`define Buswidth	128
+	`define Rob_index	7
 	`define asidwidth	9
-	`define dtlbsize 8
+	`define dtlbsize	8

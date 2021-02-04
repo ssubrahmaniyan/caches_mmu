@@ -36,10 +36,10 @@ package ptwalk_rv64;
     method Action ma_curr_priv (Bit#(2) curr_priv);
   endinterface
 
-`ifdef iclass
-  typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
-`else
+`ifndef iclass
   typedef enum {ReSendReq, WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
+`else
+  typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
 `endif
 
   module mkptwalk_rv64(Ifc_ptwalk_rv64#(asid_width));
@@ -84,10 +84,10 @@ package ptwalk_rv64;
     function DMem_request#(64, 64, `desize) gen_dcache_packet (PTWalk_tlb_request#(64) req, 
                                                    Bool reqtype, Bool trap, Bit#(`causesize) cause);
       return DMem_request{address     : req.address,
-`ifdef iclass
-                          epochs      : 0,
-`else
+`ifndef iclass
                           epochs      : rg_hold_epoch,
+`else
+                          epochs      : 0,
 `endif
                           size        : 3,
                           access      : 0,
@@ -101,6 +101,7 @@ package ptwalk_rv64;
                           ptwalk_trap : trap};
     endfunction
 
+`ifdef iclass
     rule rl_display_fifo_corereq;
       `logLevel( ptwalk, 2, $format("PTW : core req_queue ", fshow(ff_req_queue.first)))
     endrule
@@ -116,6 +117,7 @@ package ptwalk_rv64;
     rule rl_display_ptw_state;
       `logLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
     endrule
+`endif
 
 `ifndef iclass
     rule resend_core_req_to_cache(rg_state == ReSendReq);
@@ -182,7 +184,11 @@ package ptwalk_rv64;
       Bit#(9) ppn2 = response.word[36 : 28];
       
       Bool fault = False;
+`ifndef iclass
+      Bit#(6) cause = 0;
+`else
       Bit#(`causesize) cause = 0;
+`endif
       Bool trap = False;
       // capture the permissions of the hit entry from the TLBs
       // 7 6 5 4 3 2 1 0
@@ -265,16 +271,16 @@ package ptwalk_rv64;
                                         cause   : cause});
         `logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
                                       rg_levels))
-`ifdef iclass
-        rg_state <= GeneratePTE;
-        ff_req_queue.deq;
-`else
+`ifndef iclass
         if(request.access != 3)
           rg_state <= ReSendReq;
         else begin
           rg_state <= GeneratePTE;
           ff_req_queue.deq;
         end
+`else
+        rg_state <= GeneratePTE;
+        ff_req_queue.deq;
 `endif
         rg_levels <= satp_mode == 8?2 : 3;
       end
