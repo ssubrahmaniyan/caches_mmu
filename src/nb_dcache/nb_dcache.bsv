@@ -722,6 +722,10 @@ package nb_dcache;
         //else begin
         //end
       end
+      // NOTE: load address matches fb line, no request from mshr but 2nd stage ff also holds request to same line (040221)
+      else if((req.origin != Store_commit) && (fill_buffer.line_addr == get_line_addr(req.addr)) && (wr_ff_second_stage_req_to_curr_fb)) begin
+        `logLevel( dcache, 2, $format("DCACHE : FB fill to same line, 2nd stage ff stalled. Hence stalling req: ", fshow(req)))
+      end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
         //`logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
