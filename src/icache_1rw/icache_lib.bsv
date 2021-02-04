@@ -1,5 +1,4 @@
 /*
-see LICENSE.incore
 see LICENSE.iitm
 
 Author: Neel Gala

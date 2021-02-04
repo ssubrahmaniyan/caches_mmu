@@ -1,5 +1,4 @@
 /* 
-see LICENSE.incore
 see LICENSE.iitm
 
 Author : Neel Gala
@@ -71,8 +70,8 @@ package pmp_func;
   function Tuple2#(Bool, Bit#(`causesize)) fn_pmp_lookup( 
           PMPReq req, 
           PMP_Priv_mode priv,
-          Vector#(`pmpsize, Bit#(8)) pmpcfg,
-          Vector#(`pmpsize, Bit#(TSub#(`paddr, `pmp_grainbits))) pmpaddr);
+          Vector#(`pmpentries, Bit#(8)) pmpcfg,
+          Vector#(`pmpentries, Bit#(`paddr)) pmpaddr);
     Bit#(`causesize) cause = case(req.access_type) 
       'd0 : `Load_access_fault;
       'd1 : `Store_access_fault;
@@ -95,16 +94,16 @@ package pmp_func;
     cases the access permissions are checked to see if an access fault should be generated or not.
     */
     function Tuple2#(Bool, Bool)
-        fn_single_lookup( PMPCfg cfg, Bit#(TSub#(`paddr, `pmp_grainbits)) top, 
-                          Bit#(TSub#(`paddr, `pmp_grainbits)) bottom);
+        fn_single_lookup( PMPCfg cfg, Bit#(`paddr) top, Bit#(`paddr) bottom);
                               
 
-      Bit#(TSub#(`paddr,`pmp_grainbits)) start_address = cfg.access == TOR ? bottom : top;
-      Bit#(TSub#(`paddr,`pmp_grainbits)) mask = top << 1 | zeroExtend(~pack(cfg.access == NA4));
+      Bit#(TSub#(`paddr,`pmp_grainbits)) start_address = cfg.access == TOR ? truncateLSB(bottom) : 
+          truncateLSB(top);
+      Bit#(TSub#(`paddr,`pmp_grainbits)) mask = truncateLSB(top) << 1 | zeroExtend(~pack(cfg.access == NA4));
       mask = cfg.access != NAPOT ? '1 : ~(mask & ~(mask + 1));
 
       Bool lv_match_low  = reqbase >= (start_address & mask);
-      Bool lv_match_high = reqbase <= top;
+      Bool lv_match_high = reqbase <= truncateLSB(top);
       Bool address_match = lv_match_low && lv_match_high && cfg.access != OFF;
 
       Bool access_trap = (!(!cfg.lock && priv == Machine) &&
@@ -145,8 +144,8 @@ package pmp_func;
       
       PMPReq req = PMPReq{address: 'hDB4, access_type:0};
       PMP_Priv_mode mode = Supervisor;
-      Vector#(`pmpsize, Bit#(8)) v_pmpcfg  = replicate(0);
-      Vector#(`pmpsize, Bit#(TSub#(`paddr,`pmp_grainbits))) v_pmpaddr = replicate(0);
+      Vector#(`pmpentries, Bit#(8)) v_pmpcfg  = replicate(0);
+      Vector#(`pmpentries, Bit#(TSub#(`paddr,`pmp_grainbits))) v_pmpaddr = replicate(0);
 
       v_pmpcfg[1] = zeroExtend(pack(PMPCfg{read:False, 
                                            write:True, 
@@ -176,14 +175,14 @@ package pmp_func;
 
   /*interface Ifc_dummy;
     method Tuple2#(Bool, Bit#(`causesize)) result_;
-    method Action _inputs (Vector#(`pmpsize, Bit#(8)) pmpcfg,
-                           Vector#(`pmpsize, Bit#(TSub#(`paddr,2))) pmpaddr,
+    method Action _inputs (Vector#(`pmpentries, Bit#(8)) pmpcfg,
+                           Vector#(`pmpentries, Bit#(TSub#(`paddr,2))) pmpaddr,
                            PMPReq req, PMP_Priv_mode priv);
   endinterface: Ifc_dummy
   (*synthesize*)
   module mkdummy(Ifc_dummy);
-    Vector#( `pmpsize, Reg#(Bit#(8)) ) v_pmpcfg <- replicateM(mkReg(0));
-    Vector#( `pmpsize, Reg#(Bit#(TSub#(`paddr,2))) ) v_pmpaddr <- replicateM(mkReg(0)) ;
+    Vector#( `pmpentries, Reg#(Bit#(8)) ) v_pmpcfg <- replicateM(mkReg(0));
+    Vector#( `pmpentries, Reg#(Bit#(TSub#(`paddr,2))) ) v_pmpaddr <- replicateM(mkReg(0)) ;
     [>doc:reg: <]
     Reg#(PMPReq) rg_req <- mkReg(unpack(0));
     [>doc:reg: <]
@@ -195,8 +194,8 @@ package pmp_func;
     endrule
 
     method result_ =  rg_result;
-    method Action _inputs (Vector#(`pmpsize, Bit#(8)) pmpcfg,
-                           Vector#(`pmpsize, Bit#(TSub#(`paddr,2))) pmpaddr,
+    method Action _inputs (Vector#(`pmpentries, Bit#(8)) pmpcfg,
+                           Vector#(`pmpentries, Bit#(TSub#(`paddr,2))) pmpaddr,
                            PMPReq req, PMP_Priv_mode priv);
       rg_req <= req;
       rg_priv <= priv;
