@@ -1,4 +1,4 @@
-package tlb;
+package dummy_tlb;
 	import nb_dcache_types::*;          // for local cache types
 	interface Ifc_tlb#(numeric type vaddr, numeric type paddr);
 		method ActionValue#(Resp_from_tlb#(paddr)) translate(Bit#(vaddr) req_va, Bool is_store);
