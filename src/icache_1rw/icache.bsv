@@ -458,7 +458,16 @@ package icache;
       Bit#(`iways) lv_hitmask = lv_tag_resp.waymask & v_reg_valid[set_index];
       let lv_data_resp = m_data.mv_read_response(lv_blocknum,lv_hitmask);
       `logLevel( icache, 0, $format("[%2d]ICACHE: lv_data_resp:",id,fshow(lv_data_resp)))
+
+    `ifndef iclass
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
+    `else
+      Bit#(TAdd#(TAdd#(`wordbits,`blockbits),3)) lv_shift_amt = 0;
+      Bit#(`linewidth) lv_response_line = 0;
+      lv_shift_amt = phyaddr[v_blockbits+v_wordbits+2:0] << 3;  // -1+3
+      lv_response_line = lv_data_resp.line >> lv_shift_amt;
+      let response_word = lv_response_line[v_respwidth-1:0];
+    `endif
 
     `ifdef icache_ecc
 
@@ -622,8 +631,12 @@ package icache;
       if(wr_nc_state == Hit && !wr_fault) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from NC",id))
       end
-      
+
+    `ifndef iclass
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
+    `else
+      lv_response.word = lv_response.trap ? zeroExtend(req.address) : lv_response.word; // 128 bits
+    `endif
 
       ff_core_request.deq;
     `ifdef supervisor
