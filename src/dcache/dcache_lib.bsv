@@ -128,7 +128,7 @@ package dcache_lib;
         end
       else
         v_tags[way].request(1, index, tag, '1);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TagReq: Tag:%h RW:%b Way:%d index:%d",id,tag,
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: TagReq: Tag:%h RW:%b Way:%d set:%d",id,tag,
       read_write, way, index))
     endmethod
 

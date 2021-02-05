@@ -972,7 +972,7 @@ dataline ))
 
       let waynum <- replacement.line_replace(set_index, v_reg_valid[set_index],
                                                        v_reg_dirty[set_index]);
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: Release: set%d way:%d valid:%b dirty:%b",id,
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: Release: set:%d way:%d valid:%b dirty:%b",id,
                                     set_index, waynum,v_reg_valid[set_index][waynum] ,
                                     v_reg_dirty[set_index][waynum] ))
       let lv_release_info = m_fillbuffer.mv_release_info;
@@ -1021,7 +1021,7 @@ dataline ))
         `endif
           if(rg_release_readphase ) begin
 
-            `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set_index:%d tag:%h\
+            `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set:%d tag:%h\
  data:%h", id,lv_evict_address,set_index,tag,dataline))
             ff_write_mem_request.enq(DCache_mem_writereq{address:lv_evict_address,
                                                   burst_len:fromInteger(valueOf(`dblocks)-1),
@@ -1075,7 +1075,8 @@ dataline ))
     interface put_core_req=interface Put
       method Action put(DCache_core_request#(`vaddr,`respwidth,`desize) req)
                         if( ff_core_response.notFull && !rg_fence_stall 
-                                                     && !fb_full && !rg_performing_replay);
+                                                     && !fb_full && !rg_performing_replay
+                                                   && !m_storebuffer.mv_sb_busy);
       `ifdef perfmonitors
           if(req.access == 0)
             wr_total_read_access <= 1;
@@ -1088,6 +1089,8 @@ dataline ))
       `endif
         Bit#(`paddr) phyaddr = truncate(req.address);
         Bit#(`setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
         rg_recent_req <= set_index;
@@ -1095,8 +1098,6 @@ dataline ))
           m_tag.ma_request(False, set_index, lv_release_addr, ?);
           m_data.ma_request(False, set_index, lv_release_line, ?, '1);
         end
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         wr_takingrequest <= True;
       endmethod
     endinterface;
