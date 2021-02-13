@@ -102,6 +102,11 @@ package mshr;
 		Bool one_mshr_fifo_full= False;
 		Bool mshr_full= True;
 		Bool mshr_not_empty= False;
+                `ifdef prefetch_throttle
+                  Bool mshr_almost_full = False;
+                  Integer mshr_valid_count = 0;
+                `endif
+
 		for(Integer i=0; i<mshrsize_val; i=i+1) begin
 			rg_mshr_line_addr[i] <- mkConfigReg(0);
 			rg_mshr_valid[i] <- mkConfigReg(False);
@@ -109,7 +114,15 @@ package mshr;
 			one_mshr_fifo_full= one_mshr_fifo_full || !ff_mshr[i].notFull;
 			mshr_full= mshr_full && rg_mshr_valid[i];
 			mshr_not_empty= mshr_not_empty || rg_mshr_valid[i];
+                  `ifdef prefetch_throttle
+                        mshr_valid_count = rg_mshr_valid[i] ? mshr_valid_count + 1 : mshr_valid_count;
+                  `endif
 		end
+                `ifdef prefetch_throttle
+                  if ((mshrsize_val-mshr_valid_count) <= 2) begin
+                    mshr_almost_full = True;
+                  end
+                `endif
 
 		rule rl_update_mshr_valid;
 			if(wr_allocate_id matches tagged Valid .allocate_id) begin
@@ -178,6 +191,10 @@ package mshr;
       //If a new request for which MSHR has not been allocated, and MSHR entries are not full,
       if(!mshr_allocated) begin
         if(!mshr_full) begin
+        `ifdef prefetch_throttle
+          if (!((req.origin == Store_buffer) && mshr_almost_full)) begin
+        `endif
+
 				  rg_mshr_line_addr[mshr_unallocated_id]<= req_line_addr;
           `ifdef atomic
           if(req.is_atomic)
@@ -185,9 +202,9 @@ package mshr;
           `endif
 				  wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				  ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
-				  																						access_size: req.access_size,
-				  																						payload: req.payload,
-				  																						origin: req.origin
+					access_size: req.access_size,
+					payload: req.payload,
+					origin: req.origin
                                                       `ifdef atomic 
                                                         , is_atomic: req.is_atomic
                                                       `endif });
@@ -196,14 +213,37 @@ package mshr;
 				  cff_valid[mshr_unallocated_id].enq(1'b1);
 				  `logLevel( dcache, 2, $format("MSHR : New Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				  return tuple2(Not_allocated, mshr_unallocated_id);
-        end
+        `ifdef prefetch_throttle
+          end
+          else begin
+            // drop prefetch request when MSHR is almost full
+	    `logLevel( dcache, 2, $format("MSHR : Prefetch request dropped (MSHR almost full)."))
+	    return tuple2(Dropped, 0);
+          end // prefetch req
+        `endif
+        end // !mshr_full
         else begin
-				  `logLevel( dcache, 2, $format("MSHR : New MSHR not allocated as MSHRs are full. ", mshr_allocated_id))
-          return tuple2(Busy, ?);
-        end
-			end
+	  `logLevel( dcache, 2, $format("MSHR : New MSHR not allocated as MSHRs are full. ", mshr_allocated_id))
+          `ifndef prefetch_throttle
+              return tuple2(Busy, ?);
+          `else
+            // drop prefetch request when MSHR is full
+            if (req.origin == Store_buffer) begin
+	      `logLevel( dcache, 2, $format("MSHR : Prefetch request dropped (MSHR full)."))
+              return tuple2(Dropped, 0);
+            end
+            else begin
+              return tuple2(Busy, ?);
+            end
+          `endif
+        end // mshr_full
+      end // not allocated
+
       //Else req is to an already allocated MSHR; so, check if the corresponding fifos are notFull
 			else if(ff_mshr[mshr_allocated_id].notFull) begin
+      `ifdef prefetch_throttle
+        if (req.origin != Store_buffer) begin
+      `endif
         `ifdef atomic
         if(req.is_atomic)
           rg_atomic_info<= tuple2(req.atomic_fn, req.prf_index);
@@ -221,12 +261,32 @@ package mshr;
 				cff_valid[mshr_allocated_id].enq(1'b1);
 				`logLevel( dcache, 2, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_allocated_id, req.addr))
 				return tuple2(Allocated, ?);
-			end
+      `ifdef prefetch_throttle
+        end
+        else begin
+          // drop prefetch request if it is a secondary miss (fifo not full)
+	  `logLevel( dcache, 2, $format("MSHR : Prefetch request dropped (secondary miss, fifo not full)."))
+          return tuple2(Dropped, 0);
+        end // prefetch req
+      `endif
+      end // fifo not full
+
       else begin
-				`logLevel( dcache, 2, $format("MSHR : Already allocated index %d but ff_mshr is full. ", mshr_allocated_id))
-         return tuple2(Busy, ?);
-      end
-		endmethod
+	`logLevel( dcache, 2, $format("MSHR : Already allocated index %d but ff_mshr is full. ", mshr_allocated_id))
+        `ifndef prefetch_throttle
+            return tuple2(Busy, ?);
+        `else
+          // drop prefetch request if it is a secondary miss (fifo full)
+          if (req.origin == Store_buffer) begin
+	    `logLevel( dcache, 2, $format("MSHR : Prefetch request dropped (secondary miss, fifo full)."))
+            return tuple2(Dropped, 0);
+          end
+          else begin
+            return tuple2(Busy, ?);
+          end
+        `endif
+      end // fifo full
+    endmethod
 
 		//TODO make the FIFO guarded and put explicit conditions wherever requried
 		//Check if the condition for the method to fire should be mshr_not_empty or that 

@@ -155,7 +155,7 @@ package nb_dcache_types;
                           };
 	endinstance
 
-  typedef enum {Allocated, Not_allocated, Busy} MSHR_status_resp deriving(Bits, Eq, FShow);
+  typedef enum {Allocated, Not_allocated, Busy `ifdef prefetch_throttle , Dropped `endif } MSHR_status_resp deriving(Bits, Eq, FShow);
 	instance DefaultValue#(MSHR_status_resp);
 		defaultValue= Not_allocated;
 	endinstance

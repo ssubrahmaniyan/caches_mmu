@@ -946,6 +946,12 @@ package nb_dcache;
           deq_prev_fifo= True;
           `logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
         end
+`ifdef prefetch_throttle
+        else if (tpl_1(mshr_resp)==Dropped) begin
+          deq_prev_fifo = True;
+          `logLevel( dcache, 2, $format("DCACHE : MSHR NOT allocated for prefetch req (dropped) with addr: %h", req.addr))
+        end
+`endif
         else begin
           `logLevel( dcache, 2, $format("DCACHE : MSHR is busy. Stalling Stage3."))
         end
