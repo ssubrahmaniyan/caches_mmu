@@ -726,7 +726,11 @@ package icache;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault ;
       Bit#(TLog#(TDiv#(`ibuswidth,8))) word_offset = truncate(req.address);
-      let response_word = response.data >> {word_offset,3'b0};
+      `ifndef iclass
+        let response_word = response.data >> {word_offset,3'b0};
+      `else
+        let response_word = response.data;
+      `endif
       let lv_response = IMem_core_response{word:truncate(response_word), trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
