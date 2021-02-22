@@ -842,38 +842,46 @@ package nb_dcache;
         `logLevel( dcache, 2, $format("DCACHE : MSHR busy. Stalling second stage... "))
       end
       else begin
-        `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
-        Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
+        // NOTE: Turning off enqueue to 2nd stage and store response to core in flush cycle (220221)
+        // For a store miss in the flush cycle, response is sent to the core, and 2nd stage enqueue happens but rl_fb_enq_ff_second_stage below
+        // fires only if flush is invalid => enqueue to cff and dequeue from first stage fifo are disabled in flush cycle
+        if (!rg_flush.valid) begin
+          `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
+          Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
 
-        //if store instructions, and mshr is sending response to core, then do not enqueue request into next cycle
-        //For store instructions, if TLB checks pass, the response can immediately be sent. Therefore, instead of sending it to the MSHR,
-        //We stall untill MSHR is not sending a response to the core. This way, the ROB can move forward asap.
-        //Also, this will have no impact on throughput as the same store instruction would have arrived from the store buffer
-        //a couple of clock cycles before. Therefore, even if the store is a miss in the cache, a "prefetch" would
-        //have already started.
-        if((!is_store_instruction || !wr_is_mshr_resp_to_core) && ff_second_stage.notFull) begin
-          let second_stage_req= convert_to_Cache_req(req);
-          ff_second_stage.enq(second_stage_req);
-          wr_stage2_fb_enq<= second_stage_req;
-          `logLevel( dcache, 2, $format("DCACHE : Converted to cache request"))
-        end
-        
-        if(is_store_instruction) begin
-          if(wr_is_mshr_resp_to_core) begin
-            `logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
+          //if store instructions, and mshr is sending response to core, then do not enqueue request into next cycle
+          //For store instructions, if TLB checks pass, the response can immediately be sent. Therefore, instead of sending it to the MSHR,
+          //We stall untill MSHR is not sending a response to the core. This way, the ROB can move forward asap.
+          //Also, this will have no impact on throughput as the same store instruction would have arrived from the store buffer
+          //a couple of clock cycles before. Therefore, even if the store is a miss in the cache, a "prefetch" would
+          //have already started.
+          if((!is_store_instruction || !wr_is_mshr_resp_to_core) && ff_second_stage.notFull) begin
+            let second_stage_req= convert_to_Cache_req(req);
+            ff_second_stage.enq(second_stage_req);
+            wr_stage2_fb_enq<= second_stage_req;
+            `logLevel( dcache, 2, $format("DCACHE : Converted to cache request"))
           end
-          else begin
-            `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
-            wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
-                                                       prf_index: req.prf_index,
-                                                       rob: req.rob,
-                                                       exception: No_exception
-                                                       `ifdef atomic
-                                                         `ifdef simulate `ifdef new_spike
-                                                         ,  atomic_result: 0
-                                                         `endif `endif
-                                                       `endif };
-          end
+
+          if(is_store_instruction) begin
+            if(wr_is_mshr_resp_to_core) begin
+              `logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
+            end
+            else begin
+              `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
+              wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
+                                                         prf_index: req.prf_index,
+                                                         rob: req.rob,
+                                                         exception: No_exception
+                                                         `ifdef atomic
+                                                           `ifdef simulate `ifdef new_spike
+                                                           ,  atomic_result: 0
+                                                           `endif `endif
+                                                         `endif };
+            end // no mshr response
+          end // store
+        end // flush invalid
+        else begin
+          `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss, flush cycle: no enqueue to 2nd stage for req: ", fshow(req)))
         end
       end
 
