@@ -1167,10 +1167,11 @@ package nb_dcache;
       `ifdef atomic
       rg_atomic_hit_info<= tagged Invalid;
       `endif
-      ff_first_stage.deq;
-      for(Integer i = 0; i<ways_val; i = i+1) begin
-        ff_first_stage_tag[i].deq;
-      end
+      // NOTE: No dequeue here: rl_deq_ff_first_stage handles dequeue (otherwise bsc makes that rule conditional on this rule not firing) 220221
+      //ff_first_stage.deq;
+      //for(Integer i = 0; i<ways_val; i = i+1) begin
+      //  ff_first_stage_tag[i].deq;
+      //end
     endrule
 
     //This rule resets the valid bit of rg_flush after a flush request is initiated.
