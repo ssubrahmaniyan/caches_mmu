@@ -307,7 +307,8 @@ package mshr;
 					//If a store_commit is pending, perform it irrespective of whether the cfifo_valid bit is 
 					//set, or if it is a fence instruction as this store got committed before the flush or fence 
 					//operation. Also, the req is valid if cfifo_valid is set and no fence operation is being done.
-					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
+                                        // Only loads and prefetch requests can be dropped (050321)
+					if((fifo_top.origin==Store_commit) || (fifo_top.origin==PTW) || (cfifo_valid==1'b1 && !rg_fence)) begin
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
@@ -356,7 +357,8 @@ package mshr;
           lv_fb_addr= rg_mshr_line_addr[curr_rid];
           Bit#(prf_index) prf_id= `ifdef atomic fifo_top.is_atomic? tpl_2(rg_atomic_info): `endif truncate(fifo_top.payload);
 
-					if(fifo_top.origin==Store_commit || (cfifo_valid==1'b1 && !rg_fence)) begin
+                                        // Only loads and prefetch requests can be dropped (050321)
+					if((fifo_top.origin==Store_commit) || (fifo_top.origin==PTW) || (cfifo_valid==1'b1 && !rg_fence)) begin
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
 																					access_size: fifo_top.access_size,
 																					payload: fifo_top.payload,
