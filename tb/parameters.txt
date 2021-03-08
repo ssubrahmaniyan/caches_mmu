@@ -13,4 +13,4 @@
 	`define Buswidth	128
 	`define Rob_index	7
 	`define asidwidth	9
-	`define dtlbsize	8
+	`define dtlbsize	16
