@@ -480,11 +480,8 @@ package nb_dcache;
                                                                                               , is_atomic: core_req.is_atomic
                                                                                               , atomic_fn: core_req.atomic_fn
                                                                                               `endif };
-`ifdef supervisor
         Bool is_IO_access= isIO(resp_from_tlb.address[`paddr-1:0], True);
-`else
-        Bool is_IO_access= isIO(core_req.addr, True);
-`endif
+
         if(core_req.sfence) begin
           mshr.fence;
           //rg_fence<= True;
