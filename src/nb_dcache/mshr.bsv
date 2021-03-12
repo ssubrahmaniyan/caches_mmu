@@ -203,6 +203,7 @@ package mshr;
 				  wr_allocate_id<= tagged Valid mshr_unallocated_id;
 				  ff_mshr[mshr_unallocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
 					access_size: req.access_size,
+					dest_type: req.dest_type,
 					payload: req.payload,
 					origin: req.origin
                                                       `ifdef atomic 
@@ -250,9 +251,10 @@ package mshr;
         `endif
 				wr_allocate_id<= tagged Valid mshr_allocated_id;
 				ff_mshr[mshr_allocated_id].enq(MSHR_FIFO{ addr: req.addr[linewidthbits_val-1:0],
-																									access_size: req.access_size,
-																									payload: req.payload,
-																									origin: req.origin
+				access_size: req.access_size,
+				dest_type: req.dest_type,
+			        payload: req.payload,
+				origin: req.origin
                                                   `ifdef atomic 
                                                     , is_atomic: req.is_atomic
                                                   `endif });
@@ -310,9 +312,10 @@ package mshr;
                                         // Only loads and prefetch requests can be dropped (050321)
 					if((fifo_top.origin==Store_commit) || (fifo_top.origin==PTW) || (cfifo_valid==1'b1 && !rg_fence)) begin
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
-																					access_size: fifo_top.access_size,
-																					payload: fifo_top.payload,
-																					origin: fifo_top.origin,
+										access_size: fifo_top.access_size,
+										dest_type: fifo_top.dest_type,
+										payload: fifo_top.payload,
+										origin: fifo_top.origin,
                                           prf_index: prf_id,
                                           rob: tpl_1(cff_rob[req_rid].first)
                                           `ifdef atomic
@@ -324,9 +327,10 @@ package mshr;
 					else begin
             if(ff_mshr[req_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
 						  req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[req_rid], fifo_top.addr},
-						  															access_size: fifo_top.access_size,
-						  															payload: fifo_top.payload,
-						  															origin: Store_buffer,
+						  				access_size: fifo_top.access_size,
+						  				dest_type: fifo_top.dest_type,
+						  				payload: fifo_top.payload,
+						  				origin: Store_buffer,
                                             prf_index: prf_id,
                                             rob: tpl_1(cff_rob[req_rid].first)
                                             `ifdef atomic
@@ -360,9 +364,10 @@ package mshr;
                                         // Only loads and prefetch requests can be dropped (050321)
 					if((fifo_top.origin==Store_commit) || (fifo_top.origin==PTW) || (cfifo_valid==1'b1 && !rg_fence)) begin
 						req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
-																					access_size: fifo_top.access_size,
-																					payload: fifo_top.payload,
-																					origin: fifo_top.origin,
+										access_size: fifo_top.access_size,
+										dest_type: fifo_top.dest_type,
+										payload: fifo_top.payload,
+										origin: fifo_top.origin,
                                           prf_index: prf_id,
                                           rob: tpl_1(cff_rob[curr_rid].first)
                                           `ifdef atomic
@@ -374,9 +379,10 @@ package mshr;
 					else begin
             if(ff_mshr[curr_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
 						  req= tagged Valid MSHR_Req {	addr: {rg_mshr_line_addr[curr_rid], fifo_top.addr},
-						  															access_size: fifo_top.access_size,
-						  															payload: fifo_top.payload,
-						  															origin: Store_buffer,
+						  				access_size: fifo_top.access_size,
+						  				dest_type: fifo_top.dest_type,
+						  	    			payload: fifo_top.payload,
+						  				origin: Store_buffer,
                                             prf_index: prf_id,
                                             rob: tpl_1(cff_rob[curr_rid].first)
                                             `ifdef atomic

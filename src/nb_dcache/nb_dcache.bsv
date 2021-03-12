@@ -318,6 +318,7 @@ package nb_dcache;
                          payload: lv_payload,
                          origin: req.origin,
                          prf_index: req.prf_index,
+                         dest_type: req.dest_type,
                          rob: req.rob
                        `ifdef atomic
                          , is_atomic: req.is_atomic
@@ -331,6 +332,7 @@ package nb_dcache;
                         payload: req.data,
                         origin: req.origin,
                         prf_index: req.prf_index,
+                        dest_type: req.dest_type,
                         rob: req.rob
                         `ifdef atomic
                         , atomic_fn: req.atomic_fn
@@ -475,7 +477,8 @@ package nb_dcache;
                                                                                               ptwalk_trap: core_req.ptwalk_trap,
                                                                                               lsq_id: core_req.lsq_id,
                                                                                               rob: core_req.rob,
-                                                                                              prf_index: core_req.prf_index
+                                                                                              prf_index: core_req.prf_index,
+                                                                                              dest_type: core_req.dest_type
                                                                                               `ifdef atomic
                                                                                               , is_atomic: core_req.is_atomic
                                                                                               , atomic_fn: core_req.atomic_fn
@@ -662,6 +665,11 @@ package nb_dcache;
 
         Bit#(datawidth) data_to_core= fn_extract_data(hit_line, truncate(req.addr), req.access_size);  //TODO Make UniqueWrapper for this fn
 
+        // NaN Boxing for sp loads (FLW)
+        if ((req.access_size == 3'b010) && (req.dest_type == FPRF)) begin
+          data_to_core = data_to_core | 'hffffffff00000000;
+        end
+
         //If MSHR req is not sending response, the current hit response can be sent to the processor.
         //Hence, deq ff_first_stage. Also, for Store_buffer requests, no response needs to be sent,
         //and therfore, ff_first_stage can be dequeued.
@@ -802,6 +810,10 @@ package nb_dcache;
         end
         `logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h for prf_index: %h",  fb_data, req.prf_index))
         Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
+        // NaN Boxing for sp loads (FLW)
+        if ((req.access_size == 3'b010) && (req.dest_type == FPRF)) begin
+          data_to_core = data_to_core | 'hffffffff00000000;
+        end
         Bool send_resp= req.origin!=Store_buffer;
       `ifdef atomic
         if(req.is_atomic && (req.atomic_fn=='h7 || req.atomic_fn=='h17)) begin //SC.W or SC.D
@@ -1022,6 +1034,10 @@ package nb_dcache;
                          `ifdef atomic || req_from_mshr.is_atomic `endif );
         if(send_resp) begin
           Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req_from_mshr.addr), req_from_mshr.access_size);
+          // NaN Boxing for sp loads (FLW)
+          if ((req_from_mshr.access_size == 3'b010) && (req_from_mshr.dest_type == FPRF)) begin
+            data_to_core = data_to_core | 'hffffffff00000000;
+          end
         `ifdef atomic
           if(req_from_mshr.is_atomic && (req_from_mshr.atomic_fn=='h7 || req_from_mshr.atomic_fn=='h17)) begin //SC
             data_to_core= 0;

@@ -10,6 +10,8 @@ Details:
 package nb_dcache_types;
 	import DefaultValue :: *;
 
+        typedef enum {IntegerRF, FPRF} DestType deriving(Bits, Eq, FShow); // destination register type
+
 	typedef enum {Load_buffer, Store_buffer, PTW, Store_commit} Origin deriving (Bits, Eq, FShow);
 	instance DefaultValue#(Origin);
 		defaultValue= Store_buffer;
@@ -31,6 +33,7 @@ package nb_dcache_types;
                 Bit#(lsq_index) lsq_id;
 		Bit#(rob_index) rob;
 		Bit#(prf_index) prf_index;
+		DestType dest_type;
     `ifdef atomic
     Bool is_atomic;
     Bit#(5) atomic_fn;
@@ -45,7 +48,8 @@ package nb_dcache_types;
 															sfence: False,
                                                                                                                         lsq_id: 'd0,
 															rob: 'd0,
-															prf_index: 'd0
+															prf_index: 'd0,
+															dest_type: IntegerRF
                               `ifdef atomic
                               , is_atomic: False
                               , atomic_fn: 'd0
@@ -59,6 +63,7 @@ package nb_dcache_types;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(prf_index) prf_index;
+		DestType dest_type;
 		Bit#(rob_index) rob;
     `ifdef atomic
     Bool is_atomic;
@@ -135,6 +140,7 @@ package nb_dcache_types;
 		Bit#(data) payload;
 		Origin origin;
 		Bit#(prf_index) prf_index;
+		DestType dest_type;
     Bit#(rob_index) rob;
     `ifdef atomic
       Bool is_atomic;
@@ -147,6 +153,7 @@ package nb_dcache_types;
 															payload: 'd0,
 															origin: defaultValue,
                               prf_index: 'd0,
+                              dest_type: IntegerRF,
                               rob: 'd0
                               `ifdef atomic
                               , is_atomic: False
@@ -163,6 +170,7 @@ package nb_dcache_types;
 	typedef struct {
 		Bit#(addr) addr;
 		Bit#(3) access_size;
+		DestType dest_type;
 		Bit#(data) payload;
 		Origin origin;
     `ifdef atomic
@@ -172,6 +180,7 @@ package nb_dcache_types;
 	instance DefaultValue#(MSHR_FIFO#(addr, data));
 		defaultValue= MSHR_FIFO {	addr: 'd0,
 															access_size: 'd3,
+															dest_type: IntegerRF,
 															payload: 'd0,
 															origin: defaultValue
                               `ifdef atomic
