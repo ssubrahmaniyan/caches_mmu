@@ -1451,7 +1451,11 @@ package nb_dcache;
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
       // flushing the response is handled in core (instead of checking here for non-store, non-ptw)
       //if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
+    `ifdef supervisor // Do not drop PTW responses
+      ;
+    `else
       if(!rg_fence_wait_for_ff_first_stage_empty);
+    `endif
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
