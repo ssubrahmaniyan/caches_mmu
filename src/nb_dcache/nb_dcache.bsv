@@ -71,6 +71,9 @@ package nb_dcache;
                           numeric type lsq_index);      //Log of number of LSQ entries
     interface Put#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index, lsq_index))  subifc_req_from_core;
     interface Get#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index))                     subifc_resp_to_core;
+    `ifdef store_early_ack
+      interface Get#(Tuple2#(Bit#(1), Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)))  subifc_early_resp_to_core;
+    `endif
     interface Get#(Req_from_core#(vaddr, TMul#(wordsize,8), rob_index, prf_index, lsq_index))  subifc_req_to_ptw;
     interface Ifc_ptw_meta#(vaddr)                                                             subifc_ptw_meta;
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages))                        subifc_response_frm_ptw;
@@ -269,6 +272,10 @@ package nb_dcache;
     Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_mshr_resp_to_core <- mkWire;
     Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_sram_resp_to_core <- mkWire();
     Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_stage2_fb_resp_to_core <- mkWire();
+    `ifdef store_early_ack
+      Wire#(Bit#(1)) wr_early_resp_to_core_valid <- mkDWire(0);
+      Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_early_resp_to_core <- mkDWire(unpack(0));
+    `endif
     Wire#(Bool) wr_stage1_deq <- mkDWire(False);
     Wire#(Bool) wr_stage1_deq_enq <- mkDWire(False);
     Wire#(Bool) wr_stage1_fb_deq <- mkDWire(False);
@@ -524,6 +531,23 @@ package nb_dcache;
               rg_lr_info<= tuple3(False, ?, ?);
           `endif
 
+            // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
+            `ifdef store_early_ack
+              if (!is_IO_access && (req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+                `logLevel( dcache, 2, $format("DCACHE : Regular store, sending early response: rob: %h prf: %h", req.rob, req.prf_index))
+                wr_early_resp_to_core_valid <= 1;
+                wr_early_resp_to_core <= Resp_to_core { data: '0,
+                                                        prf_index: req.prf_index,
+                                                        rob: req.rob,
+                                                        exception: No_exception
+                                                        `ifdef atomic
+                                                        `ifdef simulate `ifdef new_spike
+                                                           ,  atomic_result: 0
+                                                        `endif `endif
+                                                        `endif };
+              end
+            `endif // store_early_ack
+
             if(is_IO_access) begin  //IO operation
               if (req.origin != Store_buffer) begin
                 //Enqueue into a separate FIFO that handles IO Requests
@@ -679,15 +703,23 @@ package nb_dcache;
 
         //If MSHR req is not sending response, then this stage can send a response for hit.
         if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
-          wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
-                                                prf_index: req.prf_index,
-                                                rob: req.rob,
-                                                exception: No_exception
-                                                `ifdef atomic
-                                                  `ifdef simulate `ifdef new_spike
-                                                    ,  atomic_result: 0
-                                                  `endif `endif
-                                                `endif };
+
+          `ifdef store_early_ack
+            if ((req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+              send_resp = False;
+            end
+          `endif // store_early_ack
+          if (send_resp) begin
+            wr_sram_resp_to_core<= Resp_to_core { data: data_to_core,
+                                                  prf_index: req.prf_index,
+                                                  rob: req.rob,
+                                                  exception: No_exception
+                                                  `ifdef atomic
+                                                    `ifdef simulate `ifdef new_spike
+                                                      ,  atomic_result: 0
+                                                    `endif `endif
+                                                  `endif };
+          end
           repl.update_set(set_index, hit_way);  //Update the replacement bits on a hit
           `logLevel( dcache, 2, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
         
@@ -815,6 +847,13 @@ package nb_dcache;
           data_to_core = data_to_core | 'hffffffff00000000;
         end
         Bool send_resp= req.origin!=Store_buffer;
+
+        `ifdef store_early_ack
+          if ((req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+            send_resp = False;
+          end
+        `endif // store_early_ack
+
       `ifdef atomic
         if(req.is_atomic && (req.atomic_fn=='h7 || req.atomic_fn=='h17)) begin //SC.W or SC.D
           data_to_core= 0;
@@ -876,16 +915,18 @@ package nb_dcache;
               `logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
             end
             else begin
-              `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
-              wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
-                                                         prf_index: req.prf_index,
-                                                         rob: req.rob,
-                                                         exception: No_exception
-                                                         `ifdef atomic
-                                                           `ifdef simulate `ifdef new_spike
-                                                           ,  atomic_result: 0
-                                                           `endif `endif
-                                                         `endif };
+              `ifndef store_early_ack
+                `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
+                wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
+                                                           prf_index: '0,
+                                                           rob: req.rob,
+                                                           exception: No_exception
+                                                           `ifdef atomic
+                                                             `ifdef simulate `ifdef new_spike
+                                                             ,  atomic_result: '0
+                                                             `endif `endif
+                                                           `endif };
+              `endif // if !store_early_ack
             end // no mshr response
           end // store
         end // flush invalid
@@ -1460,6 +1501,14 @@ package nb_dcache;
         return wr_resp_to_core;
       endmethod
     endinterface;
+
+    `ifdef store_early_ack
+    interface subifc_early_resp_to_core = interface Get
+      method ActionValue#(Tuple2#(Bit#(1), Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index))) get;
+        return tuple2(wr_early_resp_to_core_valid, wr_early_resp_to_core);
+      endmethod
+    endinterface;
+    `endif
 
     interface subifc_ptw_meta= dtlb.ptw_meta;
 `ifdef supervisor
