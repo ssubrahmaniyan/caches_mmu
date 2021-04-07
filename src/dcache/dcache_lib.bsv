@@ -147,7 +147,7 @@ package dcache_lib;
         end
       else
         v_tags[way].request(1, index, tag, '1);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: TagReq: Tag:%h RW:%b Way:%d set:%d",id,tag,
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: TagRAM: Tag:%h RW:%b Way:%d set:%d",id,tag,
       read_write, way, index))
     endmethod
     method Bit#(paddr) mv_tag_select(Bit#(TLog#(ways)) wayselect );
@@ -1036,8 +1036,9 @@ package dcache_lib;
       else
         rg_fb_enables[lv_current_bank] <= 1;
       v_fb_err[fbindex] <= pack(mem_resp.err);
-      `logLevel(dcache , 0, $format("[%2d]DCACHE: FB Fill: fbindex:%d ibank:%d cbank:%d fben:%b", id,
-      fbindex, init_bank, lv_current_bank, rg_fb_enables))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: FB FILL MemResp :",id,fshow(mem_resp)))
+      `logLevel(dcache , 0, $format("[%2d]DCACHE: FB FILL fbaddr:%h fbindex:%d initbank:%d currbank:%d fben:%b", id,
+        v_fb_addr[fbindex], fbindex, init_bank, lv_current_bank, rg_fb_enables))
     endmethod
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
@@ -1100,8 +1101,6 @@ package dcache_lib;
       end
       Bool lv_hit_in_fill = fill && lv_hitvector[fbindex] == 1 &&
                             (rg_fb_enables[block_offset] == 1);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: FB: Polling: linevalid:%b blockoffset:%d",id,
-                                    lv_linevalid, block_offset))
       Bool lv_wordhit = (lv_linevalid || lv_hit_in_fill);
       return PollingResponse{err: lv_err, word:lv_selected_word, waymask: lv_hitvector,
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
@@ -1168,6 +1167,10 @@ package dcache_lib;
     Bool iobuff_full = (all(isTrue, readVReg(v_iobuff_valid)));
     /*dov:var: variable to indicate that the storebuffer is empty*/
     Bool iobuff_empty=!(any(isTrue, readVReg(v_iobuff_valid)));
+    rule rl_print_stats;
+      `logLevel( dcache, 3, $format("[%2d]DCACHE: io_full:%b io_empty:%b iohead:%d iotail:%d", 
+        id, iobuff_full, iobuff_empty, rg_head, rg_tail))
+    endrule
 
   `ifdef sva_assert
     property headOverflow();
@@ -1189,6 +1192,9 @@ package dcache_lib;
     method mv_io_head_valid = v_iobuff_valid[rg_head] && v_iobuff_commit[rg_head];
 
     method Action ma_allocate_io ( IoEntry#(addr, wordsize, esize) entry);
+    `ifdef ASSERT
+      dynamicAssert(!v_iobuff_valid[rg_tail],"Valid IO Entry Allocated");
+    `endif
       v_iobuffer[rg_tail] <= entry;
       v_iobuff_valid[rg_tail] <= True;
       if(rg_tail == fromInteger(v_iosize -1))
@@ -1434,6 +1440,9 @@ package dcache_lib;
                              size == 2?'hffffffff : '1;
 
       Bit#(dataword) storemask = temp << shiftamt;
+    `ifdef ASSERT
+      dynamicAssert(!v_sb_valid[rg_tail],"Valid SB Entry Allocated");
+    `endif
       v_sb_valid[rg_tail] <= True;
       let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
                                       mask: storemask, size:truncate(size)};

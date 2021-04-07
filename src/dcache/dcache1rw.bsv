@@ -168,8 +168,15 @@ package dcache1rw;
   typedef struct{
     Bit#(TLog#(blocks)) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
-  } Pending_req#(numeric type fbsize, numeric type blocks)
-                deriving(Bits, Eq, FShow);
+  } Pending_req#(numeric type fbsize, numeric type blocks) deriving(Bits, Eq);
+
+  instance FShow#(Pending_req#(fbszie, blocks));
+    /*doc:func: */
+    function Fmt fshow (Pending_req#(fbsize, blocks) value);
+      Fmt result = $format("{fbindex:%d bank:%b}",value.fbindex, value.init_bank);
+      return result;      
+    endfunction
+  endinstance
 
 
   interface Ifc_dcache;
@@ -356,6 +363,8 @@ package dcache1rw;
     /*doc:reg: this register indicates that the IO op is part of an atomic op and the read phase is
     * over when this register is set.*/
     Reg#(Bool) rg_io_atomic_done <- mkReg(False);
+    /*doc:reg: */
+    Reg#(Bit#(`respwidth)) rg_atomic_rd_data <- mkReg(0);
 
   `ifdef dcache_ecc
     /*doc:reg: register to hold the access request performed by the external CCSU module*/
@@ -548,8 +557,7 @@ package dcache1rw;
       Bit#(1) lv_dirty = v_reg_dirty[rg_fence_set][rg_fence_way];
       Bit#(1) lv_valid = v_reg_valid[rg_fence_set][rg_fence_way];
       `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: CurrWay:%2d CurrSet:%2d Valid:%b \
-Dirty:%b Addr:%h Data:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address,
-dataline ))
+Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address))
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
       if( writeback_condition) begin
         let lv_req = DCache_mem_writereq{address   : final_address,
@@ -584,7 +592,7 @@ dataline ))
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Ending Fence op",id))
         ff_core_response.enq(DMem_core_response{word:?, trap: False, is_io: False,
                               cause: ?, epochs: ff_core_request.first.epochs,
-                              sb_allocated: False});
+                              entry_alloc: False});
       end
       else begin
         rg_fence_way <= lv_next_way;
@@ -613,7 +621,7 @@ dataline ))
   `endif
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_handling_miss && !rg_performing_replay
-                      && !rg_polling_mode && !fb_full && !rg_release_readphase
+                      && !rg_polling_mode && !fb_full && !io_full && !rg_release_readphase
                   `ifdef atomic && !sb_busy `endif 
                   `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif );
       let req = ff_core_request.first;
@@ -624,7 +632,7 @@ dataline ))
       Bool lv_access_fault = pa_response.trap || pa_response.tlbmiss;
       Bit#(`causesize) lv_cause = lv_access_fault? pa_response.cause:
                                   req.access == 0?`Load_access_fault:`Store_access_fault;
-      `logLevel( dcache, 1, $format("[%2d]DCACHE: Response from PA:",id,fshow(pa_response)))
+      `logLevel( dcache, 1, $format("[%2d]DCACHE: TLB Resp:",id,fshow(pa_response)))
     `else
       Bit#(TSub#(`vaddr,`paddr)) upper_bits=truncateLSB(req.address);
       Bit#(`paddr) phyaddr = truncate(req.address);
@@ -641,16 +649,21 @@ dataline ))
         lv_cause = pmp_cause;
       end
     `endif
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Processing:",id,fshow(req)))
       Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
       Bit#(`wordbits) word_offset = truncate(phyaddr);
       Bit#(`setbits) set_index= phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
 
       let lv_tag_resp = m_tag.mv_tagmatch_resp(phyaddr);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: lv_tag_resp:",id,fshow(lv_tag_resp)))
       Bit#(`dways) lv_hitmask = lv_tag_resp.waymask & v_reg_valid[set_index];
       let lv_data_resp <- m_data.mv_word_select(lv_blocknum,lv_hitmask);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: lv_data_resp:",id,fshow(lv_data_resp)))
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
+      if(|lv_hitmask==0)
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: TagRAM: Miss",id))
+      else begin
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: TagRAM Hit in line:%b",id,lv_hitmask))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: DataRAM Selected Word:%h",id,lv_data_resp.word))
+      end
 
     `ifdef dcache_ecc
 
@@ -682,7 +695,7 @@ dataline ))
     `endif
       let lv_response = DMem_core_response{word:response_word, trap: lv_access_fault,
                                           is_io: False, cause: lv_cause, epochs: req.epochs,
-                                          sb_allocated: req.access !=0 };
+                                          entry_alloc: req.access !=0 };
 
       wr_ram_response <= lv_response;
       wr_ram_hitway <= truncate(pack(countZerosLSB(lv_hitmask)));
@@ -701,15 +714,12 @@ dataline ))
     `ifdef ASSERT
       dynamicAssert(countOnes(lv_hitmask) <= 1,"DCACHE: More than one way is a hit in the cache");
     `endif
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Req:",id,fshow(req)))
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Hit:%b ",id,lv_hitmask))
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: ",id, fshow(lv_response)))
     endrule
-    rule rl_fillbuffer_check(!ff_core_request.first.fence && !fb_full
+    rule rl_fillbuffer_check(!ff_core_request.first.fence && !fb_full && !io_full
                               `ifdef atomic && !sb_busy `endif 
                               `ifdef dcache_ecc && !rg_perform_sec `endif );
       let req = ff_core_request.first;
-      `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Req:",id,fshow(req)))
+      `logLevel( dcache, 2, $format("[%2d]DCACHE: FB Processing :",id,fshow(req)))
     `ifdef supervisor
       Bit#(`paddr) phyaddr = ff_from_tlb.first.address;
     `else
@@ -732,25 +742,24 @@ dataline ))
       wr_fb_hitindex <= truncate(pack(countZerosLSB(lv_hitmask)));
       let lv_response = DMem_core_response{word:lv_response_word, trap: unpack(lv_response_err),
                                           is_io: lv_io_req, cause: lv_cause, epochs: req.epochs,
-                                          sb_allocated: !lv_io_req && req.access !=0 };
-      if(lv_io_req/* && req.access != 0 */) begin
+                                          entry_alloc: lv_io_req || req.access !=0 };
+      if(lv_io_req) begin
         wr_fb_state <= Hit;
         wr_fb_response <= lv_response;
-        `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Detected NC OP ",id, fshow(lv_response)))
+        `logLevel( dcache, 1, $format("[%2d]DCACHE: FB Detected NC OP ",id))
       end
       else if(lv_linehit)begin
-        `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Hit in Line:%b for Addr:%h",id, 
-                                                                            lv_hitmask, phyaddr))
         if(lv_wordhit)begin
           wr_fb_state <= Hit;
           wr_fb_response <= lv_response;
-          `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Required Word found",id))
+          `logLevel( dcache, 1, $format("[%2d]DCACHE: FB Required word found in line:%b",id,
+                                                                                      lv_hitmask))
           rg_polling_mode <= False;
         end
         else begin
           wr_fb_state <= None;
           rg_polling_mode <= True;
-          `logLevel( dcache, 1, $format("[%2d]DCACHE: FB: Required word not available yet",id))
+          `logLevel( dcache, 1, $format("[%2d]DCACHE: FB Required word not available yet in line:%b", id, lv_hitmask))
         end
       end
       else begin
@@ -792,7 +801,6 @@ dataline ))
       DMem_core_response#(`respwidth,`desize) lv_response;
 
       let {storemask, storedata} <- m_storebuffer.mav_check_sb_hit(phyaddr);
-      `logLevel( dcache, 0, $format("DCACHE: storemask:%h storedata:%h",storemask, storedata))
       Bit#(2) onehot_hit = {pack(wr_ram_state==Hit || wr_fault), 
                             pack(wr_fb_state==Hit && !wr_fault)};
     `ifdef ASSERT
@@ -806,14 +814,14 @@ dataline ))
       lv_response = select(lv_responses,unpack(onehot_hit));
 
       if(wr_ram_state == Hit && !wr_fault) begin
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from SRAM",id))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response Hit from SRAM",id))
         if(`drepl == 2) begin
           replacement.update_set(set_index, wr_ram_hitway);//wr_replace_line);
           wr_ram_hitset <= tagged Valid set_index;
         end
       end
       if(wr_fb_state == Hit && !wr_fault) begin
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Hit from Fillbuffer",id))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response Hit from Fillbuffer",id))
       `ifdef perfmonitors
         if(rg_handling_miss) begin
           if(req.access == 0)
@@ -827,12 +835,13 @@ dataline ))
         end
       `endif
       end
-    
+   
+      Bool skip_allocation = False;
     `ifdef atomic
       if (req.access == 2 && req.atomic_op=='b0101) begin// LR op
         rg_reservation_address <= tagged Valid (req.address & `reservation_mask);
         req.access = 0;
-        lv_response.sb_allocated = False;
+        lv_response.entry_alloc = lv_response.is_io;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: LR reservation for : %h",id,req.address))
       end
       else if (req.access == 2 && req.atomic_op == 'b0111) begin // SC op
@@ -846,7 +855,8 @@ dataline ))
         else begin
           req.access = 0; // change this op to load and exit
           lv_response.word = 1;
-          lv_response.sb_allocated = False;
+          lv_response.entry_alloc = False;
+          skip_allocation = True;
           `logLevel( dcache, 0, $format("[%2d]DCACHE: SC fails for : %h. ResAddr:%h",id,req.address,
             fromMaybe(?,rg_reservation_address)))
         end
@@ -855,7 +865,6 @@ dataline ))
 
 
       lv_response.word = (storemask & storedata) | (~storemask & lv_response.word);
-      `logLevel( dcache, 0, $format("DCACHE: WORD1:%h",lv_response.word))
       // capture the sign bit of the response to the core
       Bit#(1) lv_sign =case(req.size[1:0])
           'b00: lv_response.word[7];
@@ -877,8 +886,7 @@ dataline ))
       // sign bit. Theese need to be set in the final response to the core and will thus be ORed
       Bit#(respwidth) signmask = ~mask & duplicate(lv_sign);
       lv_response.word = (lv_response.word & mask) | signmask;
-      lv_response.word = (lv_response.trap || lv_response.is_io)?truncate(req.address):lv_response.word;
-      `logLevel( dcache, 0, $format("DCACHE: WORD1:%h",lv_response.word))
+      lv_response.word = (lv_response.trap)?truncate(req.address):lv_response.word;
 
       if(!_faulty)begin
         ff_core_request.deq;
@@ -886,8 +894,10 @@ dataline ))
         ff_from_tlb.deq;
         if(pa_response.tlbmiss)
           ff_hold_request.enq(ff_core_request.first());
-        else if(req.ptwalk_req && !pa_response.tlbmiss)
-          ff_ptw_response.enq(lv_response);
+        else if(req.ptwalk_req && !pa_response.tlbmiss) begin
+          if (!lv_response.is_io)
+            ff_ptw_response.enq(lv_response);
+        end
         else
       `endif
         ff_core_response.enq(lv_response);
@@ -895,7 +905,8 @@ dataline ))
       end
 
       // -- allocate io-buffer entry
-      if (lv_response.is_io) begin
+      if (lv_response.is_io && !skip_allocation) begin
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Allocating IO Buffer",id))
         m_iobuffer.ma_allocate_io(IoEntry{address: phyaddr, data: req.data, epoch:req.epochs,
                                               size: req.size, access: truncate(req.access)
                                           `ifdef atomic ,atomic_op: req.atomic_op `endif
@@ -907,7 +918,7 @@ dataline ))
       end
       // -- allocate store-buffer for stores/atomic ops
       Bit#(TLog#(`dfbsize)) _fbindex = ?;
-      if( (req.access != 0 || _faulty )
+      if( (req.access != 0 || _faulty ) && !skip_allocation
                       && wr_ram_state == Hit && !wr_fault) begin
         _fbindex <- m_fillbuffer.mav_allocate_line(True, wr_ram_hitline, phyaddr,
                                                        v_reg_dirty[set_index][wr_ram_hitway]);
@@ -927,15 +938,15 @@ dataline ))
     `ifdef supervisor
       if(!pa_response.tlbmiss)
     `endif
-      if(!_faulty)
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding to Core:",id, fshow(lv_response)))
+    if(!_faulty `ifdef supervisor && !(req.ptwalk_req && !pa_response.tlbmiss && lv_response.is_io) `endif )
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Responding :",id, fshow(lv_response)))
 
-      if( !lv_response.is_io && req.access!=0 && !_faulty && !lv_response.trap 
+      if( !lv_response.is_io && req.access!=0 && !_faulty && !lv_response.trap  && !skip_allocation
                                           `ifdef supervisor && !pa_response.tlbmiss `endif )begin
         Bit#(TLog#(`dfbsize)) fbindex = (wr_fb_state == Hit && !wr_fault)? wr_fb_hitindex:_fbindex;
         m_storebuffer.ma_allocate_entry(phyaddr,req.data, req.epochs, fbindex, truncate(req.size)
                                 `ifdef atomic ,req.access == 2,lv_response.word, req.atomic_op `endif );
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Response: Allocating Store Buffer",id))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Allocating Store Buffer",id))
       end
     endrule
     
@@ -967,7 +978,7 @@ dataline ))
 
       // -- allocate a new entry in the fillbuffer
       lv_alotted_fb <- m_fillbuffer.mav_allocate_line(False, ?, phyaddr, ?);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Allocating Fbindex:%d",id, lv_alotted_fb))
       let pend_req = Pending_req{init_bank: lv_blocknum,
                                 fbindex: lv_alotted_fb};
       ff_pending_req.enq(pend_req);
@@ -980,7 +991,7 @@ dataline ))
       wr_total_atomic_miss <= pack(req.access == 2);
       `endif
     `endif
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: MemReq: Sending Line Request for Addr:%h",id, phyaddr))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Sending Line Request for Addr:%h",id, phyaddr))
     endrule
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
     has been received the entire line and tag are written in to the BRAM and the fill buffer is
@@ -990,7 +1001,6 @@ dataline ))
       let response = ff_mem_rd_resp.first;
       ff_mem_rd_resp.deq;
       m_fillbuffer.ma_fill_from_memory(response, pending_req.fbindex, pending_req.init_bank);
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: FILL: Response from Memory:",id,fshow(response)))
       if(response.last)
         ff_pending_req.deq;
     endrule
@@ -998,7 +1008,7 @@ dataline ))
       m_tag.ma_request(False, rg_recent_req, lv_release_addr, ?);
       m_data.ma_request(False, rg_recent_req, lv_release_line, ?, '1);
       rg_performing_replay <= False;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. Index:%d",id,rg_recent_req))
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Replaying Req. set:%d",id,rg_recent_req))
     endrule
     rule rl_release_from_fillbuffer((fb_full || rg_fence_stall || fill_oppurtunity) && 
                                     sb_empty && !fb_empty && !wr_allocating_storebuffer  
@@ -1057,8 +1067,7 @@ dataline ))
         `endif
           if(rg_release_readphase ) begin
 
-            `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set:%d tag:%h\
- data:%h", id,lv_evict_address,set_index,tag,dataline))
+            `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set:%d tag:%h data:%h", id,lv_evict_address,set_index,tag,dataline))
             ff_mem_wr_request.enq(DCache_mem_writereq{address:lv_evict_address,
                                                   burst_len:fromInteger(valueOf(`dblocks)-1),
                                                   burst_size:fromInteger(valueOf(TLog#(`dwords))),
@@ -1122,12 +1131,43 @@ dataline ))
       rg_io_busy <= True;
       ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: io_entry.data,
                                       size: io_entry.size, read_write: io_entry.access == 1});
+      `logLevel( dcache, 0, $format("DCACHE[%2d]: Initiating IO request: ",id,fshow(io_entry)))
     endrule:rl_initiate_io
+  
+  `ifdef atomic
+    /*doc:func: This function carries out the atomic operations based on the RISC-V ISA spec*/
+    function Bit#(TMul#(`dwords,8)) fn_atomic_io_op (Bit#(5) op,  Bit#(TMul#(`dwords,8)) rs2,  Bit#(TMul#(`dwords,8)) loaded);
+      Bit#(TMul#(`dwords,8)) op1 = loaded;
+      Bit#(TMul#(`dwords,8)) op2 = rs2;
+    `ifdef RV64
+      if(op[4]==0)begin
+        op1=signExtend(loaded[31:0]);
+        op2= signExtend(rs2[31:0]);
+      end
+    `endif
+      Int#(TMul#(`dwords,8)) s_op1 = unpack(op1);
+      Int#(TMul#(`dwords,8)) s_op2 = unpack(op2);
+
+      case (op[3:0])
+          'b0011:return op2;
+          'b0000:return (op1+op2);
+          'b0010:return (op1^op2);
+          'b0110:return (op1&op2);
+          'b0100:return (op1|op2);
+          'b1100:return min(op1,op2);
+          'b1110:return max(op1,op2);
+          'b1000:return pack(min(s_op1,s_op2));
+          'b1010:return pack(max(s_op1,s_op2));
+          default:return op1;
+        endcase
+    endfunction
+  `endif
 
     /*doc:rule: */
     rule rl_io_response(rg_io_busy);
       let io_entry = m_iobuffer.mv_io_head;
       let mem_response = ff_mem_io_resp.first();
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: IO Response from Bus",id,fshow(mem_response)))
 	    Bit#(`wordbits) offset = truncate(io_entry.address);
 	    mem_response.data = mem_response.data >> {offset,3'b0};
 		  mem_response.data = case(io_entry.size)
@@ -1141,9 +1181,10 @@ dataline ))
 		  endcase;
       ff_mem_io_resp.deq;
       Bit#(`causesize) lv_cause = io_entry.access == 0?`Load_access_fault:`Store_access_fault;
-      let lv_response = DMem_core_response{word:mem_response.error?truncate(io_entry.vaddr): mem_response.data, 
+      let lv_response = DMem_core_response{word:mem_response.error?truncate(io_entry.vaddr): 
+                                          (io_entry.access == 2)? rg_atomic_rd_data: mem_response.data, 
                                           trap: mem_response.error,
-                                          sb_allocated: False,
+                                          entry_alloc: False,
                                           is_io: False, cause: lv_cause, epochs: io_entry.epoch};
     `ifdef supervisor 
       if (io_entry.is_ptw_req) begin
@@ -1154,18 +1195,20 @@ dataline ))
       else
     `endif
     `ifdef atomic
-      if (io_entry.access==2 && !rg_io_atomic_done) begin
-        //let _new_store = fn_atomic_op(io_entry.atomic_op, io_entry.data, lv_response.data);
-        let _new_store = io_entry.data;
+      if (io_entry.access==2 && !rg_io_atomic_done && !mem_response.error) begin
+        let _new_store = fn_atomic_io_op(io_entry.atomic_op, io_entry.data, mem_response.data);
         rg_io_atomic_done <= True;
+        rg_atomic_rd_data <= mem_response.data;
         ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: _new_store,
                                       size: io_entry.size, read_write: True});
+        `logLevel( dcache, 0, $format("DACCHE[%2d]: IO Atomic Rd phase Done. NewSt:%h",id, _new_store))
       end
       else if (io_entry.access == 2 && rg_io_atomic_done) begin
         rg_io_atomic_done <= False;
         m_iobuffer.ma_increment_head();
         rg_io_busy <= False;
         rg_core_io_response <= tagged Valid (lv_response);
+        `logLevel( dcache, 0, $format("DACCHE[%2d]: IO Atomic Wr phase Done.",id))
       end
       else
     `endif
@@ -1193,7 +1236,7 @@ dataline ))
       `endif
         Bit#(`paddr) phyaddr = truncate(req.address);
         Bit#(`setbits) set_index=req.fence?0:phyaddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-        `logLevel( dcache, 0, $format("[%2d]DCACHE: Receiving request: ",id,fshow(req)))
+        `logLevel( dcache, 0, $format("[%2d]DCACHE: Request: ",id,fshow(req)))
         `logLevel( dcache, 0, $format("[%2d]DCACHE: set:%d",id,set_index))
         ff_core_request.enq(req);
         rg_fence_stall<=req.fence;
