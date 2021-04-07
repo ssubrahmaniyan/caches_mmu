@@ -29,7 +29,6 @@ package dcache_types;
     Bit#(addr)    address;
     Bit#(8)       burst_len;
     Bit#(3)       burst_size;
-    Bool          io;
   } DCache_mem_readreq#( numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
@@ -43,8 +42,19 @@ package dcache_types;
     Bit#(data)      data;
     Bit#(8)         burst_len;
     Bit#(3)         burst_size;
-    Bool            io;
   } DCache_mem_writereq#(numeric type addr, numeric type data) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    Bit#(addr) address;
+    Bool read_write;
+    Bit#(data) data;
+    Bit#(3) size;
+  } DCache_io_req#(numeric type addr, numeric type data) deriving(Bits, FShow, Eq);
+  
+  typedef struct{
+    Bit#(data) data;
+    Bool error;
+  } DCache_io_response#(numeric type data) deriving(Bits, FShow, Eq);
 
   typedef Bool DCache_mem_writeresp;
 
@@ -73,6 +83,8 @@ package dcache_types;
     Bool              trap;
     Bit#(`causesize)  cause;
     Bit#(esize)       epochs;
+    Bool              is_io;
+    Bool              sb_allocated;
   } DMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq, FShow);
   // -------------------------------------------------------------------------------------------//
 
