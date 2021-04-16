@@ -101,13 +101,17 @@ package nb_dcache;
     (*preempts = "rl_release_fb_cycle2, rl_core_resp_for_atomic"*)
   `endif 
   (*conflict_free = "rl_enq_ff_second_stage, rl_fb_enq_ff_second_stage"*)
-  (*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache, rl_core_resp_for_atomic)"*)
+  `ifdef atomic
+    (*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache, rl_core_resp_for_atomic)"*)
+  `else
+    (*preempts= "rl_initialize, (rl_handle_req_from_core, rl_tag_and_data_array_read_response, rl_access_MSHRs, rl_MSHR_req_to_fill_buffer, rl_release_fb_cycle1, rl_release_fb_cycle2, rl_release_eviction_buffer, rl_fence_cache)"*)
+  `endif
   (*conflict_free="rl_MSHR_req_to_fill_buffer, mshr.rl_deq_ff"*)
   (*preempts="rl_sram_resp_to_core, rl_access_fault_response_to_core"*)
   (*preempts="rl_stage2_fb_resp_to_core, rl_access_fault_response_to_core"*)
   (*preempts="rl_fence_fb, rl_fence_cache"*)
-  (*preempts="rl_core_resp_for_atomic, rl_fence_cache"*)
 `ifdef atomic
+  (*preempts="rl_core_resp_for_atomic, rl_fence_cache"*)
   (*preempts = "rl_MSHR_resp_to_core, rl_sc_fail_response_to_core"*)
   (*preempts = "rl_sram_resp_to_core, rl_sc_fail_response_to_core"*)
   (*preempts = "rl_stage2_fb_resp_to_core, rl_sc_fail_response_to_core"*)
@@ -118,7 +122,11 @@ package nb_dcache;
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
   (*preempts = "rl_flush_ff_req_from_core, rl_handle_req_from_core"*)
-  (*preempts = "rl_flush_ff_first_stage, (rl_tag_and_data_array_read_response, rl_core_resp_for_atomic)"*)
+  `ifdef atomic
+    (*preempts = "rl_flush_ff_first_stage, (rl_tag_and_data_array_read_response, rl_core_resp_for_atomic)"*)
+  `else
+    (*preempts = "rl_flush_ff_first_stage, rl_tag_and_data_array_read_response"*)
+  `endif
 
   module mknb_dcache#(parameter String alg)
   //                  8,        8,      128,     4,    32,    32,    32,    32,      6,         4,       4,          3,           128,        7          5
