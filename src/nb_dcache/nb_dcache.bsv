@@ -516,9 +516,14 @@ package nb_dcache;
 `endif
           `logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
           if(resp_from_tlb.trap) begin  //Access fault
-            rg_cache_busy<= True;
-            `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
-            rg_access_fault_response<= tuple4(resp_from_tlb.exception, core_req.prf_index, core_req.rob, core_req.addr);
+            if (req.origin != Store_buffer) begin
+              rg_cache_busy<= True;
+              `logLevel( dcache, 1, $format("DCACHE : TLB Access fault"))
+              rg_access_fault_response<= tuple4(resp_from_tlb.exception, core_req.prf_index, core_req.rob, core_req.addr);
+            end
+            else begin
+              `logLevel( dcache, 2, $format("DCACHE : Access fault on prefetch request address: dropping."))
+            end
           end
           else begin  //Access is valid
             Bool lv_sc_pass= True;
