@@ -1,0 +1,63 @@
+package icache_dataram;
+    `include "icache_parameters.bsv"
+    import icache_types ::*;
+    import Vector ::*;
+    import BRAMCore ::*;
+    interface Ifc_icache_dataram;
+        // method to initiate a read request (read latency 2 cycles)
+        method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+
+        // method to initiate a write.
+        method Action ma_write_request( Bool valid,
+                              Bit#(`paddr) address,
+                              Bit#(`blocksize) data,
+                              Bit#(TLog#(`numways)) way);
+
+        //This method will return block from the bank specified by the hitmask
+        method Bit#(`blocksize) mv_read_response(Bit#(`numways) hitmask);
+    endinterface
+
+    module mkicache_dataram#(parameter Bit#(32) id)(Ifc_icache_dataram);
+        // Number of BRAMs = `numways
+        // BRAM length = `numsets 
+        // BRAM width = `blocksize
+        // BRAM port a is used for reads and port b is used for writes
+        Vector#(`numways,BRAM_DUAL_PORT#(Bit#(`setbits), Bit#(`blocksize))) data_ram <- replicateM(mkBRAMCore2(1, False));
+    
+        method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+            if(valid) begin
+                Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];
+                for (Integer i = 0; i< `numways; i = i + 1) begin
+                    data_ram[i].a.put(False,index,0);
+                end
+            end
+        endmethod
+        //
+        method Action ma_write_request( Bool valid,
+                                Bit#(`paddr) address,
+                                Bit#(`blocksize) data,
+                                Bit#(TLog#(`numways)) way);
+            if(valid) begin
+                Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];
+                data_ram[way].b.put(True,index,data);
+            end
+        endmethod
+        //
+        method Bit#(`blocksize) mv_read_response(Bit#(`numways) hitmask);                                   
+            Bit#(`blocksize) lv_selected_block = '0;
+            for (Integer i = 0; i<`numways; i = i + 1) begin
+                if(hitmask[i]==1) begin
+                    lv_selected_block = data_ram[i].a.read();
+                end
+            end
+        return lv_selected_block;
+        endmethod
+    endmodule
+    // 
+    (*synthesize*)
+    module mkicache_data#(parameter Bit#(32) id)(Ifc_icache_dataram);
+        let ifc();
+        mkicache_dataram _temp(id,ifc);
+        return (ifc);
+    endmodule
+endpackage
