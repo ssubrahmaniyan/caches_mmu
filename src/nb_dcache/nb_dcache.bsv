@@ -772,8 +772,8 @@ package nb_dcache;
         //else begin
         //end
       end
-      // NOTE: load address matches fb line, no request from mshr but 2nd stage ff also holds request to same line (040221)
-      else if((req.origin != Store_commit) && (fill_buffer.line_addr == get_line_addr(req.addr)) && (wr_ff_second_stage_req_to_curr_fb)) begin
+      // NOTE: load/store/ptw address matches fb line, no request from mshr but 2nd stage ff also holds request to same line (080621)
+      else if((req.origin != Store_buffer) && (fill_buffer.line_addr == get_line_addr(req.addr)) && (wr_ff_second_stage_req_to_curr_fb)) begin
         `logLevel( dcache, 2, $format("DCACHE : FB fill to same line, 2nd stage ff stalled. Hence stalling req: ", fshow(req)))
       end
       else begin  //Line miss; send req to FB since MSHR is not sending
@@ -821,7 +821,7 @@ package nb_dcache;
 
     //This rule fires in the same cycle as rl_tag_and_data_array_read_response if tag match returned a miss.
     //This rule sends a req to FB and checks if the response is a hit or not. If it's a hit, an
-    //acknoledgement is sent to the core; else, the request is stored into ff_second_stage.
+    //acknowledgement is sent to the core; else, the request is stored into ff_second_stage.
     rule rl_stage2_req_to_fb(wr_stage2_req_to_fb);
       let req= ff_first_stage.first;
       Maybe#(Bit#(linewidth)) fill_buffer_resp= tagged Invalid;
