@@ -1,6 +1,6 @@
 package icache_tagram;
     `include "icache_parameters.bsv"
-    import icache_types ::*;
+    import nb_icache_types ::*;
     import Vector ::*;
     import BRAMCore ::*;
     
@@ -33,7 +33,7 @@ package icache_tagram;
     Reg#(Bit#(`tagbits)) rg_read_req_tag  <- mkReg(0);
     //
     method Action ma_read_request( Bool valid,Bit#(`paddr) address);
-      Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];
+      Bit#(`setbits) index = fn_extract_set(address);
       if(valid) begin
         for(Integer i=0; i<`numways;i=i+1) begin
           tag_ram[i].a.put(False,index,0); 
@@ -45,7 +45,7 @@ package icache_tagram;
     method Action ma_write_request( Bool valid,
                               Bit#(`paddr) address,
                               Bit#(TLog#(`numways)) way);
-      Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];                
+      Bit#(`setbits) index = fn_extract_set(address);                
       Bit#(`tagbits) writetag = truncateLSB(address);
       if(valid) begin
           tag_ram[way].b.put(True,index,writetag); 

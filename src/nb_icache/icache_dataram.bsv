@@ -1,6 +1,6 @@
 package icache_dataram;
     `include "icache_parameters.bsv"
-    import icache_types ::*;
+    import nb_icache_types ::*;
     import Vector ::*;
     import BRAMCore ::*;
     interface Ifc_icache_dataram;
@@ -26,7 +26,7 @@ package icache_dataram;
     
         method Action ma_read_request( Bool valid,Bit#(`paddr) address);
             if(valid) begin
-                Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];
+                Bit#(`setbits) index = fn_extract_set(address);
                 for (Integer i = 0; i< `numways; i = i + 1) begin
                     data_ram[i].a.put(False,index,0);
                 end
@@ -38,19 +38,20 @@ package icache_dataram;
                                 Bit#(`blocksize) data,
                                 Bit#(TLog#(`numways)) way);
             if(valid) begin
-                Bit#(`setbits) index = address[`setbits+`wordbits+`bytebits-1:`wordbits+`bytebits];
+                Bit#(`setbits) index = fn_extract_set(address);
                 data_ram[way].b.put(True,index,data);
             end
         endmethod
         //
         method Bit#(`blocksize) mv_read_response(Bit#(`numways) hitmask);                                   
-            Bit#(`blocksize) lv_selected_block = '0;
+            Vector#(`numways,Bit#(`blocksize)) lv_read_response = replicate(0);
+            Bit#(`blocksize) lv_selected = '0;
             for (Integer i = 0; i<`numways; i = i + 1) begin
-                if(hitmask[i]==1) begin
-                    lv_selected_block = data_ram[i].a.read();
-                end
+                lv_read_response[i] = data_ram[i].a.read();
+                if(hitmask[i]==1)
+                    lv_selected = lv_read_response[i];
             end
-        return lv_selected_block;
+            return lv_selected;
         endmethod
     endmodule
     // 
