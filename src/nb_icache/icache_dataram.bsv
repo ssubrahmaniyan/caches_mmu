@@ -16,8 +16,8 @@ package icache_dataram;
         //This method will return block from the bank specified by the hitmask
         method Bit#(`blocksize) mv_read_response(Bit#(`numways) hitmask);
     endinterface
-
-    module mkicache_dataram#(parameter Bit#(32) id)(Ifc_icache_dataram);
+    (*synthesize*)
+    module mkicache_dataram(Ifc_icache_dataram);
         // Number of BRAMs = `numways
         // BRAM length = `numsets 
         // BRAM width = `blocksize
@@ -55,10 +55,4 @@ package icache_dataram;
         endmethod
     endmodule
     // 
-    (*synthesize*)
-    module mkicache_data#(parameter Bit#(32) id)(Ifc_icache_dataram);
-        let ifc();
-        mkicache_dataram _temp(id,ifc);
-        return (ifc);
-    endmodule
 endpackage

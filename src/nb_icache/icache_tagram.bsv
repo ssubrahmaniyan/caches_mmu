@@ -20,8 +20,8 @@ package icache_tagram;
     // Compare with the input tag and respond with a hit-vector indicating which way was a hit.
     method Bit#(`numways) mv_read_response;
   endinterface
-
-  module mkicache_tagram#(parameter Bit#(32) id)(Ifc_icache_tagram);
+  (*synthesize*)
+  module mkicache_tagram(Ifc_icache_tagram);
 
     // Number of BRAMs = `numways
     // BRAM length = `numsets 
@@ -69,10 +69,4 @@ package icache_tagram;
     endmethod
   endmodule
   //
-    (*synthesize*)
-  module mkicache_tag#(parameter Bit#(32) id)(Ifc_icache_tagram);
-    let ifc();
-    mkicache_tagram _temp(id,ifc);
-    return (ifc);
-  endmodule
 endpackage

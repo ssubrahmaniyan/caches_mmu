@@ -12,12 +12,14 @@ package icache_mhb;
         method ActionValue#(Tuple3#(Bool,Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
         method ActionValue#(Tuple3#(Bool,Bit#(`reqid_size),Bit#(`wordsize))) mv_read_response(Bool valid_resp,Bit#(TLog#(`mhb_size)) mhb_index); 
         method Action  ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id);
-        method Action ma_fill_from_memory(Bool valid,ICache_mem_readresp mem_resp);
+        method Action ma_fill_from_memory(Bool valid,Mem_response mem_resp);
+        method Action ma_set_issued(Bool valid,Bit#(TLog#(`mhb_size)) mhb_index);
         method Action ma_flush(Bool flush);
     endinterface
     (*synthesize*)
     (*conflict_free="ma_flush, ma_allocate_entry"*)
     (*conflict_free="ma_fill_from_memory, ma_allocate_entry"*)
+    (*conflict_free="ma_set_issued, ma_allocate_entry"*)
     (*conflict_free="mv_read_response, ma_allocate_entry"*)
     (*conflict_free="mv_fb_release, ma_allocate_entry"*)
     module mkicache_mhb(Ifc_icache_mhb);
@@ -35,6 +37,7 @@ package icache_mhb;
         Vector#(`mhb_size,Reg#(Bit#(`fb_depth))) rg_fb_filled <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(`wordoffset))) rg_fb_word_to_be_filled <- replicateM(mkReg(0));
         Vector#(`mhb_size,Vector#(`fb_depth,Reg#(Bit#(`wordsize)))) rg_fb_data <- replicateM(replicateM(mkReg('0)));
+        Reg#(Bit#(`mhb_size)) rg_lfb_release_ptr <- mkReg(0);
         // Wires
         Wire#(Bool) wr_mshr_full <- mkDWire(False);
         Wire#(Bool) wr_mshr_empty <- mkDWire(False);
@@ -121,7 +124,12 @@ package icache_mhb;
             //
             return resp;
         endmethod
-
+        //
+        method Action ma_set_issued(Bool valid,Bit#(TLog#(`mhb_size)) mhb_index);
+            if(valid) begin
+                rg_mshr_issued[mhb_index] <= True;
+            end
+        endmethod
         //
         method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id);
             if(valid) begin
@@ -156,7 +164,7 @@ package icache_mhb;
             end
         endmethod
         //
-        method Action ma_fill_from_memory(Bool valid,ICache_mem_readresp mem_resp);
+        method Action ma_fill_from_memory(Bool valid,Mem_response mem_resp);
             Bit#(TLog#(`mhb_size)) mhb_index = mem_resp.mhb_id;
             Bit#(`wordoffset) lv_fb_word_to_be_filled = rg_fb_word_to_be_filled[mhb_index];
             if(valid) begin
@@ -206,14 +214,13 @@ package icache_mhb;
             Bit#(TSub#(`paddr,`offsetbits)) lv_blockaddress = '0;
             Bool lv_releasing = False;
             Bit#(TLog#(`mhb_size)) lv_release_index = '0;
-            for(Integer i=0;i<`mhb_size;i=i+1) begin
-                if(!lv_releasing && rg_fb_valid[i]) begin
-                    if(rg_fb_filled[i]=='1) begin
-                        lv_releasing = True;
-                        lv_release_index = fromInteger(i);
-                        lv_blockdata = pack(readVReg(rg_fb_data[i]));
-                        lv_blockaddress = rg_mshr_block_address[i];
-                    end
+            let lv_ptr = rg_lfb_release_ptr;
+            if(rg_fb_valid[lv_ptr] && !rg_mshr_flushed[lv_ptr][0]) begin
+                if(rg_fb_filled[lv_ptr]=='1) begin
+                    lv_releasing = True;
+                    lv_release_index = fromInteger(i);
+                    lv_blockdata = pack(readVReg(rg_fb_data[lv_ptr]));
+                    lv_blockaddress = rg_mshr_block_address[lv_ptr];
                 end
             end
             // Invalidate entries
@@ -222,6 +229,9 @@ package icache_mhb;
                 for(Integer j=0;j<`imshr_depth;j=j+1) begin
                     rg_mshr_valid[lv_release_index][j] <= False;
                 end
+            end
+            else if(!rg_fb_valid[lv_ptr] || rg_mshr_flushed[lv_ptr][0] || rg_fb_filled[lv_ptr]== 0) begin
+                rg_lfb_release_ptr <= rg_lfb_release_ptr + 1;
             end
             return tuple3(lv_releasing,lv_blockaddress,lv_blockdata);
         endmethod
@@ -244,5 +254,6 @@ package icache_mhb;
                 end
             end
         endmethod
+        //
     endmodule
 endpackage
