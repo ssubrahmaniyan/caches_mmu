@@ -9,9 +9,9 @@ package icache_mhb;
         method Bool mv_mshr_full();
         method Bit#(TAdd#(1,TLog#(`mhb_size))) mv_mshr_count_free();
         method MHB_lookup_resp mv_mshr_lookup(Bool valid, Bit#(`paddr) address);
-        method ActionValue#(Tuple3#(Bool,Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
+        method ActionValue#(Tuple4#(Bool,Bit#(TLog#(`numways)),Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
         method ActionValue#(Tuple3#(Bool,Bit#(`reqid_size),Bit#(`wordsize))) mv_read_response(Bool valid_resp,Bit#(TLog#(`mhb_size)) mhb_index); 
-        method Action  ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id);
+        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id,Bit#(TLog#(`numways)) replacement_way);
         method Action ma_fill_from_memory(Bool valid,Mem_response mem_resp);
         method Action ma_set_issued(Bool valid,Bit#(TLog#(`mhb_size)) mhb_index);
         method Action ma_flush(Bool flush);
@@ -31,6 +31,7 @@ package icache_mhb;
         Vector#(`mhb_size,Reg#(Bool)) rg_mshr_issued <- replicateM(mkReg(False));
         Vector#(`mhb_size,Reg#(Bit#(TSub#(`paddr,`offsetbits)))) rg_mshr_block_address <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(TLog#(`imshr_depth)))) rg_mshr_req_to_be_served <- replicateM(mkReg(0));
+        Vector#(`mhb_size,Reg#(Bit#(TLog#(`numways)))) rg_mshr_replacement_way <- replicateM(mkReg(0));
         Reg#(Bit#(TLog#(`mhb_size))) rg_mhb_ptr <- mkReg(0); //points to next free location
         // LFB Registers
         Vector#(`mhb_size,Reg#(Bool)) rg_fb_valid <- replicateM(mkReg(False));
@@ -39,9 +40,9 @@ package icache_mhb;
         Vector#(`mhb_size,Vector#(`fb_depth,Reg#(Bit#(`wordsize)))) rg_fb_data <- replicateM(replicateM(mkReg('0)));
         Reg#(Bit#(`mhb_size)) rg_lfb_release_ptr <- mkReg(0);
         // Wires
-        Wire#(Bool) wr_mshr_full <- mkDWire(False);
-        Wire#(Bool) wr_mshr_empty <- mkDWire(False);
-        Wire#(Bit#(TAdd#(1,TLog#(`mhb_size)))) wr_mshr_free_count <- mkDWire(0);
+        Reg#(Bool) rg_mshr_full <- mkReg(False);
+        Reg#(Bool) rg_mshr_empty <- mkReg(False);
+        Reg#(Bit#(TAdd#(1,TLog#(`mhb_size)))) rg_mshr_free_count <- mkReg(0);
         // Rules
         rule rl_check_mshr_free;
             Bool lv_is_full = True;
@@ -52,21 +53,21 @@ package icache_mhb;
                     lv_count_free = lv_count_free + 1;
                 end
             end
-            wr_mshr_free_count <= lv_count_free;
-            wr_mshr_full <= lv_is_full;
-            wr_mshr_empty <= (lv_count_free == `mhb_size);
+            rg_mshr_free_count <= lv_count_free;
+            rg_mshr_full <= lv_is_full;
+            rg_mshr_empty <= (lv_count_free == `mhb_size);
         endrule
         //
         method Bool mv_mshr_empty();
-            return wr_mshr_empty;
+            return rg_mshr_empty;
         endmethod
         //
         method Bool mv_mshr_full();
-            return wr_mshr_full;
+            return rg_mshr_full;
         endmethod
         //
         method Bit#(TAdd#(1,TLog#(`mhb_size))) mv_mshr_count_free();
-            return wr_mshr_free_count;
+            return rg_mshr_free_count;
         endmethod
         //
         method MHB_lookup_resp mv_mshr_lookup(Bool valid, Bit#(`paddr) address);
@@ -131,7 +132,7 @@ package icache_mhb;
             end
         endmethod
         //
-        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id);
+        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id,Bit#(TLog#(`numways)) replacement_way);
             if(valid) begin
                 // Allocate a secondary MSHR entry, LFB entry exists
                 if(mshr_hit) begin
@@ -147,6 +148,7 @@ package icache_mhb;
                     //MSHR Entry
                     rg_mshr_issued[rg_mhb_ptr] <= False;
                     rg_mshr_block_address[rg_mhb_ptr] <= truncateLSB(address);
+                    rg_mshr_replacement_way[rg_mhb_ptr] <= replacement_way;
                     rg_mshr_req_to_be_served[rg_mhb_ptr] <= 0;
                     rg_mshr_valid[rg_mhb_ptr][0] <= valid;
                     rg_mshr_offset[rg_mhb_ptr][0] <= truncate(address);
@@ -209,11 +211,13 @@ package icache_mhb;
             return tuple3(lv_req_satisfied,lv_reqid,lv_selected_word);
         endmethod
         //
-        method ActionValue#(Tuple3#(Bool,Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
+        //                         valid.   replacement_way,   block_address,                 , release_data
+        method ActionValue#(Tuple4#(Bool,Bit#(TLog#(`numways)),Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
             Bit#(`blocksize) lv_blockdata = '0;
             Bit#(TSub#(`paddr,`offsetbits)) lv_blockaddress = '0;
             Bool lv_releasing = False;
             Bit#(TLog#(`mhb_size)) lv_release_index = '0;
+            Bit#(TLog#(`numways)) lv_replacement_way = 0;
             let lv_ptr = rg_lfb_release_ptr;
             if(rg_fb_valid[lv_ptr] && !rg_mshr_flushed[lv_ptr][0]) begin
                 if(rg_fb_filled[lv_ptr]=='1) begin
@@ -221,6 +225,7 @@ package icache_mhb;
                     lv_release_index = fromInteger(i);
                     lv_blockdata = pack(readVReg(rg_fb_data[lv_ptr]));
                     lv_blockaddress = rg_mshr_block_address[lv_ptr];
+                    lv_replacement_way = rg_mshr_replacement_way[lv_ptr];
                 end
             end
             // Invalidate entries
@@ -233,7 +238,7 @@ package icache_mhb;
             else if(!rg_fb_valid[lv_ptr] || rg_mshr_flushed[lv_ptr][0] || rg_fb_filled[lv_ptr]== 0) begin
                 rg_lfb_release_ptr <= rg_lfb_release_ptr + 1;
             end
-            return tuple3(lv_releasing,lv_blockaddress,lv_blockdata);
+            return tuple4(lv_releasing,lv_replacement_way,lv_blockaddress,lv_blockdata);
         endmethod
         //
         method Action ma_flush(Bool flush);
