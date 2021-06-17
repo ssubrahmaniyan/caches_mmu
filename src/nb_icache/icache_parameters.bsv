@@ -15,4 +15,5 @@
 `define mhb_size 8
 `define imshr_depth 4
 `define fb_depth 4
+`define irq_size 1
 //i-class supports sv39

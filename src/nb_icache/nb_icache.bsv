@@ -8,37 +8,38 @@ package nb_icache;
     interface Ifc_nb_icache;
         // Inputs
         module Action ma_core_request(ICache_core_request core_req);
-        module Action ma_ptw_response(PTW_response ptw_response);
         module Action ma_mem_response(Mem_response mem_response);
         module Action ma_csr_status(Bit#(2) prv, Bit#(`xlen), mstatus, Bit#(`xlen) satp);
-        method Action ma_set_issued(Bool valid,Bit#(TLog#(`mhb_size)) mhb_index);
         `ifdef supervisor
-            interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
             interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) put_response_frm_ptw;
         `endif
         // Outputs 
         module ICache_core_response mv_core_response();
-        module PTW_request mv_ptw_request();
         module Mem_request mv_mem_request();
         module ICache_status mv_icache_status();
+        `ifdef supervisor
+            interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
+        `endif
     endinterface
     (*synthesize*)
     module mknb_icache(Ifc_nb_icache);
+    // Fifos
+    FIFOF#(Mem_request) ff_mem_request <- mkSizedFIFOF(1);
     // Registers 
     Reg#(Bool) rg_replay_valid <- mkReg(False);
     Reg#(Stage1) rg_replay_req_data <- mkReg(unpack(0));
     Reg#(Bool) rg_tlb_miss <- mkReg(False);
     Reg#(Bool) rg_fence <- mkReg(False);
     Reg#(Bool) rg_sfence  <- mkReg(False);
-    Reg#(Bool) rg_io_request_valid <- mkReg(False);
     Reg#(Bool) rg_set_conflict <- mkReg(False);
-    //
-    Reg#(PTW_response) rg_ptw_reponse <- mkReg(unpack(0));
+    // IRQ registers
+    Reg#(Bool) rg_io_request_valid <- mkReg(False);
+    Reg#(Bool) rg_io_request_issued <- mkReg(False);
     //
     Reg#(Bool) rg_stage2_valid <- mkReg(False);
     Reg#(Stage2) rg_stage2_req_data <- mkReg(unpack(0));
     Wire#(Bool) wr_stage2_next_cycle_valid <- mkDWire(False);
-    //
+    // LFB registers 
     Reg#(Bool) rg_fill_valid <- mkReg(False);
     Reg#(Mem_response) rg_fill_data <- mkReg(False);
     // Wires
@@ -60,12 +61,12 @@ package nb_icache;
     //
     rule rl_check_cache_busy;
         ICache_status lv_status = unpack(0);
-        // Cache busy is set if MHB all primary entries full 
-        // or valid request to replayed 
-        // or a valid request stalled in stage 2
+        // Cache busy is set if MHB all primary entries full, 
+        //                      valid request pending to be replayed,
+        //                      a valid request stalled in stage 2
         lv_status.cache_busy = (ifc_mhb.mv_mshr_full || rg_replay_valid || rg_stage2_valid); //register mv mshr full
         lv_status.mshr_status = ifc_mhb.mv_mshr_count_free();
-        wr_icache_status <= lv_status; // make rg 
+        wr_icache_status <= lv_status; 
     endrule
     //
     rule rl_check_pending_requests;
@@ -94,9 +95,10 @@ package nb_icache;
                 end
                 else if(lv_tlb_hit && lv_tlb_is_io) begin
                     // send request to fabric //TODO
-                    rg_replay_valid <= True; // Is not actually replayed, just to stall Cache till response is received from fabric
+                    rg_replay_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                     rg_io_request_valid <= True; 
                     rg_replay_req_data <= lv_core_req;
+                    rg_io_request_issued <= True;
                 end
                 else begin
                     rg_replay_valid <= True;
@@ -113,10 +115,10 @@ package nb_icache;
         // requests pending in pipe
         else begin
             //
-            // Case: !rg_replay_valid and !rg_stage2_valid
+            // When !rg_replay_valid and !rg_stage2_valid
             // Since mhb_full signal is registered, 
             // core will receive the corresponding cache_busy signal a cycle later.
-            // If the core sends a core request in that cycle, it should be saved.
+            // And, if the core sends a core request in that cycle, it should be saved.
             if(!rg_replay_valid) begin
                 if(wr_core_req.valid) begin
                     // All core requests are saved
@@ -134,7 +136,7 @@ package nb_icache;
     // replay the pending requests, only if 
     // 1. no request pending in stage 2
     // 2. stage2 is going to be free next cycle (signal comes from rl_stage2)
-    rule rl_replay_req(wr_replay && (!rg_stage2_valid || wr_stage2_next_cycle_valid) && !wr_flush );
+    rule rl_replay_req(wr_replay && (!rg_stage2_valid || !wr_stage2_next_cycle_valid) && !wr_flush );
         let lv_core_req = rg_replay_req_data;
         // lookup TLB // TODO  
         Bool lv_set_conflict =  False; // TODO  
@@ -144,12 +146,10 @@ package nb_icache;
         if(lv_core_req.fence && ifc_mhb.mv_mshr_empty()) begin
             // invalidate all cache entries
             rg_icache_valid <= unpack(0);  
-            rg_fence <= False;
             rg_replay_valid <= False;
         end
         else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
             //invalidate TLB // TODO
-            rg_sfence <= False;
             rg_replay_valid <= False;
         end
         else if((lv_tlb_hit && !lv_tlb_is_io) && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin // TODO  
@@ -159,15 +159,19 @@ package nb_icache;
             rg_tlb_miss <= False;
             rg_set_conflict <= False;
         end
-        // dummy register for IRQ
         else if((lv_tlb_hit && lv_tlb_is_io) && ifc_mhb.mv_mshr_empty()) begin
             // send request to fabric //TODO  
             // TODO: ADD A CONDITION TO MAKE SURE THIS REQUEST ISN'T SET AGAIN
-            // rg_stage_valid and rg_io_valid isn't reset till a valid i/o response is received
+            // rg_replay_valid and rg_io_request_valid aren't reset till a valid i/o response is received
+            rg_io_request_valid <= True;
+            rg_io_request_issued <= True;
         end
-        else begin // had another set conflict or tlb_miss
+        else begin // had another set conflict or tlb_miss or fence/sfence/io but cache not empty
             rg_replay_valid <= True;
             rg_replay_req_data <= lv_core_req;
+            if((lv_tlb_hit && lv_tlb_is_io)) begin
+                rg_io_request_valid <= True;
+            end
             if(!lv_tlb_hit) begin
                 rg_tlb_miss <= True; // takes priority over set_conflict
             end
@@ -183,17 +187,18 @@ package nb_icache;
         let stage2_data = rg_stage2_req_data;
         MHB_lookup_resp lv_mhb_resp = ifc_mhb.mv_mshr_lookup(rg_stage2_valid,stage2_data.paddr);
         // cache hit
+        Bool lv_stage2_next_cycle_valid = rg_stage2_valid;
         if(|stage2_data.tag_response = 1'b1) begin
             // TODO return stage2_data.data_response to CRQ
             // TODO Update replacement data with selected way
             rg_stage2_valid <= False;
-            wr_stage2_next_cycle_valid <= True;
+            lv_stage2_next_cycle_valid = False;
         end
         // MHB hit and corresponding word filled
         else if(lv_mhb_resp.hit_mhb && lv_mhb_resp.fb_valid) begin
             // TODO return lv_mhb_resp.fb_data to CRQ
             rg_stage2_valid <= False;
-            wr_stage2_next_cycle_valid <= True;
+            lv_stage2_next_cycle_valid = False;
         end
         // Cache miss, MHB (miss/hit but word not present)
         else begin
@@ -201,7 +206,7 @@ package nb_icache;
             if(lv_mhb_resp.hit_mhb && lv_mhb_resp.free_secondary || !lv_mhb_resp.hit_mhb && !ifc_mhb.mv_mshr_full()) begin
                 ifc_mhb.ma_allocate_entry(); // TODO
                 rg_stage2_valid <= False;
-                wr_stage2_next_cycle_valid <= True;
+                lv_stage2_next_cycle_valid <= True;
                 // TODO Update replacement on miss (to be implemented)
             end
             // else 
@@ -209,14 +214,31 @@ package nb_icache;
             // Either it was a MHB hit and no secondary entries were free
             // Or it was a MHB miss and no primary entries were free
         end
+        // Convey to stage 1 in the current cycle if stage2 will be free next cycle
+        // So that stage 1 can prepare a stage 2 request this cycle itself.
+        wr_stage2_next_cycle_valid <= lv_stage2_next_cycle_valid;
     endrule
-    // no backpressure (LFB ) so wire works
+    // Fill Pipeline
+    rule rl_check_served_mshr_requests;
+        // if all the requests in the MSHR entry pointed by this register are served then this register is incremented
+        match {.valid,.req_id,.crq_data,.all_served} <- ifc_mhb.mv_check_served_mshr();
+        // TODO send data and request_id to CRQ
+    endrule
+    //
+    rule rl_fill_request;
+        let mhb_mem_req = mv_fill_request(ff_mem_request.notFull); // 1 entry Fifo
+        if(mhb_mem_req.valid) begin
+            ff_mem_request.enq(mhb_mem_req);
+        end
+    endrule
+    //
     rule rl_poll_response_from_memory;
         if(wr_mem_response.valid) begin
             if(rg_replay_valid && rg_io_request_valid) begin
                 // TODO send to CRQ
                 rg_replay_valid <= False;
                 rg_io_request_valid <= False;
+                rg_io_request_issued <= False;
             end
             else begin
                 // send to LFB
@@ -232,10 +254,11 @@ package nb_icache;
     endrule
     //
     rule rl_LFB_release_to_cache;
-        match {.valid,.block_addr,.block_data} <- ifc_mhb.mv_fb_release();
+        match {.valid,.way,.block_addr,.block_data} <- ifc_mhb.mv_fb_release();
         if(valid) begin
-            Bit#(setbits) set_index = truncate(block_addr);
-            rg_icache_valid[set_index] <= '1;
+            Bit#(`setbits) set_index = truncate(block_addr);
+            Bit#(`numways) update_way_valid = zeroExtend(1<<way);
+            rg_icache_valid[set_index] <= rg_icache_valid[set_index] | update_way_valid;
             // TODO update replacement
             // TODO Write into tag
             // TODO Write into data 
