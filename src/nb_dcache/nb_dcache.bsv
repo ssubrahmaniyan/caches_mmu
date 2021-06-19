@@ -120,6 +120,7 @@ package nb_dcache;
  `endif
   (*preempts = "(rl_stage2_fb_resp_to_core, rl_sram_resp_to_core, rl_MSHR_resp_to_core, rl_access_fault_response_to_core), rl_receive_IO_resp"*)
   (*preempts = "rl_stall_for_load_after_store_to_same_word, rl_handle_req_from_core"*)
+  (*preempts = "rl_stall_for_set_conflict, rl_handle_req_from_core"*)
   (*preempts = "rl_SRAM_and_MSHR_done_fencing, rl_MSHR_resp_to_core"*)  //TODO does this order matter?
   (*preempts = "rl_flush_ff_req_from_core, rl_handle_req_from_core"*)
   `ifdef atomic
@@ -253,6 +254,11 @@ package nb_dcache;
     Reg#(Bool) rg_fence <- mkReg(False);
     Reg#(Bit#(setbits)) rg_fence_set_index <- mkConfigReg(0);
     Reg#(Bool) rg_SRAM_fence[2] <- mkCReg(2, False);
+    Reg#(Bit#(2)) rg_fence_state <- mkReg(0);
+    Vector#(ways, Reg#(Bit#(linewidth))) rg_fdataline <- replicateM(mkReg(0));
+    Vector#(ways, Reg#(Bit#(TAdd#(tagbits, 2)))) rg_ftag <- replicateM(mkReg(0));
+    Vector#(ways, Reg#(Bit#(1))) rg_fvalid <- replicateM(mkReg(0));
+    Vector#(ways, Reg#(Bit#(1))) rg_fdirty <- replicateM(mkReg(0));
     Reg#(Tuple4#(DCache_exception, Bit#(prf_index), Bit#(rob_index), Bit#(vaddr))) rg_access_fault_response <- mkReg(tuple4(defaultValue, ?, ?, ?));
 `ifdef supervisor
     Reg#(Bool) rg_leaf_page_response <- mkReg(False);
@@ -293,6 +299,8 @@ package nb_dcache;
     Wire#(Bool) wr_ff_first_stage_store_req_to_curr_fb <- mkDWire(False);
     Wire#(Bool) wr_ff_second_stage_req_to_curr_fb <- mkDWire(False);
     Wire#(Bool) wr_stall_fb_release <- mkDWire(False);
+    Wire#(Bit#(1)) wr_tag_ram_write_valid <- mkDWire(0);
+    Wire#(Bit#(setbits)) wr_tag_ram_write_index <- mkDWire(0);
 
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
@@ -445,6 +453,14 @@ package nb_dcache;
     tpl_2(rg_prev_req_info)==truncateLSB(core_req.addr));
       rg_prev_req_info<= tuple2(False, ?);
       `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as prev was store. Core_req: ", fshow(core_req)))
+    endrule
+
+    // NOTE: Tag and Data RAM implementation changed to BRAM (1R1W): was register file (with hack to delay read to 2nd cycle) earlier
+    //       If read and write are to the same index, without bypass, we would read the old tags (070621)
+    //       Need to delay the read until the write is performed.
+    Bit#(set_bits) stage1_set_index = core_req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
+    rule rl_stall_for_set_conflict((wr_tag_ram_write_valid == 1) && (stage1_set_index == wr_tag_ram_write_index));
+      `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as write is being performed to same set. Core_req: ", fshow(core_req)))
     endrule
 
 `ifdef supervisor
@@ -744,6 +760,8 @@ package nb_dcache;
             let write_data= generate_masked_data(hit_line, req.data, line_offset, req.access_size);
             data_arr[hit_way].write(set_index, write_data);
             tag_arr[hit_way].write(set_index, {1'b1, hit_tag[tagbits_val:0]}); //Setting the dirty bit
+            wr_tag_ram_write_valid <= 1;
+            wr_tag_ram_write_index <= set_index;
             `logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
           end
         end
@@ -800,6 +818,8 @@ package nb_dcache;
       Bit#(tagbits) req_tag= req.addr[paddr_val-1: tagpos_val];
       data_arr[hit_way].write(set_index, write_data);
       tag_arr[hit_way].write(set_index, {1'b1, 1'b1, req_tag}); //Setting the valid (which is already 1) and dirty bit
+      wr_tag_ram_write_valid <= 1;
+      wr_tag_ram_write_index <= set_index;
       if(atomic_fn=='h7 || atomic_fn=='h17) begin  //if SC.W or SC.D
         cache_data= 'd0;
       end
@@ -1195,6 +1215,8 @@ package nb_dcache;
       Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {fb_dirty, 1'b1, lv_tag};
       data_arr[waynum].write(set_index, fb_data);
       tag_arr[waynum].write(set_index, lv_dirty_valid_tag);
+      wr_tag_ram_write_valid <= 1;
+      wr_tag_ram_write_index <= set_index;
       `logLevel( dcache, 2, $format("DCACHE : Updating way_num: %d and set_index: %d with data: %h and tag: %h", waynum, set_index, fb_data, lv_dirty_valid_tag))
 
       //Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
@@ -1276,6 +1298,7 @@ package nb_dcache;
     rule rl_fence_wait_for_ff_first_stage_empty(rg_fence_wait_for_ff_first_stage_empty && !rg_fence
     && !ff_first_stage.notEmpty && rg_fb_state==Read_SRAMs);
       rg_fence<= True;
+      rg_fence_state <= 'h0;
       rg_fence_wait_for_ff_first_stage_empty<= False;
     endrule
 
@@ -1354,79 +1377,203 @@ package nb_dcache;
     //  end
     //endrule
 
+    // Fixed rl_fence_cache for BRAM version; earlier version commented below (180621)
     rule rl_fence_cache (rg_fence && rg_SRAM_fence[0] && rg_cache_busy && rg_fb_state==Read_SRAMs);
       Bit#(linewidth) dataline [ways_val];
       Bit#(TAdd#(tagbits,2)) tag [ways_val];
       Bit#(ways) dirty=0;
       Bit#(ways) valid=0;
-      Bool incr_fence_set_index= False;
       Bool lv_evict= False;
       Bit#(TLog#(ways)) evict_index= 0;
-      `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
 
-      for(Integer i = 0; i<ways_val; i = i+1) begin
-        dataline[i]= data_arr[i].read_response;
-        tag[i]= tag_arr[i].read_response;
-        `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %h and Tag [%d]: %h ", i, dataline[i], i, tag[i]))
-      end
-      for(Integer i = 0; i<ways_val; i = i+1) begin
-        valid[i]= tag[i][tagbits_val];    //Valid bit
-        dirty[i]= tag[i][tagbits_val+1];  //Dirty bit
-        `logLevel( dcache, 3, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
-        if(valid[i]==1 && dirty[i]==1) begin
-          lv_evict=True;
-          evict_index= fromInteger(i);
+      // read next set; only one read per set
+      if (rg_fence_state == 'h0) begin
+        //Issue read request to the set which will be processed in the next cycle.
+        for (Integer i = 0;i<ways_val;i = i+1) begin
+          data_arr[i].read(rg_fence_set_index);
+          tag_arr[i].read(rg_fence_set_index);
         end
-      end
 
-      if(lv_evict) begin
-        Bit#(lineoffset) some_zeros= 0;
-        Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
-        Bit#(paddr) evict_lineaddr= {evict_tag, rg_fence_set_index, some_zeros};
-        Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+        // next state
+        rg_fence_state <= 'h1;
+      end // state = 0
 
-        //Updating only the valid bit of the SRAM in order to save power.
-        tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
+      // read response for this set; register data, tag, valid & dirty
+      // conservative (slow fence): no checks and valid/dirty resets this cycle
+      else if (rg_fence_state == 'h1) begin
+        `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
 
-        //Evicting the line
-        ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
-                                                  data: dataline[evict_index],
-                                                  is_burst: True });
-        `logLevel( dcache, 3, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
-        `logLevel( dcache, 3, $format("DCACHE : Fence. Updating index: %d way: %d with tag: %x ", rg_fence_set_index, evict_index, lv_dirty_valid_tag))
-
-        Bit#(ways) evict_indices= valid & dirty;
-        Bool only_one_dirty= check_only_one_evict(evict_indices);
-        if(only_one_dirty) begin
-          incr_fence_set_index= True;
+        for (Integer i = 0; i<ways_val; i = i+1) begin
+          dataline[i] = data_arr[i].read_response;
+          tag[i] = tag_arr[i].read_response;
+          rg_fdataline[i] <= dataline[i];
+          rg_ftag[i] <= tag[i];
+          `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %h and Tag [%d]: %h ", i, dataline[i], i, tag[i]))
         end
-        //else fence_set_index remains unchanged so that rest of the dirty lines in this set get evicted.
-      end
-      else begin  //Nothing to evict. Hence, increment fence index and clear the valid bit of all ways in this set
-        incr_fence_set_index= True;
-        for(Integer i = 0; i<ways_val; i = i+1) begin
-          tag_arr[i].write(rg_fence_set_index, 0);
-        end
-      end
 
-      Bit#(setbits) lv_next_set_index= rg_fence_set_index;
-      //TODO should this if condition be inside if(incr_fence_set_index)?
-      if(incr_fence_set_index) begin
-        lv_next_set_index= rg_fence_set_index + 1;
-        `logLevel( dcache, 3, $format("DCACHE : Fence. Incrementing fence index "))
-        if(rg_fence_set_index=='1) begin
-          rg_SRAM_fence[0]<= False;
-          `logLevel( dcache, 1, $format("DCACHE : Fence. Last SRAM row done. "))
+        for (Integer i = 0; i<ways_val; i = i+1) begin
+          valid[i] = tag[i][tagbits_val];    //Valid bit
+          dirty[i] = tag[i][tagbits_val+1];  //Dirty bit
+          rg_fvalid[i] <= valid[i];
+          rg_fdirty[i] <= dirty[i];
+          `logLevel( dcache, 3, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
         end
-      end
 
-      //Issue read request to the set which will be processed in the next cycle.
-      for(Integer i = 0;i<ways_val;i = i+1) begin
-        data_arr[i].read(lv_next_set_index);
-        tag_arr[i].read(lv_next_set_index);
-      end
-      rg_fence_set_index<= lv_next_set_index;
+        // next state
+        rg_fence_state <= 'h2;
+      end // state = 1
+
+      // read from registered data, tag, valid & dirty
+      // check valid & dirty lines and write to next lower level: state 2
+      else if (rg_fence_state == 'h2) begin
+        for (Integer i = 0; i<ways_val; i = i+1) begin
+          dataline[i] = rg_fdataline[i];
+          tag[i] = rg_ftag[i];
+          valid[i] = rg_fvalid[i];
+          dirty[i] = rg_fdirty[i];
+
+          `logLevel( dcache, 3, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, rg_fdirty[i], rg_fvalid[i]))
+        end // for
+
+        // check valid & dirty
+        for (Integer i = 0; i<ways_val; i = i+1) begin
+          if(rg_fvalid[i]==1 && rg_fdirty[i]==1) begin
+            lv_evict=True;
+            evict_index= fromInteger(i);
+          end
+        end
+
+        if(lv_evict) begin
+          Bit#(lineoffset) some_zeros= 0;
+          Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
+          Bit#(paddr) evict_lineaddr= {evict_tag, rg_fence_set_index, some_zeros};
+          Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+
+          //Updating only the valid bit of the SRAM in order to save power.
+          tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
+
+          //Evicting the line
+          ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+                                                    data: dataline[evict_index],
+                                                    is_burst: True });
+          `logLevel( dcache, 3, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
+          `logLevel( dcache, 3, $format("DCACHE : Fence. Updating index: %d way: %d with tag: %x ", rg_fence_set_index, evict_index, lv_dirty_valid_tag))
+
+          // reset valid and dirty
+          rg_fvalid[evict_index] <= 0;
+          rg_fdirty[evict_index] <= 0;
+
+          Bit#(ways) evict_indices;
+          for (Integer i=0; i<ways_val; i=i+1) begin
+            evict_indices[i] = rg_fvalid[i] & rg_fdirty[i];
+          end
+          Bool only_one_dirty= check_only_one_evict(evict_indices);
+
+          if(only_one_dirty) begin
+            // increment set and go back to state 0 for next read
+            rg_fence_set_index <= rg_fence_set_index + 1;
+            rg_fence_state <= 0;
+            `logLevel( dcache, 3, $format("DCACHE : Fence. Incrementing fence index "))
+
+            // check if last set is done
+            if(rg_fence_set_index=='1) begin
+              rg_SRAM_fence[0]<= False;
+              `logLevel( dcache, 1, $format("DCACHE : Fence. Last SRAM row done. "))
+            end
+          end
+        end
+        else begin  //Nothing to evict. Hence, increment fence index and clear the valid bit of all ways in this set
+          for(Integer i = 0; i<ways_val; i = i+1) begin
+            tag_arr[i].write(rg_fence_set_index, 0);
+          end
+          // increment set and go back to state 0 for next read
+          rg_fence_set_index <= rg_fence_set_index + 1;
+          rg_fence_state <= 0;
+          `logLevel( dcache, 3, $format("DCACHE : Fence. Incrementing fence index "))
+
+          // check if last set is done
+          if(rg_fence_set_index=='1) begin
+            rg_SRAM_fence[0]<= False;
+            `logLevel( dcache, 1, $format("DCACHE : Fence. Last SRAM row done. "))
+          end
+        end
+      end // state = 2
     endrule
+
+//    // Note: this fence rule is good only for "regfile + added latency" version of cache arrays
+//    rule rl_fence_cache (rg_fence && rg_SRAM_fence[0] && rg_cache_busy && rg_fb_state==Read_SRAMs);
+//      Bit#(linewidth) dataline [ways_val];
+//      Bit#(TAdd#(tagbits,2)) tag [ways_val];
+//      Bit#(ways) dirty=0;
+//      Bit#(ways) valid=0;
+//      Bool incr_fence_set_index= False;
+//      Bool lv_evict= False;
+//      Bit#(TLog#(ways)) evict_index= 0;
+//      `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
+//
+//      for(Integer i = 0; i<ways_val; i = i+1) begin
+//        dataline[i]= data_arr[i].read_response;
+//        tag[i]= tag_arr[i].read_response;
+//        `logLevel( dcache, 3, $format("DCACHE : Data[%d]: %h and Tag [%d]: %h ", i, dataline[i], i, tag[i]))
+//      end
+//      for(Integer i = 0; i<ways_val; i = i+1) begin
+//        valid[i]= tag[i][tagbits_val];    //Valid bit
+//        dirty[i]= tag[i][tagbits_val+1];  //Dirty bit
+//        `logLevel( dcache, 3, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
+//        if(valid[i]==1 && dirty[i]==1) begin
+//          lv_evict=True;
+//          evict_index= fromInteger(i);
+//        end
+//      end
+//
+//      if(lv_evict) begin
+//        Bit#(lineoffset) some_zeros= 0;
+//        Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
+//        Bit#(paddr) evict_lineaddr= {evict_tag, rg_fence_set_index, some_zeros};
+//        Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+//
+//        //Updating only the valid bit of the SRAM in order to save power.
+//        tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
+//
+//        //Evicting the line
+//        ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
+//                                                  data: dataline[evict_index],
+//                                                  is_burst: True });
+//        `logLevel( dcache, 3, $format("DCACHE : Fence. Cache writing to mem. Way: %d Addr: %x Data: %x ", evict_index, evict_lineaddr, dataline[evict_index]))
+//        `logLevel( dcache, 3, $format("DCACHE : Fence. Updating index: %d way: %d with tag: %x ", rg_fence_set_index, evict_index, lv_dirty_valid_tag))
+//
+//        Bit#(ways) evict_indices= valid & dirty;
+//        Bool only_one_dirty= check_only_one_evict(evict_indices);
+//        if(only_one_dirty) begin
+//          incr_fence_set_index= True;
+//        end
+//        //else fence_set_index remains unchanged so that rest of the dirty lines in this set get evicted.
+//      end
+//      else begin  //Nothing to evict. Hence, increment fence index and clear the valid bit of all ways in this set
+//        incr_fence_set_index= True;
+//        for(Integer i = 0; i<ways_val; i = i+1) begin
+//          tag_arr[i].write(rg_fence_set_index, 0);
+//        end
+//      end
+//
+//      Bit#(setbits) lv_next_set_index= rg_fence_set_index;
+//      //TODO should this if condition be inside if(incr_fence_set_index)?
+//      if(incr_fence_set_index) begin
+//        lv_next_set_index= rg_fence_set_index + 1;
+//        `logLevel( dcache, 3, $format("DCACHE : Fence. Incrementing fence index "))
+//        if(rg_fence_set_index=='1) begin
+//          rg_SRAM_fence[0]<= False;
+//          `logLevel( dcache, 1, $format("DCACHE : Fence. Last SRAM row done. "))
+//        end
+//      end
+//
+//      //Issue read request to the set which will be processed in the next cycle.
+//      for(Integer i = 0;i<ways_val;i = i+1) begin
+//        data_arr[i].read(lv_next_set_index);
+//        tag_arr[i].read(lv_next_set_index);
+//      end
+//      rg_fence_set_index<= lv_next_set_index;
+//    endrule
 
     //This rule will fire once fence operation has finished. The rg_fence register indicates that
     //a fence operation is ongoing. !rg_SRAM_fence indicates that all entries in the SRAM have
