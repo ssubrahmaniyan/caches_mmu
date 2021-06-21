@@ -11,7 +11,8 @@
 `define offsetbits 6    // (Bits) wordoffset+byteoffset
 `define tagbits 20      // (Bits) `paddr(32) - (setbits+wordoffset+byteoffset)
 `define ibus_width 128 // (Bits)
-`define reqid_size 4
+`define fetch_width 128 // (Bits)
+`define reqid_width 4
 `define mhb_size 8
 `define imshr_depth 4
 `define fb_depth 4

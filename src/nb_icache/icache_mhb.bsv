@@ -9,48 +9,74 @@ package icache_mhb;
         method Bool mv_mshr_full();
         method Bit#(TAdd#(1,TLog#(`mhb_size))) mv_mshr_count_free();
         method MHB_lookup_resp mv_mshr_lookup(Bool valid, Bit#(`paddr) address);
-        method Mem_request  mv_fill_request(Bool notFull);
+        method Mem_request  mv_fill_request();
         method ActionValue#(Tuple4#(Bool,Bit#(TLog#(`numways)),Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
-        method ActionValue#(Tuple3#(Bool,Bit#(`reqid_size),Bit#(`wordsize))) mv_check_served_mshr(); 
-        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id,Bit#(TLog#(`numways)) replacement_way);
+        method ActionValue#(Tuple3#(Bool,Bit#(`reqid_width),Bit#(`wordsize))) mv_miss_request_response(); 
+        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_width) req_id,Bit#(TLog#(`numways)) replacement_way);
         method Action ma_fill_from_memory(Bool valid,Mem_response mem_resp);
+        method Action ma_set_issued(Bool valid);
         method Action ma_flush(Bool flush);
     endinterface
     (*synthesize*)
     (*conflict_free="ma_flush, ma_allocate_entry"*)
+    (*conflict_free="ma_set_issued, ma_allocate_entry"*)
     (*conflict_free="ma_fill_from_memory, ma_allocate_entry"*)
-    (*conflict_free="mv_check_served_mshr, ma_allocate_entry"*)
+    (*conflict_free="mv_miss_request_response, ma_allocate_entry"*)
     (*conflict_free="mv_fb_release, ma_allocate_entry"*)
+    (*conflict_free="rl_allocate_entry, rl_request_satisfied"*)
+    (*conflict_free="rl_allocate_entry, rl_lfb_release"*)
+    (*conflict_free="ma_flush, rl_lfb_release"*)
+    (*conflict_free="rl_allocate_entry, ma_flush"*)
     module mkicache_mhb(Ifc_icache_mhb);
         // MSHR Registers
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_valid <- replicateM(replicateM(mkReg(False)));
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_flushed <- replicateM(replicateM(mkReg(False)));
-        Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_served <- replicateM(replicateM(mkReg(False)));
-        Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bit#(`reqid_size)))) rg_mshr_req_id <- replicateM(replicateM(mkReg(0)));
+        Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bit#(`reqid_width)))) rg_mshr_req_id <- replicateM(replicateM(mkReg(0)));
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bit#(`offsetbits)))) rg_mshr_offset <- replicateM(replicateM(mkReg(0)));
-        Vector#(`mhb_size,Reg#(Bool)) rg_mshr_issued <- replicateM(mkReg(False));
-        Vector#(`mhb_size,Reg#(Bit#(TSub#(`paddr,`offsetbits)))) rg_mshr_block_address <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(TLog#(`imshr_depth)))) rg_mshr_req_to_be_served <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(TLog#(`numways)))) rg_mshr_replacement_way <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bool)) rg_mshr_all_served <- replicateM(mkReg(False));
+        
+        // Pointers 
         Reg#(Bit#(TLog#(`mhb_size))) rg_mhb_next_free_ptr <- mkReg(0); //points to next free location
-        Reg#(Bit#(TLog#(`mhb_size))) rg_served_mshr_entry_ptr <- mkReg(0);
-        Reg#(Bit#(TLog#(`mhb_size))) rg_fill_request_entry_ptr <- mkReg(0);
+        Reg#(Bit#(TLog#(`mhb_size))) rg_serve_mshr_entry_ptr <- mkReg(0); // points to the request to be served to the CRQ
+        Reg#(Bit#(TLog#(`mhb_size))) rg_fill_request_entry_ptr <- mkReg(0); // points to the entry that has to send fill request to Memory
+        Reg#(Bit#(TLog#(`mhb_size))) rg_fb_release_ptr <- mkReg(0); // points to the entry to be released to Cache
 
         // LFB Registers
         Vector#(`mhb_size,Reg#(Bool)) rg_fb_valid <- replicateM(mkReg(False));
+        Vector#(`mhb_size,Reg#(Bool)) rg_fb_issued <- replicateM(mkReg(False));
+        Vector#(`mhb_size,Reg#(Bit#(TSub#(`paddr,`offsetbits)))) rg_fb_block_address <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(`fb_depth))) rg_fb_filled <- replicateM(mkReg(0));
         Vector#(`mhb_size,Reg#(Bit#(`wordoffset))) rg_fb_word_to_be_filled <- replicateM(mkReg(0));
         Vector#(`mhb_size,Vector#(`fb_depth,Reg#(Bit#(`wordsize)))) rg_fb_data <- replicateM(replicateM(mkReg('0)));
-        //
-        Reg#(Bit#(TLog#(`mhb_size))) rg_lfb_release_ptr <- mkReg(0);
+        
+        // Counters
         Reg#(Bool) rg_mshr_full <- mkReg(False);
         Reg#(Bool) rg_mshr_empty <- mkReg(False);
         Reg#(Bit#(TAdd#(1,TLog#(`mhb_size)))) rg_mshr_free_count <- mkReg(0);
+        
         // Wires
-        Wire#(Bool) wr_new_entry_serve_conflict <- mkDWire(False);
+        Wire#(Bool) wr_flush <- mkDWire(False);
+        Vector#(`mhb_size,Vector#(`imshr_depth,Wire#(Bool))) wr_mshr_valid <- replicateM(replicateM(mkDWire(False))); // read corresponding register in the beginning of the cycle
+        Vector#(`mhb_size,Wire#(Bit#(TLog#(`imshr_depth)))) wr_mshr_req_to_be_served <- replicateM(mkDWire(0)); // read corresponding register in the beginning of the cycle
+        Wire#(Bool) wr_new_entry_serve_conflict <- mkDWire(False); // if a new entry arrives to same index as the one being served
+        //
+        Wire#(Bool) wr_req_satisfied <- mkDWire(False); // when serving miss requests to CRQ
+        Wire#(Bit#(TLog#(`mhb_size))) wr_satisfied_req_primary_idx <- mkDWire(0);
+        Wire#(Bit#(TLog#(`imshr_depth))) wr_satisfied_req_secondary_idx <- mkDWire(0);
+        //
+        Wire#(Bool) wr_allocate_entry <- mkDWire(False);
+        Wire#(Bit#(TLog#(`mhb_size))) wr_allocate_entry_primary_idx <- mkDWire(0);
+        Wire#(Bit#(TLog#(`imshr_depth))) wr_allocate_entry_secondary_idx <- mkDWire(0);
+        //
+        Wire#(Bool) wr_releasing <- mkDWire(False); // releasing block from LFB to cache after all requests are served/invalid
+        Wire#(Bit#(TLog#(`mhb_size))) wr_releasing_primary_index <- mkDWire(0);
+        
+        //
         // Rules
-        rule rl_check_mshr_free;
+        //
+        rule rl_mhb_counters(!wr_flush); 
             Bool lv_is_full = True;
             Bit#(TAdd#(1,TLog#(`mhb_size))) lv_count_free = '0;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
@@ -62,6 +88,52 @@ package icache_mhb;
             rg_mshr_free_count <= lv_count_free;
             rg_mshr_full <= lv_is_full;
             rg_mshr_empty <= (lv_count_free == `mhb_size);
+        endrule
+        //
+        rule rl_read_registers_into_wires;
+            for(Integer i=0;i<`mhb_size;i=i+1) begin
+                wr_mshr_req_to_be_served[i] <= rg_mshr_req_to_be_served[i];
+                for(Integer j=0;j<`imshr_depth;j=j+1) begin
+                    wr_mshr_valid[i][j] <= rg_mshr_valid[i][j];
+                end
+            end
+        endrule
+        //
+        rule rl_allocate_entry(!wr_flush);
+            if(wr_allocate_entry) begin
+                rg_mshr_valid[wr_allocate_entry_primary_idx][wr_allocate_entry_secondary_idx] <= True;
+                rg_fb_valid[wr_allocate_entry_primary_idx] <= True;
+            end
+        endrule
+        //
+        rule rl_request_satisfied(!wr_flush);
+            if(wr_req_satisfied) begin
+                rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
+            end
+        endrule
+        //
+        rule rl_lfb_release(!wr_flush);
+            if(wr_releasing) begin
+                rg_fb_valid[wr_releasing_primary_index] <= False;
+            end
+        endrule
+        //
+        rule rl_check_all_served(!wr_flush);
+
+            Bit#(TLog#(`mhb_size)) lv_mhb_index = rg_serve_mshr_entry_ptr;
+            Bit#(TLog#(`imshr_depth)) lv_mshr_req_to_be_served  = wr_mshr_req_to_be_served[lv_mhb_index];
+            Bit#(TAdd#(1,TLog#(`imshr_depth))) lv_mshr_pending_count = 0;
+            for(Integer i=0;i<`imshr_depth;i=i+1) begin
+                if(wr_mshr_valid[lv_mhb_index][i]) begin
+                    lv_mshr_pending_count = lv_mshr_pending_count + 1;
+                end
+            end
+            if(!wr_new_entry_serve_conflict) begin  // if there is no new entry arriving into the same mhb_index
+                Bool lv_all_served = (lv_mshr_pending_count==0 || (lv_mshr_pending_count == 1) && wr_req_satisfied);
+                rg_mshr_all_served[lv_mhb_index] <= lv_all_served;
+                rg_serve_mshr_entry_ptr <= (lv_all_served)?lv_mhb_index+1:lv_mhb_index;
+                rg_mshr_req_to_be_served[lv_mhb_index] <= (wr_req_satisfied)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served; // increment the counter if the secondary request is invalid or if the request is served
+            end
         endrule
         //
         method Bool mv_mshr_empty();
@@ -76,21 +148,23 @@ package icache_mhb;
             return rg_mshr_free_count;
         endmethod
         //
+        // Check if the entry for the given physical address already exists in MSHR 
+        // If exists
+        // check if there is a free slot for a secondary request -> if True, return indices
+        // check if the requested word is already filled in LFB -> if True, return word
         method MHB_lookup_resp mv_mshr_lookup(Bool valid, Bit#(`paddr) address);
-            // Check if the entry for the given physical address exists already exits in MSHR 
-            //// If exists
-            ////// check if the requested word is already filled in LFB -> if True, return word
-            ////// check if there is a free slot for a secondary request -> if True, return indices
+            //
             Bit#(TLog#(`mhb_size)) primary_index = 0;
             Bit#(TLog#(`imshr_depth)) secondary_index = 0;
             Bit#(`wordoffset) requested_word = address[`wordoffset+`byteoffset-1:`byteoffset];
             Bit#(TSub#(`paddr,`offsetbits)) block_addr = truncateLSB(address);
             MHB_lookup_resp resp = unpack(0);
             resp.valid = valid;
+            //
             if(valid) begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
                     // hit/miss in MSHR
-                    if(rg_mshr_valid[i][0] && rg_mshr_block_address[i]==block_addr) begin
+                    if(rg_fb_valid[i] && rg_fb_block_address[i]==block_addr) begin
                         resp.hit_mhb = True;
                         primary_index = fromInteger(i);
                     end
@@ -98,13 +172,14 @@ package icache_mhb;
             end
             // check if more entries can be accepted for the same block address
             for(Integer j=1;j<`imshr_depth;j=j+1) begin
-                if(!rg_mshr_valid[primary_index][j]) begin 
+                if(!wr_mshr_valid[primary_index][j]) begin 
                     resp.free_secondary = valid;
                     secondary_index = fromInteger(j);
                 end
             end
-            //
+
             resp.mhb_index = {primary_index,secondary_index};
+
             // check if the requested word is filled in LFB
             if(rg_fb_valid[primary_index] && rg_fb_filled[primary_index][requested_word]==1'b1) begin
                 //
@@ -132,44 +207,49 @@ package icache_mhb;
             return resp;
         endmethod
         //
-        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_size) req_id,Bit#(TLog#(`numways)) replacement_way);
-            if(valid) begin
-                // Allocate a secondary MSHR entry, LFB entry exists
-                if(mshr_hit) begin
+        method Action ma_allocate_entry(Bool valid, Bool mshr_hit, Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mshr_index, Bit#(`paddr) address,Bit#(`reqid_width) req_id,Bit#(TLog#(`numways)) replacement_way);
+            // (mshr and fb valid bits are set separately in a rule to avoid conflicts)
+
+            if(valid && !wr_flush) begin 
+                wr_allocate_entry <= valid;
+                if(mshr_hit) begin // Allocate a secondary MSHR entry, LFB entry exists 
                     Bit#(TLog#(`mhb_size)) lv_primary_index = truncateLSB(mshr_index);
                     Bit#(TLog#(`imshr_depth)) lv_secondary_index = truncate(mshr_index);
-                    rg_mshr_valid[lv_primary_index][lv_secondary_index] <= valid;
                     rg_mshr_offset[lv_primary_index][lv_secondary_index] <= truncate(address);
                     rg_mshr_req_id[lv_primary_index][lv_secondary_index] <= req_id;
                     rg_mshr_flushed[lv_primary_index][lv_secondary_index] <= False;
-                    rg_mshr_served[lv_primary_index][lv_secondary_index] <= False;
-                    // If the new request arrives before the line has been released and after all the requests for the id were served/being served
-                    // then, set id as not served and reset the "req_to_be_served" counter
-                    if(rg_mshr_all_served[lv_primary_index] || (lv_primary_index == rg_served_mshr_entry_ptr)) begin
+
+                    // If the new request arrives before the block has been released and after all the requests for the index were already served or are being served
+                    // then, reset "all_served" and "req_to_be_served" 
+                    
+                    if(lv_primary_index == rg_serve_mshr_entry_ptr) begin
                         wr_new_entry_serve_conflict <= True;
                         rg_mshr_all_served[lv_primary_index] <= False;
-                        rg_mshr_req_to_be_served[lv_primary_index] <= 0;
+                        rg_mshr_req_to_be_served[lv_primary_index] <= (rg_mshr_all_served[lv_primary_index])?lv_secondary_index:
+                                                                                    ((wr_req_satisfied)?wr_mshr_req_to_be_served[lv_primary_index]+1:wr_mshr_req_to_be_served[lv_primary_index]);
                     end
+                    wr_allocate_entry_primary_idx <= lv_primary_index;
+                    wr_allocate_entry_secondary_idx <= lv_secondary_index;
                 end
-                // Allocate a new MSHR entry
-                else begin 
+
+                else begin  // Allocate a new MSHR entry
                     //MSHR Entry
-                    rg_mshr_issued[rg_mhb_next_free_ptr] <= False;
-                    rg_mshr_block_address[rg_mhb_next_free_ptr] <= truncateLSB(address);
                     rg_mshr_replacement_way[rg_mhb_next_free_ptr] <= replacement_way;
                     rg_mshr_req_to_be_served[rg_mhb_next_free_ptr] <= 0;
                     rg_mshr_all_served[rg_mhb_next_free_ptr] <= False;
-                    rg_mshr_valid[rg_mhb_next_free_ptr][0] <= valid;
                     rg_mshr_offset[rg_mhb_next_free_ptr][0] <= truncate(address);
                     rg_mshr_req_id[rg_mhb_next_free_ptr][0] <= req_id;
                     rg_mshr_flushed[rg_mhb_next_free_ptr][0] <= False;
-                    rg_mshr_served[rg_mhb_next_free_ptr][0] <= False;
                     // LFB entry
-                    rg_fb_valid[rg_mhb_next_free_ptr] <= valid;
+                    rg_fb_issued[rg_mhb_next_free_ptr] <= False;
+                    rg_fb_block_address[rg_mhb_next_free_ptr] <= truncateLSB(address);
                     rg_fb_filled[rg_mhb_next_free_ptr] <= '0;
                     rg_fb_word_to_be_filled[rg_mhb_next_free_ptr] <= address[`wordoffset+`byteoffset-1:`byteoffset]; 
                     for(Integer i=0;i<`fb_depth;i=i+1)
                         rg_fb_data[rg_mhb_next_free_ptr][i] <= unpack(0);
+                    //
+                    wr_allocate_entry_primary_idx <= rg_mhb_next_free_ptr;
+                    wr_allocate_entry_secondary_idx <= 0;
                     //
                     rg_mhb_next_free_ptr <= rg_mhb_next_free_ptr+1;
                 end
@@ -187,21 +267,22 @@ package icache_mhb;
             end
         endmethod
         //
-        // NOTE (POSSIBLE OPTIMIZATION): Instead of servicing requests sequentially, can service many secondary entries in a single cycle
-        //                         valid, request_id      ,data      
-        method ActionValue#(Tuple3#(Bool,Bit#(`reqid_size),Bit#(`wordsize))) mv_check_served_mshr(); 
-            // read the request to be served
-            Bit#(TLog#(`mhb_size)) mhb_index = rg_served_mshr_entry_ptr;
-            Bit#(TLog#(`imshr_depth)) lv_mshr_req_to_be_served  = rg_mshr_req_to_be_served[mhb_index];
-            Bit#(`reqid_size) lv_reqid = rg_mshr_req_id[mhb_index][lv_mshr_req_to_be_served];
-            // read the corresponding mshr request
-            Bool lv_entry_valid = rg_mshr_valid[mhb_index][lv_mshr_req_to_be_served] && !rg_mshr_served[mhb_index][lv_mshr_req_to_be_served]; // valid if not already served
-            Bool lv_flushed = rg_mshr_flushed[mhb_index][lv_mshr_req_to_be_served];
-            Bit#(`wordoffset) lv_req_word = truncateLSB(rg_mshr_offset[mhb_index][lv_mshr_req_to_be_served]);
-            Bit#(`byteoffset) lv_req_byteoffset = truncate(rg_mshr_offset[mhb_index][lv_mshr_req_to_be_served]);
+        // NOTE (POSSIBLE OPTIMIZATION): Instead of servicing requests sequentially, we can try to service all secondary entries in a single cycle
+        method ActionValue#(Tuple3#(Bool,Bit#(`reqid_width),Bit#(`wordsize))) mv_miss_request_response(); 
+            // read the request to be served for the mhb entry
+            Bit#(TLog#(`mhb_size)) lv_primary_index = rg_serve_mshr_entry_ptr;
+            Bit#(TLog#(`imshr_depth)) lv_mshr_req_to_be_served  = wr_mshr_req_to_be_served[lv_primary_index];
+            Bit#(`reqid_width) lv_reqid = rg_mshr_req_id[lv_primary_index][lv_mshr_req_to_be_served];
+            
+            Bool lv_entry_valid = wr_mshr_valid[lv_primary_index][lv_mshr_req_to_be_served]; 
+            Bool lv_flushed = rg_mshr_flushed[lv_primary_index][lv_mshr_req_to_be_served];
+            Bit#(`wordoffset) lv_req_word = truncateLSB(rg_mshr_offset[lv_primary_index][lv_mshr_req_to_be_served]);
+            Bit#(`byteoffset) lv_req_byteoffset = truncate(rg_mshr_offset[lv_primary_index][lv_mshr_req_to_be_served]);
+            
             // read the corresponding fill buffer entry
-            Vector#(`fb_depth,Bit#(`wordsize)) lv_fb_data = readVReg(rg_fb_data[mhb_index]);
-            Bit#(`fb_depth) lv_fb_filled = rg_fb_filled[mhb_index];
+            Vector#(`fb_depth,Bit#(`wordsize)) lv_fb_data = readVReg(rg_fb_data[lv_primary_index]);
+            Bit#(`fb_depth) lv_fb_filled = rg_fb_filled[lv_primary_index];
+
             // see if the request is satisfied
             // if requested entry is not flushed
             // if request is for the first byte of the requested word, 
@@ -218,31 +299,22 @@ package icache_mhb;
             Bit#(TMul#(2,`wordsize)) lv_selected_word_double = {lv_selected_word_next, lv_selected_word} >> lv_shift_amt;
             lv_selected_word = lv_selected_word_double[`wordsize-1:0];
             //
-            // if there is a new entry arriving into the same mhb_index
-            if(!wr_new_entry_serve_conflict) begin
-                Bool lv_all_served = ((lv_mshr_req_to_be_served == '1) && (lv_req_satisfied || !lv_entry_valid));
-                rg_mshr_all_served[mhb_index] <= lv_all_served;
-                rg_served_mshr_entry_ptr <= (lv_all_served)?mhb_index+1:mhb_index;
-                // increment the counter if the secondary request is invalid or if the request is served
-                rg_mshr_req_to_be_served[mhb_index] <= (lv_req_satisfied || !lv_entry_valid)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served;
-            end
+            wr_req_satisfied <= (lv_req_satisfied || !lv_entry_valid);
+            wr_satisfied_req_primary_idx <= lv_primary_index;
+            wr_satisfied_req_secondary_idx <= lv_mshr_req_to_be_served;
             //
             return tuple3(lv_req_satisfied,lv_reqid,lv_selected_word);
         endmethod
         //
-        method Mem_request  mv_fill_request(Bool notFull);
+        method Mem_request  mv_fill_request();
             Mem_request mem_req = unpack(0);
-            if(notFull) begin
-                if(rg_mshr_valid[rg_fill_request_entry_ptr][0] && !rg_mshr_issued[rg_fill_request_entry_ptr]) begin
-                    mem_req = Mem_request{
-                                valid: True,
-                                paddr: {rg_mshr_block_address[rg_fill_request_entry_ptr],'0},
-                                rid: rg_fill_request_entry_ptr,
-                                burst: True
-                            };                
-                    rg_mshr_issued[rg_fill_request_entry_ptr] <= True;
-                end
-                rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
+            if(rg_fb_valid[rg_fill_request_entry_ptr] && !rg_fb_issued[rg_fill_request_entry_ptr] && !wr_flush) begin
+                mem_req = Mem_request{
+                            valid: True,
+                            paddr: {rg_fb_block_address[rg_fill_request_entry_ptr],'0},
+                            mhb_id: rg_fill_request_entry_ptr,
+                            burst: True
+                        };                
             end
             return mem_req;
         endmethod
@@ -253,43 +325,50 @@ package icache_mhb;
             Bool lv_releasing = False;
             Bit#(TLog#(`mhb_size)) lv_release_index = '0;
             Bit#(TLog#(`numways)) lv_replacement_way = 0;
-            let lv_ptr = rg_lfb_release_ptr;
-            if(rg_fb_valid[lv_ptr] && !rg_mshr_flushed[lv_ptr][0] && rg_mshr_all_served[lv_ptr]) begin
-                if(rg_fb_filled[lv_ptr]=='1) begin
-                    lv_releasing = True;
-                    lv_release_index = lv_ptr;
-                    lv_blockdata = pack(readVReg(rg_fb_data[lv_ptr]));
-                    lv_blockaddress = rg_mshr_block_address[lv_ptr];
-                    lv_replacement_way = rg_mshr_replacement_way[lv_ptr];
-                end
+            //
+            let lv_ptr = rg_fb_release_ptr;
+            if(rg_fb_valid[lv_ptr] && (rg_fb_filled[lv_ptr]=='1) && rg_mshr_all_served[lv_ptr]) begin
+                lv_releasing = True;
+                lv_release_index = lv_ptr;
+                lv_blockdata = pack(readVReg(rg_fb_data[lv_ptr]));
+                lv_blockaddress = rg_fb_block_address[lv_ptr];
+                lv_replacement_way = rg_mshr_replacement_way[lv_ptr];
             end
-            // Invalidate entries
-            if(lv_releasing) begin
-                rg_fb_valid[lv_release_index] <= False;
-                for(Integer j=0;j<`imshr_depth;j=j+1) begin
-                    rg_mshr_valid[lv_release_index][j] <= False;
-                end
+            //
+            if(lv_releasing || !rg_fb_valid[lv_ptr] || rg_fb_filled[lv_ptr]==0) begin
+                rg_fb_release_ptr <= rg_fb_release_ptr + 1;
             end
-            else if(!rg_fb_valid[lv_ptr] || rg_mshr_flushed[lv_ptr][0] || rg_fb_filled[lv_ptr]== 0) begin
-                rg_lfb_release_ptr <= rg_lfb_release_ptr + 1;
-            end
+            //
+            wr_releasing <= lv_releasing;
+            wr_releasing_primary_index <= lv_release_index;
+            //
             return tuple4(lv_releasing,lv_replacement_way,lv_blockaddress,lv_blockdata);
         endmethod
         //
+        method Action ma_set_issued(Bool valid);
+            if(valid) begin
+                rg_fb_issued[rg_fill_request_entry_ptr] <= valid;
+                rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
+            end
+        endmethod
+        //
         method Action ma_flush(Bool flush);
-            // If the request is issued -> just set the flushed bit
-            // else flush the entries
             if(flush) begin
+                wr_flush <= flush;
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
                     for(Integer j=0;j<`imshr_depth;j=j+1) begin
-                        if(rg_mshr_valid[i][j]) begin
-                            if(rg_mshr_issued[i]) begin
-                                rg_mshr_flushed[i][j] <= True;                                
-                            end
-                            else begin
-                                rg_mshr_valid[i][j] <= False;
-                            end
+                        if(rg_fb_issued[i]) begin
+                            rg_mshr_flushed[i][j] <= True;  // the response for the flushed request will not be sent to Core.                       
                         end
+                        else begin
+                            rg_mshr_valid[i][j] <= False;
+                        end
+                    end
+                end
+                //
+                for(Integer i=0;i<`mhb_size;i=i+1) begin
+                    if(!rg_fb_issued[i]) begin
+                        rg_fb_valid[i] <= False;                                
                     end
                 end
             end
