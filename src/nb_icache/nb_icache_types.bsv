@@ -1,10 +1,5 @@
 package nb_icache_types;
 `include "icache_parameters.bsv"
-
-    function Bit#(`setbits) fn_extract_set(Bit#(`paddr) address);
-        return address[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset];
-    endfunction
-    //
     typedef struct{
         Bool cache_busy;
         Bit#(TLog#(`mhb_size)) mshr_status;
@@ -58,13 +53,11 @@ package nb_icache_types;
     } Stage1 deriving(Bits,Eq,FShow);
     
     typedef struct{
-        ICache_core_request core_req;
+        Bool tag_hit;
+        Bit#(`reqid_width) req_id;
         Bit#(`paddr) paddr;
-        // TODO tag response
-        // TODO data response
-        // TODO replacement response
-        // TODO status response
-        // TODO tlb response
+        Bit#(`blocksize) data;
+        Bit#(TLog#(`numways)) replacement_way;
     } Stage2 deriving(Bits,Eq,FShow);
     
     typedef struct{
@@ -82,6 +75,15 @@ package nb_icache_types;
         Bit#(addr)        address;
         Bool              trap;
         Bit#(`causesize)  cause;
-  } ITLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
-// 
+    }ITLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
+    // 
+    function Bit#(`setbits) fn_extract_set(Bit#(`paddr) address);
+        return address[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset];
+    endfunction
+    //
+    function ITLB_core_request#(`vaddr) fn_get_tlb_packet(ICache_core_request req);
+        return ITLB_core_request{   address   : req.vaddr,
+                                    sfence    : req.sfence
+                                    };
+    endfunction
 endpackage
