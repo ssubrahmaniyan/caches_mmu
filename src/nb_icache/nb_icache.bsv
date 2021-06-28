@@ -8,14 +8,13 @@ package nb_icache;
     interface Ifc_nb_icache;
         // Inputs
         module Action ma_core_request(ICache_core_request core_req);
-        module Action ma_mem_response(Mem_response mem_response);
         module Action ma_csr_status(Bit#(2) prv, Bit#(`xlen), mstatus, Bit#(`xlen) satp);
         interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) put_response_frm_ptw;
-
+        interface Put#(ICache_mem_readresp#(`ibuswidth)) put_read_mem_resp;
         // Outputs 
         module ICache_core_response mv_core_response();
-        module Mem_request mv_mem_request();
         module ICache_status mv_icache_status();
+        interface Get#(ICache_mem_readreq#(`paddr)) get_read_mem_req;
         interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
     endinterface
     //
@@ -23,7 +22,7 @@ package nb_icache;
     module mknb_icache(Ifc_nb_icache);
 
     // Fifos
-    FIFOF#(Mem_request) ff_mem_request <- mkPipelineFIFOF();
+    FIFOF#(ICache_mem_readreq#(`paddr)) ff_mem_request <- mkPipelineFIFOF();
 
     // Stage 1 Registers 
     Reg#(Bool) rg_replay_stage1_valid <- mkReg(False);
@@ -65,10 +64,11 @@ package nb_icache;
     Wire#(Bit#(`reqid_width)) wr_lookup_reqid <- mkDWire(0);
     Wire#(Stage2) wr_stage2_data <- mkDWire(unpack(0));
 
+    Wire#(Bool) wr_ptwalk_valid_response <- mkDWire(False);
 
 
     // Initialize structures
-    Vector#(`numsets, Reg#(Bit#(`numways))) rg_icache_valid <- replicateM(mkReg(0));
+    Vector#(`numsets, Vector#(`numways,Reg#(Bit#(1)))) rg_icache_valid <- replicateM(replicateM(mkReg(0)));
     Ifc_icache_tagram ifc_tag <- mkicache_tagram();
     Ifc_icache_dataram ifc_data <- mkicache_dataram();
     Ifc_icache_mhb ifc_mhb <- mkicache_mhb();
@@ -88,19 +88,19 @@ package nb_icache;
     //
     //
     rule rl_check_pending_requests;
-        // TODO: Need to discuss presence of rg_replay_stage1_valid
-        wr_no_pending_requests <= (!rg_stage2.valid && !rg_replay_stage1_valid && ifc_mhb.mv_mshr_empty());
+        wr_no_pending_requests <= (!rg_stage2.valid && ifc_mhb.mv_mshr_empty());
     endrule
     //
     rule rl_lookup_arrays;
         if(wr_lookup_arrays_valid) begin
             Bit#(`setbits) lv_set_index= wr_lookup_paddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
-            Bit#(`numways) lv_way_valid = rg_icache_valid[lv_set_index];
+            Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(rg_icache_valid[lv_set_index]);
             //
             Stage2 lv_stage2_data = unpack(0);
             lv_stage2_data.paddr = wr_lookup_paddr;
             lv_stage2_data.req_id = wr_lookup_reqid;
             lv_stage2_data.replacement_way <- ifc_replacement.line_replace(lv_set_index,lv_way_valid);
+            lv_stage2_data.way_valid = lv_way_valid;
             //
             // send BRAM request
             ifc_tag.ma_read_request(wr_lookup_arrays_valid,wr_lookup_paddr);
@@ -117,10 +117,9 @@ package nb_icache;
             Bit#(`numways) lv_hitmask = '0;
             //
             Stage2 lv_stage2_data = rg_lookup_stage2;
-            Bit#(`numways) lv_way_valid = rg_icache_valid[lv_stage2_data.paddr[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits]];
             //
             lv_tagram_response = ifc_tag.mv_read_response();
-            lv_hitmask = (lv_tag_response & lv_way_valid);
+            lv_hitmask = (lv_tag_response & lv_stage2_data.way_valid);
             lv_stage2_data.tag_hit = unpack(|hitmask);
             lv_stage2_data.data = m_data.mv_read_response(hitmask);
             //
@@ -128,6 +127,15 @@ package nb_icache;
         end
         else begin
             wr_stage2_data <= rg_stage2_req_data;
+        end
+    endrule
+    //
+    rule rl_allow_tlb_miss_replay;
+        // TLB miss causes rl_replay_req to stall till iTLB receives a valid response from PTWalk
+        // Reset rg_tlb_miss when a valid ptwalk response is received
+        //
+        if(rg_tlb_miss && wr_ptwalk_valid_response) begin
+            rg_tlb_miss <= False; 
         end
     endrule
     //
@@ -165,14 +173,15 @@ package nb_icache;
                         // invalidate all cache entries
                         rg_icache_valid <= unpack(0);  
                     end
-                    else if(lv_core_req.sfence) begin
-                        //invalidate TLB // TODO
-                    end
+                    // else if(lv_core_req.sfence) begin
+                    //     //invalidate TLB (Happens through core request)
+                    // end
                     else if(lv_tlb_hit && !lv_tlb_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full) begin // TODO  
                         rg_stage2_valid <= True;
                     end
                     else if(lv_tlb_hit && lv_tlb_is_io) begin
                         // send request to fabric //TODO
+                        ff_mem_request.enq(lv_core_req);  
                         rg_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                         rg_io_request_valid <= True; 
                         rg_replay_stage1_req_data <= lv_core_req;
@@ -233,13 +242,13 @@ package nb_icache;
                 // 
                 // replay pending requests, if any
                 else begin
-                    wr_replay <= rg_replay_stage1_valid && (!rg_stage2_valid || !wr_stage2_next_cycle_valid); 
+                    wr_replay <= rg_replay_stage1_valid && !rg_tlb_miss && (!rg_stage2_valid || !wr_stage2_next_cycle_valid); 
                 end
             end
         end
     endrule
     //
-    // replay the pending requests
+    // replay the pending requests (if stage2 free and no tlb_miss)
     rule rl_replay_req(wr_replay && !wr_flush);
 
         let lv_core_req = rg_replay_stage1_req_data; 
@@ -263,26 +272,31 @@ package nb_icache;
             rg_replay_stage1_valid <= False;
         end
         else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
-            //invalidate TLB // TODO
+            //invalidate TLB (Happens through core request)
             rg_replay_stage1_valid <= False;
         end
         else if((lv_tlb_hit && !lv_tlb_is_io) && !lv_set_conflict 
-                                              && !ifc_mhb.mv_mshr_full 
-                                              && !rg_stage1_flushed) begin // TODO  
-            rg_stage2_valid <= True;
-            rg_replay_stage1_valid <= False;
-            rg_tlb_miss <= False;
-            rg_set_conflict <= False;
+                                              && !ifc_mhb.mv_mshr_full ) begin // TODO  
+            if(rg_stage1_flushed) begin // if Ptwalk response has been stored in tlb for the flushed request, drop it.
+                rg_stage1_flushed <= False;
+                rg_replay_stage1_valid <= False;
+            end
+            else begin
+                rg_stage2_valid <= True;
+                rg_replay_stage1_valid <= False;
+                rg_set_conflict <= False;
+            end
         end
         else if((lv_tlb_hit && lv_tlb_is_io) && ifc_mhb.mv_mshr_empty()) begin
-            // send request to fabric //TODO  
+            // send request to fabric //TODO
+            ff_mem_request.enq(lv_core_req);  
             // rg_replay_stage1_valid and rg_io_request_valid aren't reset till a valid i/o response is received
             if(!rg_io_request_issued) begin
                 rg_io_request_valid <= True;
                 rg_io_request_issued <= True;
             end
         end
-        else begin // had another set conflict or tlb_miss or fence/sfence/io but cache not empty
+        else begin // had another "set conflict" or "tlb_miss" or "fence/sfence/io and cache not empty"
             rg_replay_stage1_valid <= True;
             rg_replay_stage1_req_data <= lv_core_req;
             if((lv_tlb_hit && lv_tlb_is_io)) begin
@@ -384,10 +398,8 @@ package nb_icache;
         match {.valid,.way,.block_addr,.block_data} <- ifc_mhb.mv_fb_release();
         Bit#(`paddr) lv_paddr = {block_addr,'0};
         Bit#(`setbits) set_index = truncate(block_addr);
-        Bit#(`numways) update_way_valid = zeroExtend(1<<way);
         if(valid) begin
-
-            rg_icache_valid[set_index] <= rg_icache_valid[set_index] | update_way_valid;
+            rg_icache_valid[set_index][way] <= 1'b1;
             // TODO update replacement
             ifc_tag.ma_write_request(True,lv_paddr,way);
             ifc_data.ma_write_request(True,lv_paddr,block_data,way);
@@ -398,7 +410,19 @@ package nb_icache;
     //
     //
     interface get_request_to_ptw = ifc_itlb.get_request_to_ptw;
-    interface put_response_frm_ptw = ifc_itlb.put_response_frm_ptw; // only replay when response arrives (add bypass) 
+    interface put_response_frm_ptw = interface Put
+        method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) in);
+            wr_ptwalk_valid_response <= True;  // resets tlb miss replay stall
+            ifc_itlb.put_response_frm_ptw.put(in);
+        endmethod
+    endinterface
+    //
+    interface get_read_mem_req = toGet(ff_mem_request);
+    interface put_read_mem_resp = interface Put
+        method Action put((ICache_mem_readresp#(`ibuswidth) in);
+            wr_mem_response <= in;
+        endmethod
+    endinterface
     //
     module ICache_status mv_icache_status();
         return wr_icache_status;

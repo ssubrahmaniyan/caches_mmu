@@ -159,13 +159,13 @@ package icache_mhb;
             rg_mhb_free_entry_ptr <= lv_free_index;
         endrule
         //
-        rule rl_check_all_served(!wr_flush);
+        rule rl_check_all_served;
 
             Bit#(TLog#(`mhb_size)) lv_mhb_index = rg_serve_mshr_entry_ptr;
             Bit#(TLog#(`imshr_depth)) lv_mshr_req_to_be_served  = wr_mshr_req_to_be_served[lv_mhb_index];
             Bit#(TAdd#(1,TLog#(`imshr_depth))) lv_mshr_pending_count = 0;
             for(Integer i=0;i<`imshr_depth;i=i+1) begin
-                if(wr_mshr_valid[lv_mhb_index][i] && !wr_fb_flushed[lv_mhb_index]) begin
+                if(wr_mshr_valid[lv_mhb_index][i] && !wr_flush) begin // flush will invalidate all mshr entries
                     lv_mshr_pending_count = lv_mshr_pending_count + 1;
                 end
             end
@@ -264,7 +264,7 @@ package icache_mhb;
 
                     // If the new request arrives before the block has been released and after all the requests for the index were already served or are being served
                     // then, reset "all_served" and "req_to_be_served" 
-                    
+                    // 
                     if(lv_primary_index == rg_serve_mshr_entry_ptr) begin
                         wr_new_entry_serve_conflict <= True;
                         rg_mshr_all_served[lv_primary_index] <= False;
@@ -361,7 +361,7 @@ package icache_mhb;
             end
             return mem_req;
         endmethod
-        //                         valid.   replacement_way,   block_address,                 , release_data
+        //                         valid,   replacement_way   ,block_address,                 ,release_data
         method ActionValue#(Tuple4#(Bool,Bit#(TLog#(`numways)),Bit#(TSub#(`paddr,`offsetbits)),Bit#(`blocksize))) mv_fb_release();
             Bit#(`blocksize) lv_blockdata = '0;
             Bit#(TSub#(`paddr,`offsetbits)) lv_blockaddress = '0;
@@ -397,9 +397,7 @@ package icache_mhb;
                 wr_flush <= flush;
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
                     for(Integer j=0;j<`imshr_depth;j=j+1) begin
-                        if(!rg_fb_issued[i]) begin
-                            rg_mshr_valid[i][j] <= False;
-                        end
+                        rg_mshr_valid[i][j] <= False;
                     end
                 end
                 //
