@@ -1,12 +1,11 @@
 package nb_icache_types;
   import Vector :: * ;
-  `include "common_tlb.defines"
+  import itlb_types ::*;
   `include "icache_parameters.bsv"
-  `include "itlb_types.bsv"
 
     typedef struct{
         Bool cache_busy;
-        Bit#(TLog#(`mhb_size)) mshr_status;
+        Bit#(TAdd#(1,TLog#(`mhb_size))) mshr_status;
     } ICache_status deriving(Bits,Eq,FShow);
     
     typedef struct{
@@ -23,19 +22,23 @@ package nb_icache_types;
         Bool valid;
         Bit#(`reqid_width) req_id;
         Bit#(`fetch_width) packet;
+        Bool is_io;
         Bool trap;
-        Bit#(2) excp_type;
+        Bit#(`causesize) excp_type;
     } ICache_core_response deriving(Bits,Eq,FShow);
     
+
     typedef struct{
         Bool valid;
         Bit#(`paddr) paddr;
         Bit#(TLog#(`mhb_size)) mhb_id;
-        Bool burst;
+        Bit#(8)       burst_len;
+        Bit#(3)       burst_size;
+        Bool          io;
     } Mem_request deriving(Bits,Eq,FShow);
     typedef struct{
         Bool valid;
-        Bit#(`ibus_width)    data;
+        Bit#(`ibuswidth)    data;
         Bool          last;
         Bool          err;
         Bit#(TLog#(`mhb_size)) mhb_id;
@@ -50,17 +53,12 @@ package nb_icache_types;
         Bool fb_valid;
         Bit#(`wordsize) fb_data;
     } MHB_lookup_resp deriving(Bits, Eq,FShow);
-    //
-    typedef struct{
-        ICache_core_request core_req;
-        Bool is_io;
-    } Stage1 deriving(Bits,Eq,FShow);
-    
+    //    
     typedef struct{
         Bool tag_hit;
         Bit#(`reqid_width) req_id;
         Bit#(`paddr) paddr;
-        Bit#(`blocksize) data;
+        Bit#(`wordsize) data;
         Bit#(TLog#(`numways)) replacement_way;
         Vector#(`numways,Bit#(1)) way_valid;
     } Stage2 deriving(Bits,Eq,FShow);
@@ -70,18 +68,10 @@ package nb_icache_types;
         Bit#(`paddr) paddr;
         Bool is_io;
     } Replay deriving(Bits,Eq,FShow);
-
-    // -------------------------------------------------------------------------------------------//
-    // 
-
+    //
     function Bit#(`setbits) fn_extract_set(Bit#(`paddr) address);
         return address[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset];
     endfunction
     //
-//    function ITLB_core_request#(`vaddr) fn_get_tlb_packet(ICache_core_request req);
-//        return ITLB_core_request{   address   : req.vaddr,
-//                                    sfence    : req.sfence
-//                                    };
-    endfunction
 endpackage
 

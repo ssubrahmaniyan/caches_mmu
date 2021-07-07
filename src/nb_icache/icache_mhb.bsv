@@ -356,7 +356,9 @@ package icache_mhb;
                             valid: True,
                             paddr: {rg_fb_block_address[rg_fill_request_entry_ptr],'0},
                             mhb_id: rg_fill_request_entry_ptr,
-                            burst: True
+                            burst_len: fromInteger(`wordsperblock/valueOf(TDiv#(`ibuswidth,`wordsize))-1),
+                            burst_size: fromInteger(valueOf(TLog#(TDiv#(`ibuswidth,8)))),
+                            io: False
                         };                
             end
             return mem_req;
