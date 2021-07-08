@@ -288,6 +288,7 @@ package nb_icache;
                 else begin
                 //  
                     // implicit condition: !rg_replay_stage1_valid && !rg_stage2_valid (otherwise cache would be busy)
+                    // can happen as mhb full count is registered
                     if(wr_core_req.valid) begin 
                         Bool lv_set_conflict =  False;
                         Bool lv_tlb_is_io = False; // TODO  
@@ -301,7 +302,7 @@ package nb_icache;
                         if(wr_fb_release_valid && (wr_fb_release_index == wr_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
                         end
-                        // 
+                        //
                         if(lv_itlb_response.hit && !lv_tlb_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin  
                             rg_stage2_valid <= True;
                         end
@@ -324,84 +325,81 @@ package nb_icache;
                     end
                     // 
                     // replay pending requests, if any
-                    else begin
-                        wr_replay <= wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_valid); 
+                    // (if "stage2 free" , "No tlb_miss pending", "No issued io request pending")
+                    //
+                    else if(wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_valid)) begin
+                        let lv_core_req = rg_replay_stage1_req_data; 
+                        Bool lv_set_conflict =  False;  
+                        Bool lv_tlb_is_io = False; // TODO  
+                        //
+                        if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
+                            lv_set_conflict = True;
+                        end
+                        // 
+                        if(lv_core_req.fence && ifc_mhb.mv_mshr_empty()) begin
+                            // invalidate all cache entries
+                            for(Integer i=0;i<`numsets;i=i+1) begin
+                                for(Integer j=0;j<`numways;j=j+1) begin
+                                    rg_icache_valid[i][j] <= 0;  
+                                end
+                            end
+                            rg_replay_stage1_valid <= False;
+                        end
+                        else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
+                            //invalidate TLB
+                            ifc_itlb.sfence();
+                            rg_replay_stage1_valid <= False;
+                        end
+                        else begin
+                            let lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr); 
+                            //
+                            wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
+                            wr_lookup_paddr <= lv_itlb_response.address;
+                            wr_lookup_reqid <= lv_core_req.req_id;
+                            //
+                            if((lv_itlb_response.hit && lv_tlb_is_io) && ifc_mhb.mv_mshr_empty()) begin
+                                // send request to fabric //TODO -> check struct
+                                ff_mem_request.enq( Mem_request{ valid: True,
+                                                                paddr: lv_itlb_response.address,
+                                                                mhb_id: 0,
+                                                                burst_len: 0,
+                                                                burst_size: 3'b010,
+                                                                io: True} );
+                                // rg_replay_stage1_valid and rg_io_request_valid aren't reset till a valid i/o response is received
+                                rg_io_request_valid <= True;
+                                rg_io_request_issued <= True;
+                            end
+                            else if((lv_itlb_response.hit && !lv_tlb_is_io) && !lv_set_conflict 
+                                                                && !ifc_mhb.mv_mshr_full ) begin // TODO  
+                                if(wr_preread_stage1_flushed) begin // if Ptwalk response has been stored in tlb for the flushed request, drop it.
+                                    rg_stage1_flushed <= False;
+                                    rg_replay_stage1_valid <= False;
+                                end
+                                else begin
+                                    rg_stage2_valid <= True;
+                                    rg_replay_stage1_valid <= False;
+                                    rg_set_conflict <= False;
+                                end
+                            end
+                            else begin // had another "set conflict" or "tlb_miss" or "req is a fence/sfence/io and the cache is not empty"
+                                rg_replay_stage1_valid <= True;
+                                rg_replay_stage1_req_data <= lv_core_req;
+                                if((lv_itlb_response.hit && lv_tlb_is_io)) begin
+                                    rg_io_request_valid <= True;
+                                end
+                                if(!lv_itlb_response.hit) begin
+                                    rg_tlb_miss <= True; // takes priority over set_conflict
+                                end
+                                else if(lv_set_conflict) begin
+                                    rg_set_conflict <= True;
+                                end
+                            end
+                        end
                     end
                 end
             end
         endrule
         //
-        // replay the pending requests (if stage2 free and no tlb_miss)
-        rule rl_replay_req(wr_replay && !wr_flush);
-
-            let lv_core_req = rg_replay_stage1_req_data; 
-            Bool lv_set_conflict =  False;  
-            Bool lv_tlb_is_io = False; // TODO  
-            //
-            if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
-                lv_set_conflict = True;
-            end
-            // 
-            if(lv_core_req.fence && ifc_mhb.mv_mshr_empty()) begin
-                // invalidate all cache entries
-                for(Integer i=0;i<`numsets;i=i+1) begin
-                    for(Integer j=0;j<`numways;j=j+1) begin
-                        rg_icache_valid[i][j] <= 0;  
-                    end
-                end
-                rg_replay_stage1_valid <= False;
-            end
-            else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
-                //invalidate TLB
-                ifc_itlb.sfence();
-                rg_replay_stage1_valid <= False;
-            end
-            else begin
-                let lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr); 
-                //
-                wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
-                wr_lookup_paddr <= lv_itlb_response.address;
-                wr_lookup_reqid <= lv_core_req.req_id;
-                //
-                if((lv_itlb_response.hit && lv_tlb_is_io) && ifc_mhb.mv_mshr_empty()) begin
-                    // send request to fabric //TODO -> check struct
-                    ff_mem_request.enq( Mem_request{ valid: True,
-                                                    paddr: lv_itlb_response.address,
-                                                    mhb_id: 0,
-                                                    burst_len: 0,
-                                                    burst_size: 3'b010,
-                                                    io: True} );
-                    // rg_replay_stage1_valid and rg_io_request_valid aren't reset till a valid i/o response is received
-                    rg_io_request_valid <= True;
-                    rg_io_request_issued <= True;
-                end
-                else if((lv_itlb_response.hit && !lv_tlb_is_io) && !lv_set_conflict 
-                                                    && !ifc_mhb.mv_mshr_full ) begin // TODO  
-                    if(wr_preread_stage1_flushed) begin // if Ptwalk response has been stored in tlb for the flushed request, drop it.
-                        rg_stage1_flushed <= False;
-                        rg_replay_stage1_valid <= False;
-                    end
-                    else begin
-                        rg_stage2_valid <= True;
-                        rg_replay_stage1_valid <= False;
-                        rg_set_conflict <= False;
-                    end
-                end
-                else begin // had another "set conflict" or "tlb_miss" or "req is a fence/sfence/io and the cache is not empty"
-                    rg_replay_stage1_valid <= True;
-                    rg_replay_stage1_req_data <= lv_core_req;
-                    if((lv_itlb_response.hit && lv_tlb_is_io)) begin
-                        rg_io_request_valid <= True;
-                    end
-                    if(!lv_itlb_response.hit) begin
-                        rg_tlb_miss <= True; // takes priority over set_conflict
-                    end
-                    else if(lv_set_conflict) begin
-                        rg_set_conflict <= True;
-                    end
-                end
-            end
-        endrule
         //
         // Only cacheable requests proceed to this stage
         rule rl_stage_2;
