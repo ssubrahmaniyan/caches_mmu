@@ -27,6 +27,14 @@ package nb_icache_types;
         Bit#(`causesize) excp_type;
     } ICache_core_response deriving(Bits,Eq,FShow);
     
+    typedef struct{
+        Bool valid;
+        Bit#(`fetch_width) packet;
+        Bool is_io;
+        Bool trap;
+        Bit#(`causesize) excp_type;
+    } CRQ_core_response deriving(Bits,Eq,FShow);
+    
 
     typedef struct{
         Bool valid;

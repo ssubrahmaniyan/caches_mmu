@@ -6,15 +6,24 @@ package crq;
     import icache_types     ::*;
     `include "icache_parameters.bsv"
     //
+    function CRQ_core_response fn_extract_crq_data(ICache_core_response in);
+        CRQ_core_response lv_crq_data = unpack(0);
+        lv_crq_data.valid = in.valid;
+        lv_crq_data.packet = in.packet;
+        lv_crq_data.is_io = in.is_io;
+        lv_crq_data.trap = in.trap;
+        lv_crq_data.excp_type = in.excp_type;
+        return lv_crq_data;
+    endfunction
     interface Ifc_crq;
         method ma_icache_response(Vector#(`crq_input_size, ICache_core_response)  in);
         method ma_flush(Bool flush);
-        method ICache_core_response mv_crq_response();
+        method CRQ_core_response mv_crq_response();
     endinterface
     module mk_crq(Ifc_crq);
         // Registers
         Vector#(`crq_size,Reg#(Bool)) rg_crq_valid <- replicateM(mkReg(False));
-        Vector#(`crq_size,Reg#(ICache_core_response)) rg_crq_data <- replicateM(mkReg(unpack(0)));
+        Vector#(`crq_size,Reg#(CRQ_core_response)) rg_crq_data <- replicateM(mkReg(unpack(0)));
         Reg# (Bit#(TLog#(`crq_size))) rg_crq_head <- mkReg(0);
         // Wires
         Wire#(Bool) wr_released_head <- mKDWire(False);
@@ -28,7 +37,7 @@ package crq;
                     let lv_req_id = wr_crq_in[i].req_id;
                     if(!wr_flush && wr_crq_in[i].valid) begin
                         rg_crq_valid[lv_req_id] <= wr_crq_in[i].valid;
-                        rg_crq_data[lv_req_id] <= wr_crq_in[i];
+                        rg_crq_data[lv_req_id] <= fn_extract_crq_data(wr_crq_in[i]);
                     end
                 endrule
                 endrules);   
@@ -60,8 +69,8 @@ package crq;
         endmethod
         //
         // Returns data from the head of crq if valid.
-        method ICache_core_response mv_crq_response();
-            ICache_core_response lv_resp = unpack(0);
+        method CRQ_core_response mv_crq_response();
+            CRQ_core_response lv_resp = unpack(0);
             if(rg_crq_valid[rg_crq_head] && !wr_flush) begin
                 lv_resp = rg_crq_data[rg_crq_head];
                 wr_released_head <= True;
