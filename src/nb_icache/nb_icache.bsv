@@ -64,7 +64,7 @@ package nb_icache;
 
         // Wires
         Vector#(`crq_input_size,Wire#(ICache_core_response)) wr_crq_response <- replicateM(mkDWire(unpack(0)));
-        Wire#(ICache_core_response) wr_stage1_trap_crq_data <- mkDWire(unpack(0));
+        Wire#(ICache_core_response) wr_stage1_crq_data <- mkDWire(unpack(0));
         Wire#(ICache_core_response) wr_stage2_crq_data <- mkDWire(unpack(0));
         Wire#(ICache_core_response) wr_mhb_crq_data <- mkDWire(unpack(0));
         Wire#(ICache_core_response) wr_io_crq_data <- mkDWire(unpack(0));
@@ -247,7 +247,7 @@ package nb_icache;
             wr_crq_response[0] <= wr_stage2_crq_data;
             wr_crq_response[1] <= wr_mhb_crq_data;
             wr_crq_response[2] <= wr_io_crq_data;
-            wr_crq_response[3] <= wr_stage1_trap_crq_data;
+            wr_crq_response[3] <= wr_stage1_crq_data;
         endrule
         //
         rule rl_stage1;
@@ -276,10 +276,26 @@ package nb_icache;
                         if(lv_core_req.fence) begin
                             // invalidate all cache entries
                             wr_icache_fence <= lv_core_req.fence;
+                            wr_stage1_crq_data <= ICache_core_response{
+                                                valid : lv_core_req.fence,
+                                                req_id: lv_core_req.req_id,
+                                                packet: '0,
+                                                is_io: False,
+                                                trap: False,
+                                                excp_type: wr_itlb_response.cause
+                                                };
                         end
                         else if(lv_core_req.sfence) begin
                             //invalidate TLB 
                             wr_itlb_sfence <= lv_core_req.sfence;
+                            wr_stage1_crq_data <= ICache_core_response{
+                                                valid : lv_core_req.sfence,
+                                                req_id: lv_core_req.req_id,
+                                                packet: '0,
+                                                is_io: False,
+                                                trap: False,
+                                                excp_type: wr_itlb_response.cause
+                                                };
                         end
                         else begin
                             //
@@ -288,10 +304,10 @@ package nb_icache;
                             wr_lookup_reqid <= lv_core_req.req_id;
                             //
                             if(wr_itlb_response.trap) begin
-                                wr_stage1_trap_crq_data <= ICache_core_response{
+                                wr_stage1_crq_data <= ICache_core_response{
                                                 valid : wr_itlb_response.trap,
                                                 req_id: lv_core_req.req_id,
-                                                packet: '0,
+                                                packet: zeroExtend(lv_core_req.vaddr),
                                                 is_io: False,
                                                 trap: wr_itlb_response.trap,
                                                 excp_type: wr_itlb_response.cause
@@ -346,14 +362,14 @@ package nb_icache;
                         end
                         //
                         if(wr_itlb_response.trap) begin
-                            wr_stage1_trap_crq_data <= ICache_core_response{
-                                            valid : wr_itlb_response.trap,
-                                            req_id: lv_core_req.req_id,
-                                            packet: '0,
-                                            is_io: False,
-                                            trap: wr_itlb_response.trap,
-                                            excp_type: wr_itlb_response.cause
-                                            };
+                                wr_stage1_crq_data <= ICache_core_response{
+                                                valid : wr_itlb_response.trap,
+                                                req_id: lv_core_req.req_id,
+                                                packet: zeroExtend(lv_core_req.vaddr),
+                                                is_io: False,
+                                                trap: wr_itlb_response.trap,
+                                                excp_type: wr_itlb_response.cause
+                                                };
                         end
                         else if(wr_itlb_response.hit && !lv_tlb_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin  
                             wr_from_stage1_valid <= True;
@@ -391,11 +407,27 @@ package nb_icache;
                         if(lv_core_req.fence && ifc_mhb.mv_mshr_empty()) begin
                             // invalidate all cache entries
                             wr_icache_fence <= lv_core_req.fence;
+                            wr_stage1_crq_data <= ICache_core_response{
+                                                valid : lv_core_req.fence,
+                                                req_id: lv_core_req.req_id,
+                                                packet: '0,
+                                                is_io: False,
+                                                trap: False,
+                                                excp_type: wr_itlb_response.cause
+                                                };
                             rg_replay_stage1_valid <= False;
                         end
                         else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
                             //invalidate TLB
                             wr_itlb_sfence <= lv_core_req.sfence;
+                            wr_stage1_crq_data <= ICache_core_response{
+                                                valid : lv_core_req.sfence,
+                                                req_id: lv_core_req.req_id,
+                                                packet: '0,
+                                                is_io: False,
+                                                trap: False,
+                                                excp_type: wr_itlb_response.cause
+                                                };
                             rg_replay_stage1_valid <= False;
                         end
                         else begin
