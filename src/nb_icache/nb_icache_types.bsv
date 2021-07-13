@@ -22,17 +22,15 @@ package nb_icache_types;
         Bool valid;
         Bit#(`reqid_width) req_id;
         Bit#(`fetch_width) packet;
-        Bool is_io;
         Bool trap;
-        Bit#(`causesize) excp_type;
+        Bit#(`causesize) cause;
     } ICache_core_response deriving(Bits,Eq,FShow);
     
     typedef struct{
         Bool valid;
         Bit#(`fetch_width) packet;
-        Bool is_io;
         Bool trap;
-        Bit#(`causesize) excp_type;
+        Bit#(`causesize) cause;
     } CRQ_core_response deriving(Bits,Eq,FShow);
     
 

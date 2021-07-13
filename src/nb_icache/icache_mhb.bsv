@@ -24,6 +24,7 @@ package icache_mhb;
     (*conflict_free="mv_miss_response, ma_allocate_entry"*)
     (*conflict_free="mv_fb_release, ma_allocate_entry"*)
     (*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
+    (*conflict_free="rl_check_all_served, ma_allocate_entry"*)
     (*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_request_satisfied"*)
     (*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_lfb_release"*)
     (*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
@@ -101,7 +102,7 @@ package icache_mhb;
             Bit#(TAdd#(1,TLog#(`mhb_size))) lv_count_free = '0;
             if(wr_flush) begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
-                    if(!rg_fb_valid[i] || (wr_fb_valid[i] && !wr_fb_issued[i])) begin // flush will invalidate entries which haven't yet been issued to memory
+                    if(!wr_fb_valid[i] || (wr_fb_valid[i] && !wr_fb_issued[i])) begin // flush will invalidate entries which haven't yet been issued to memory
                         lv_is_full = False;
                         lv_count_free = lv_count_free + 1;
                     end
@@ -109,7 +110,7 @@ package icache_mhb;
             end
             else begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
-                    if(!rg_fb_valid[i]) begin
+                    if(!wr_fb_valid[i]) begin
                         lv_is_full = False;
                         lv_count_free = lv_count_free + 1;
                     end
@@ -144,7 +145,7 @@ package icache_mhb;
                 rg_fb_issued[rg_fill_request_entry_ptr] <= wr_set_issued;
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
-            else if(!rg_fb_valid[rg_fill_request_entry_ptr]) begin
+            else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
         endrule

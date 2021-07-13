@@ -15,7 +15,7 @@
 `define reqid_width 3
 `define mhb_size 8
 `define crq_size 8
-`define crq_input_size 4 // "Stage1_ITLB_trap", "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response"
+`define crq_input_size 4 // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
 `define imshr_depth 4
 `define fb_depth 4
 `define irq_size 1

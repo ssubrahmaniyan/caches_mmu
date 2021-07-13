@@ -3,9 +3,10 @@ package nb_icache;
     import icache_dataram   ::*;
     import icache_mhb       ::*;
     import itlb             ::*;
+    import io_func          ::*;
     import itlb_types       ::*;
     import nb_icache_types  ::*;
-    import common_tlb_types :: * ;
+    import common_tlb_types ::*;
     `include "icache_parameters.bsv"
     //
     import DReg             ::*;
@@ -32,11 +33,13 @@ package nb_icache;
     (*synthesize*)
     (*conflict_free="rl_icache_fence,rl_LFB_release_to_cache"*)
     (*conflict_free="rl_poll_response_from_memory,rl_fill_from_memory"*)
+    (*conflict_free="rl_poll_response_from_memory,rl_io_request_handling"*)
     module mknb_icache(Ifc_nb_icache);
 
         // Fifos
         FIFOF#(Mem_request) ff_mem_request <- mkPipelineFIFOF();
-
+        Wire#(Mem_request) wr_io_mem_request <- mkDWire(unpack(0));
+        Wire#(Mem_request) wr_fill_mem_request <- mkDWire(unpack(0));
         // Stage 1 Registers 
         Reg#(Bool) rg_replay_stage1_valid <- mkReg(False);
         Reg#(Bool) rg_stage1_flushed <- mkReg(False);
@@ -97,6 +100,8 @@ package nb_icache;
         Wire#(Bool) wr_preread_stage2_valid <- mkDWire(False);
         Wire#(Bool) wr_preread_stage1_flushed <- mkDWire(False);
         Vector#(`numsets, Vector#(`numways,Wire#(Bit#(1)))) wr_preread_icache_valid <- replicateM(replicateM(mkDWire(0)));
+        Wire#(Bool) wr_preread_io_valid <- mkDWire(False);
+        Wire#(Bool) wr_preread_io_issued <- mkDWire(False);
 
 
 
@@ -119,6 +124,8 @@ package nb_icache;
             wr_preread_stage2_valid <= rg_stage2_valid;
             wr_preread_tlb_miss <= rg_tlb_miss;
             wr_preread_stage1_flushed <= rg_stage1_flushed;
+            wr_preread_io_valid <= rg_io_request_valid;
+            wr_preread_io_issued <= rg_io_request_issued;
         endrule
         //
         //
@@ -229,7 +236,7 @@ package nb_icache;
                 lv_core_req = wr_core_req; 
                 lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr);
             end
-            else if(wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_valid)) begin // valid replay
+            else if(wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss) begin // valid replay
                 lv_core_req = rg_replay_stage1_req_data;
                 lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr);
             end
@@ -240,8 +247,8 @@ package nb_icache;
             ifc_itlb.sfence();
         endrule
         //
-        // CRQ can accept response from 3 sources: 
-        // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1_ITLB_trap"
+        // CRQ can accept response from 4 sources: 
+        // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
         //
         rule rl_accumulate_crq_input;
             wr_crq_response[0] <= wr_stage2_crq_data;
@@ -250,14 +257,14 @@ package nb_icache;
             wr_crq_response[3] <= wr_stage1_crq_data;
         endrule
         //
+        //
         rule rl_stage1;
-
             if(wr_flush) begin // No new requests are accepted from core in flush cycle
                 if(wr_preread_replay_stage1_valid) begin
-                    if(!wr_preread_tlb_miss && !rg_io_request_issued && !rg_replay_stage1_req_data.fence && !rg_replay_stage1_req_data.sfence) begin
+                    if(!wr_preread_tlb_miss && !wr_preread_io_issued && !rg_replay_stage1_req_data.fence && !rg_replay_stage1_req_data.sfence) begin
                         rg_replay_stage1_valid <= False;
                     end
-                    if(wr_preread_tlb_miss || rg_io_request_issued) begin // set request as flushed, it will be executed but response will not be sent to core
+                    if(wr_preread_tlb_miss || wr_preread_io_issued) begin // set request as flushed, it will be executed but response will not be sent to core
                         rg_stage1_flushed <= True;
                     end
                 end
@@ -267,7 +274,7 @@ package nb_icache;
                     let lv_core_req = wr_core_req;
                     if(lv_core_req.valid) begin
                         Bool lv_set_conflict =  False; 
-                        Bool lv_tlb_is_io = False; // TODO  
+                        Bool lv_is_io = isIO(wr_itlb_response.address, True);  
                         //
                         if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
@@ -280,9 +287,8 @@ package nb_icache;
                                                 valid : lv_core_req.fence,
                                                 req_id: lv_core_req.req_id,
                                                 packet: '0,
-                                                is_io: False,
                                                 trap: False,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                         end
                         else if(lv_core_req.sfence) begin
@@ -292,9 +298,8 @@ package nb_icache;
                                                 valid : lv_core_req.sfence,
                                                 req_id: lv_core_req.req_id,
                                                 packet: '0,
-                                                is_io: False,
                                                 trap: False,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                         end
                         else begin
@@ -308,26 +313,18 @@ package nb_icache;
                                                 valid : wr_itlb_response.trap,
                                                 req_id: lv_core_req.req_id,
                                                 packet: zeroExtend(lv_core_req.vaddr),
-                                                is_io: False,
                                                 trap: wr_itlb_response.trap,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                             end
-                            else if(wr_itlb_response.hit && !lv_tlb_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full) begin  
+                            else if(wr_itlb_response.hit && !lv_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full) begin  
                                 wr_from_stage1_valid <= True; // Stage2 request data will be received through wr_stage2_data in next cycle
                             end
-                            else if(wr_itlb_response.hit && lv_tlb_is_io) begin
-                                // send request to fabric //TODO -> check struct
-                                ff_mem_request.enq( Mem_request{ valid: True,
-                                                                paddr: wr_itlb_response.address,
-                                                                mhb_id: 0,
-                                                                burst_len: 0,
-                                                                burst_size: 3'b010,
-                                                                io: True} );
-                                rg_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
+                            else if(wr_itlb_response.hit && lv_is_io) begin
                                 rg_io_request_valid <= True; 
+                                rg_io_request_issued <= False;
+                                rg_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                                 rg_replay_stage1_req_data <= lv_core_req;
-                                rg_io_request_issued <= True;
                             end
                             else begin
                                 rg_replay_stage1_valid <= True;
@@ -351,7 +348,7 @@ package nb_icache;
                     if(wr_core_req.valid) begin 
                         let lv_core_req = wr_core_req;
                         Bool lv_set_conflict =  False;
-                        Bool lv_tlb_is_io = False; // TODO  
+                        Bool lv_is_io = isIO(wr_itlb_response.address, True); 
                         //
                         wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
                         wr_lookup_paddr <= wr_itlb_response.address;
@@ -366,15 +363,14 @@ package nb_icache;
                                                 valid : wr_itlb_response.trap,
                                                 req_id: lv_core_req.req_id,
                                                 packet: zeroExtend(lv_core_req.vaddr),
-                                                is_io: False,
                                                 trap: wr_itlb_response.trap,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                         end
-                        else if(wr_itlb_response.hit && !lv_tlb_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin  
+                        else if(wr_itlb_response.hit && !lv_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin  
                             wr_from_stage1_valid <= True;
                         end
-                        else if(wr_itlb_response.hit && lv_tlb_is_io) begin
+                        else if(wr_itlb_response.hit && lv_is_io) begin
                             rg_replay_stage1_valid <= True; 
                             rg_io_request_valid <= True;
                             rg_io_request_issued <= False; 
@@ -395,10 +391,10 @@ package nb_icache;
                     // replay pending requests, if any
                     // (if "stage2 free" , "No tlb_miss pending", "No issued io request pending")
                     //
-                    else if(wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_valid)) begin
+                    else if(wr_preread_replay_stage1_valid && !wr_preread_io_valid && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_valid)) begin
                         let lv_core_req = rg_replay_stage1_req_data; 
                         Bool lv_set_conflict =  False;  
-                        Bool lv_tlb_is_io = False; // TODO  
+                        Bool lv_is_io = isIO(wr_itlb_response.address, True);
                         //
                         if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
@@ -411,9 +407,8 @@ package nb_icache;
                                                 valid : lv_core_req.fence,
                                                 req_id: lv_core_req.req_id,
                                                 packet: '0,
-                                                is_io: False,
                                                 trap: False,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                             rg_replay_stage1_valid <= False;
                         end
@@ -424,9 +419,8 @@ package nb_icache;
                                                 valid : lv_core_req.sfence,
                                                 req_id: lv_core_req.req_id,
                                                 packet: '0,
-                                                is_io: False,
                                                 trap: False,
-                                                excp_type: wr_itlb_response.cause
+                                                cause: wr_itlb_response.cause
                                                 };
                             rg_replay_stage1_valid <= False;
                         end
@@ -436,19 +430,7 @@ package nb_icache;
                             wr_lookup_paddr <= wr_itlb_response.address;
                             wr_lookup_reqid <= lv_core_req.req_id;
                             //
-                            if((wr_itlb_response.hit && lv_tlb_is_io) && ifc_mhb.mv_mshr_empty()) begin
-                                // send request to fabric //TODO -> check struct
-                                ff_mem_request.enq( Mem_request{ valid: True,
-                                                                paddr: wr_itlb_response.address,
-                                                                mhb_id: 0,
-                                                                burst_len: 0,
-                                                                burst_size: 3'b010,
-                                                                io: True} );
-                                // rg_replay_stage1_valid and rg_io_request_valid aren't reset till a valid i/o response is received
-                                rg_io_request_valid <= True;
-                                rg_io_request_issued <= True;
-                            end
-                            else if((wr_itlb_response.hit && !lv_tlb_is_io) && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin // TODO  
+                            if((wr_itlb_response.hit && !lv_is_io) && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin
                                 if(wr_preread_stage1_flushed) begin // if Ptwalk response has been stored in tlb for the flushed request, drop it.
                                     rg_stage1_flushed <= False;
                                     rg_replay_stage1_valid <= False;
@@ -462,7 +444,7 @@ package nb_icache;
                             else begin // had another "set conflict" or "tlb_miss" or "req is a fence/sfence/io and the cache is not empty"
                                 rg_replay_stage1_valid <= True;
                                 rg_replay_stage1_req_data <= lv_core_req;
-                                if((wr_itlb_response.hit && lv_tlb_is_io)) begin
+                                if((wr_itlb_response.hit && lv_is_io)) begin
                                     rg_io_request_valid <= True;
                                 end
                                 if(!wr_itlb_response.hit) begin
@@ -477,6 +459,19 @@ package nb_icache;
                 end
             end
         endrule
+        //
+        //
+        rule rl_serve_mshr_requests;
+            match {.valid,.req_id,.crq_data} <- ifc_mhb.mv_miss_response();
+            wr_mhb_crq_data <= ICache_core_response{
+                                    valid : valid,
+                                    req_id: req_id,
+                                    packet: crq_data,
+                                    trap: False,
+                                    cause: '0
+                                    };
+        endrule
+        //
         //
         rule rl_update_rg_stage_2;
             rg_stage2_valid <= (wr_from_stage1_valid)?True:wr_stage2_valid;
@@ -498,9 +493,8 @@ package nb_icache;
                                                 valid : stage2_data.tag_hit,
                                                 req_id: stage2_data.req_id,
                                                 packet: stage2_data.data,
-                                                is_io: False,
                                                 trap: False,
-                                                excp_type: '0
+                                                cause: '0
                                                 };
                     // TODO Update replacement data with selected way
                     wr_stage2_valid <= False;
@@ -512,9 +506,8 @@ package nb_icache;
                                             valid : lv_mhb_resp.hit_mhb,
                                             req_id: stage2_data.req_id,
                                             packet: lv_mhb_resp.fb_data,
-                                            is_io: False,
                                             trap: False,
-                                            excp_type: '0
+                                            cause: '0
                                             };
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_valid = False;
@@ -541,40 +534,43 @@ package nb_icache;
             wr_stage2_next_cycle_valid <= lv_stage2_next_cycle_valid;
         endrule
         //
-        // Fill Pipeline
-        rule rl_serve_mshr_requests;
-            match {.valid,.req_id,.crq_data} <- ifc_mhb.mv_miss_response();
-            wr_mhb_crq_data <= ICache_core_response{
-                                    valid : valid,
-                                    req_id: req_id,
-                                    packet: crq_data,
-                                    is_io: False,
-                                    trap: False,
-                                    excp_type: '0
-                                    };
-        endrule
         //
-        //
-        rule rl_fill_request; // Doesn't compete with io as the io request is designed to be conservative and is only issued when Cache is empty
-            let mhb_mem_req = ifc_mhb.mv_fill_request();
-            if(mhb_mem_req.valid) begin
-                ff_mem_request.enq(mhb_mem_req); // The rule will only fire if the fifo is empty/or being dequeued by processor
+        rule rl_io_request_handling;
+            Mem_request lv_stage1_io_request = unpack(0);
+            Mem_request lv_mhb_fill_request = unpack(0);
+            //
+            if(wr_preread_replay_stage1_valid && wr_preread_io_valid && !wr_preread_io_issued && ifc_mhb.mv_mshr_empty()) begin
+                lv_stage1_io_request = Mem_request{ valid: True,
+                                                paddr: wr_itlb_response.address,
+                                                mhb_id: 0,
+                                                burst_len: 0,
+                                                burst_size: 3'b010,
+                                                io: True};
             end
-            ifc_mhb.ma_set_issued(mhb_mem_req.valid);
+            //
+            lv_mhb_fill_request = ifc_mhb.mv_fill_request();
+            //
+            if(lv_stage1_io_request.valid) begin
+                ff_mem_request.enq(lv_stage1_io_request);
+                rg_io_request_issued <= True;
+            end
+            else if(lv_mhb_fill_request.valid) begin
+                ff_mem_request.enq(lv_mhb_fill_request);
+                ifc_mhb.ma_set_issued(lv_mhb_fill_request.valid);
+            end
         endrule
         //
         //
         rule rl_poll_response_from_memory;
             if(wr_mem_response.valid) begin
-                if(wr_preread_replay_stage1_valid && rg_io_request_valid) begin
+                if(wr_preread_replay_stage1_valid && wr_preread_io_valid) begin
                     if(!wr_preread_stage1_flushed) begin
                         wr_io_crq_data <= ICache_core_response{
                                                 valid : wr_mem_response.valid,
                                                 req_id: '0,
                                                 packet: wr_mem_response.data,
-                                                is_io: True,
                                                 trap: wr_mem_response.err,
-                                                excp_type: `Inst_access_fault
+                                                cause: `Inst_access_fault
                                                 };
                     end
                     rg_replay_stage1_valid <= False;
