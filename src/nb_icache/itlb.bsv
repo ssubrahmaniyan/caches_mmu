@@ -28,6 +28,8 @@ package itlb;
     /*doc:method: method to recieve the current privilege mode of operation*/
     method Action ma_curr_priv (Bit#(2) c);
 
+    method Bool mv_tlb_busy();
+
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
@@ -255,6 +257,10 @@ package itlb;
 
       rg_tlb_miss <= False;
       rg_replace <= '0;
+    endmethod
+
+    method Bool mv_tlb_busy();
+      return rg_tlb_miss;
     endmethod
 
   `ifdef perfmonitors

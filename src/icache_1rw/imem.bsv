@@ -142,7 +142,7 @@ package imem;
 
     method ma_cache_enable =  icache.ma_cache_enable;
   `ifdef icache
-    method mv_cache_available    =icache.mv_cache_available ;
+    method mv_cache_available = icache.mv_cache_available && !itlb.mv_tlb_busy;
   `endif
     method Action ma_curr_priv (Bit#(2) c);
     `ifdef supervisor
