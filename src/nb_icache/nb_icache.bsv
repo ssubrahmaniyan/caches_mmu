@@ -152,6 +152,7 @@ package nb_icache;
                 lv_stage2_data.paddr = wr_lookup_paddr;
                 lv_stage2_data.req_id = wr_lookup_reqid;
                 // lv_stage2_data.replacement_way <- ifc_replacement.line_replace(lv_set_index,lv_way_valid); // TODO
+                lv_stage2_data.replacement_way = 0; // TODO for testing purposes, always replace way 0
                 lv_stage2_data.way_valid = lv_way_valid;
                 //
                 // send BRAM request
