@@ -86,11 +86,14 @@ package icache_mhb;
         // Rules
         //
         //
-        rule rl_display_mhb;
+        rule rl_display_mhb_array;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
                 `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b req_to_serve %d laddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], rg_fb_block_address[i], rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
                 `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: valid %b req_id %d ofs %d # v %b r %d o %d # v %b r %d o %d # v %b r %d o %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
+        endrule
+        rule rl_display_mhb_pointers;
+            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr))
         endrule
         rule rl_read_registers_into_wires;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
