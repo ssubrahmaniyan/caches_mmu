@@ -75,7 +75,7 @@ package nb_icache_types;
         Bool is_io;
     } Replay deriving(Bits,Eq,FShow);
     //
-    function Bit#(`setbits) fn_extract_set(Bit#(`paddr) address);
+    function Bit#(`setbits) fn_extract_set(Bit#(`vaddr) address);
         return address[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset];
     endfunction
     //

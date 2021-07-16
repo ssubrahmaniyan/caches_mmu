@@ -88,12 +88,19 @@ package icache_mhb;
         //
         rule rl_display_mhb_array;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
-                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b req_to_serve %d laddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], rg_fb_block_address[i], rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
+                Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `offsetbits;
+                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
                 `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: valid %b req_id %d ofs %d # v %b r %d o %d # v %b r %d o %d # v %b r %d o %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
         endrule
         rule rl_display_mhb_pointers;
+            Bit#(`offsetbits) lv_offset = '0;
+            Bit#(`paddr) lv_paddr = '0;
+            lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
+            lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
+
             `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr))
+            `logLevel( icache, 1, $format("ICACHE: MHB: laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
         endrule
         rule rl_read_registers_into_wires;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
@@ -164,7 +171,7 @@ package icache_mhb;
         rule rl_increment_mhb_free_entry_ptr;
             Bit#(TLog#(`mhb_size)) lv_free_index = rg_mhb_free_entry_ptr;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
-                if(wr_increment_free_entry_ptr && !wr_fb_valid[i]) begin
+                if(wr_increment_free_entry_ptr && !wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
                     lv_free_index = fromInteger(i);
                 end
             end
@@ -363,10 +370,14 @@ package icache_mhb;
         //
         method Mem_request  mv_fill_request();
             Mem_request mem_req = unpack(0);
+            Bit#(`offsetbits) lv_offset = '0;
+            Bit#(`paddr) lv_paddr = '0;
             if(rg_fb_valid[rg_fill_request_entry_ptr] && !rg_fb_issued[rg_fill_request_entry_ptr] && !wr_flush) begin
+                lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
+                lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
                 mem_req = Mem_request{
                             valid: True,
-                            paddr: {rg_fb_block_address[rg_fill_request_entry_ptr],'0},
+                            paddr: lv_paddr,
                             mhb_id: rg_fill_request_entry_ptr,
                             burst_len: fromInteger(`wordsperblock/valueOf(TDiv#(`ibuswidth,`wordsize))-1),
                             burst_size: fromInteger(valueOf(TLog#(TDiv#(`ibuswidth,8)))),

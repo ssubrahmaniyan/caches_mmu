@@ -9,7 +9,7 @@ package icache_tagram;
     interface Ifc_icache_tagram;
 
     // This method is used to initiate a read on the Tag RAM. Read latency is 2 cycles
-    method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+    method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
 
     // This method is used to initiate a write on the Tag RAM.
     method Action ma_write_request( Bool valid,
@@ -18,7 +18,7 @@ package icache_tagram;
 
     // This method will read the ram output from all ways.  
     // Compare with the input tag and respond with a hit-vector indicating which way was a hit.
-    method Bit#(`numways) mv_read_response;
+    method Bit#(`numways) mv_read_response(Bit#(`tagbits) read_req_tag);
   endinterface
   (*synthesize*)
   module mkicache_tagram(Ifc_icache_tagram);
@@ -32,29 +32,31 @@ package icache_tagram;
     // Used store the tag from the read request needed for final hitmask generation
     Reg#(Bit#(`tagbits)) rg_read_req_tag  <- mkReg(0);
     //
-    method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+    method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
       Bit#(`setbits) index = fn_extract_set(address);
       if(valid) begin
         for(Integer i=0; i<`numways;i=i+1) begin
           tag_ram[i].a.put(False,index,0); 
         end
-        rg_read_req_tag <= truncateLSB(address);
+        //rg_read_req_tag <= truncateLSB(address);
       end
     endmethod
     //
     method Action ma_write_request( Bool valid,
                               Bit#(`paddr) address,
                               Bit#(TLog#(`numways)) way);
-      Bit#(`setbits) index = fn_extract_set(address);                
+      Bit#(`setbits) index = fn_extract_set(zeroExtend(address));
       Bit#(`tagbits) writetag = truncateLSB(address);
       if(valid) begin
           tag_ram[way].b.put(True,index,writetag); 
       end
     endmethod
     //
-    method Bit#(`numways) mv_read_response;
+    //method Bit#(`numways) mv_read_response;
+    method Bit#(`numways) mv_read_response(Bit#(`tagbits) read_req_tag);
 
-      Bit#(`tagbits) tag_in = rg_read_req_tag;
+      //Bit#(`tagbits) tag_in = rg_read_req_tag;
+      Bit#(`tagbits) tag_in = read_req_tag;
       Bit#(`numways) lv_hitmask = 0;
 
       Vector#(`numways, Bit#(`tagbits)) lv_tags;

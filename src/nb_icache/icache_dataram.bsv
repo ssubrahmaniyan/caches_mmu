@@ -5,7 +5,7 @@ package icache_dataram;
     import BRAMCore ::*;
     interface Ifc_icache_dataram;
         // method to initiate a read request (read latency 2 cycles)
-        method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+        method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
 
         // method to initiate a write.
         method Action ma_write_request( Bool valid,
@@ -24,7 +24,7 @@ package icache_dataram;
         // BRAM port a is used for reads and port b is used for writes
         Vector#(`numways,BRAM_DUAL_PORT#(Bit#(`setbits), Bit#(`blocksize))) data_ram <- replicateM(mkBRAMCore2(1, False));
     
-        method Action ma_read_request( Bool valid,Bit#(`paddr) address);
+        method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
             if(valid) begin
                 Bit#(`setbits) index = fn_extract_set(address);
                 for (Integer i = 0; i< `numways; i = i + 1) begin
@@ -38,7 +38,7 @@ package icache_dataram;
                                 Bit#(`blocksize) data,
                                 Bit#(TLog#(`numways)) way);
             if(valid) begin
-                Bit#(`setbits) index = fn_extract_set(address);
+                Bit#(`setbits) index = fn_extract_set(zeroExtend(address));
                 data_ram[way].b.put(True,index,data);
             end
         endmethod
