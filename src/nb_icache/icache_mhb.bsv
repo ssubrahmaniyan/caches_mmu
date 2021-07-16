@@ -91,10 +91,13 @@ package icache_mhb;
                 wr_fb_valid[i] <= rg_fb_valid[i];
                 wr_fb_flushed[i] <= rg_fb_flushed[i];
                 wr_mshr_req_to_be_served[i] <= rg_mshr_req_to_be_served[i];
+                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b req_to_serve %d laddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], rg_fb_block_address[i], rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
+                `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: valid %b req_id %d ofs %d # v %b r %d o %d # v %b r %d o %d # v %b r %d o %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
                 for(Integer j=0;j<`imshr_depth;j=j+1) begin
                     wr_mshr_valid[i][j] <= rg_mshr_valid[i][j];
                 end
             end
+            wr_mhb_free_entry_ptr <= rg_mhb_free_entry_ptr;
         endrule
         //
         rule rl_mhb_counters;

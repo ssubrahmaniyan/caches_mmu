@@ -141,10 +141,10 @@ package nb_icache;
         //                      a valid request stalled in stage 2
         rule rl_check_cache_busy;
             ICache_status lv_status = unpack(0);
-            lv_status.cache_busy = (ifc_mhb.mv_mshr_full || wr_preread_replay_stage1_valid || wr_preread_stage2_valid);
+            lv_status.cache_busy = (ifc_mhb.mv_mshr_full || wr_preread_replay_stage1_valid);
             lv_status.mshr_status = ifc_mhb.mv_mshr_count_free();
             wr_icache_status <= lv_status; 
-            `logLevel( icache, 1, $format("ICACHE: Status: busy %b # mhb_full %b replay_valid %b stage2_stall %b", lv_status.cache_busy, ifc_mhb.mv_mshr_full(), wr_preread_replay_stage1_valid, wr_preread_stage2_valid))
+            `logLevel( icache, 1, $format("ICACHE: Status: busy %b # mhb_full %b replay_valid %b # stage2_stall %b", lv_status.cache_busy, ifc_mhb.mv_mshr_full(), wr_preread_replay_stage1_valid, wr_stage2_next_cycle_valid))
         endrule
         //
         rule rl_check_pending_requests;
