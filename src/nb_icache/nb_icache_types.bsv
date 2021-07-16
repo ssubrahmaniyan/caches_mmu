@@ -33,7 +33,6 @@ package nb_icache_types;
         Bit#(`causesize) cause;
     } CRQ_core_response deriving(Bits,Eq,FShow);
     
-
     typedef struct{
         Bool valid;
         Bit#(`paddr) paddr;
@@ -42,6 +41,7 @@ package nb_icache_types;
         Bit#(3)       burst_size;
         Bool          io;
     } Mem_request deriving(Bits,Eq,FShow);
+
     typedef struct{
         Bool valid;
         Bit#(`ibuswidth)    data;

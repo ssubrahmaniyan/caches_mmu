@@ -1,3 +1,5 @@
+`include "parameters.bsv"
+
 // Parameters used for non-blocking I-cache
 `define paddr 32
 `define numsets 64      // (Integer)
@@ -12,9 +14,9 @@
 `define tagbits 20      // (Bits) `paddr(32) - (setbits+wordoffset+byteoffset)
 `define ibuswidth 128 // (Bits)
 `define fetch_width 128 // (Bits)
-`define reqid_width 3
 `define mhb_size 8
-`define crq_size 8
+`define crq_size `ftq_size
+`define reqid_width TLog#(`ftq_size)
 `define crq_input_size 4 // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
 `define imshr_depth 4
 `define fb_depth 4

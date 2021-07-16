@@ -7,7 +7,9 @@ package nb_icache;
     import itlb_types       ::*;
     import nb_icache_types  ::*;
     import common_tlb_types ::*;
+    import crq              ::*;
     `include "icache_parameters.bsv"
+    `include "Logger.bsv"
     //
     import DReg             ::*;
     import GetPut           ::*;
@@ -24,7 +26,7 @@ package nb_icache;
         interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) put_response_from_ptw;
         interface Put#(Mem_response) put_read_mem_resp;
         // Outputs 
-        method Vector#(`crq_input_size,ICache_core_response) mv_icache_response();
+        method ActionValue#(ICache_core_response) mav_core_response();
         method ICache_status mv_icache_status();
         interface Get#(Mem_request) get_read_mem_req;
         interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
@@ -32,7 +34,7 @@ package nb_icache;
     //
     (*synthesize*)
     (*conflict_free="rl_icache_fence,rl_LFB_release_to_cache"*)
-    (*conflict_free="rl_poll_response_from_memory,rl_fill_from_memory"*)
+    //(*conflict_free="rl_poll_response_from_memory,rl_fill_from_memory"*)
     (*conflict_free="rl_poll_response_from_memory,rl_io_request_handling"*)
     module mknb_icache(Ifc_nb_icache);
 
@@ -40,6 +42,7 @@ package nb_icache;
         FIFOF#(Mem_request) ff_mem_request <- mkPipelineFIFOF();
         Wire#(Mem_request) wr_io_mem_request <- mkDWire(unpack(0));
         Wire#(Mem_request) wr_fill_mem_request <- mkDWire(unpack(0));
+
         // Stage 1 Registers 
         Reg#(Bool) rg_replay_stage1_valid <- mkReg(False);
         Reg#(Bool) rg_stage1_flushed <- mkReg(False);
@@ -53,13 +56,16 @@ package nb_icache;
         // IRQ registers
         Reg#(Bool) rg_io_request_valid <- mkReg(False);
         Reg#(Bool) rg_io_request_issued <- mkReg(False);
+
         // Stage 2 registers
         Reg#(Bool) rg_stage2_valid <- mkReg(False);
         Reg#(Stage2) rg_stage2_req_data <- mkReg(unpack(0));
         Wire#(Bool) wr_stage2_next_cycle_valid <- mkDWire(False);
+
         // LFB registers 
         Reg#(Bool) rg_fill_valid <- mkReg(False);
         Reg#(Mem_response) rg_fill_data <- mkReg(unpack(0));
+
         // Lookup registers
         Reg#(Bool) rg_lookup_valid <- mkDReg(False);
         Reg#(Bit#(`paddr)) rg_lookup_paddr <- mkReg(0);
@@ -113,6 +119,7 @@ package nb_icache;
         Ifc_icache_mhb ifc_mhb <- mkicache_mhb();
         // Ifc_replace#(`numsets,`numways) ifc_replacement <- mkreplace(`irepl);
         Ifc_itlb ifc_itlb <- mkitlb(0);
+        Ifc_crq ifc_crq <- mk_crq();
         //
         rule rl_pre_read_registers;
             for(Integer i=0;i<`numsets;i=i+1) begin
@@ -137,6 +144,7 @@ package nb_icache;
             lv_status.cache_busy = (ifc_mhb.mv_mshr_full || wr_preread_replay_stage1_valid || wr_preread_stage2_valid);
             lv_status.mshr_status = ifc_mhb.mv_mshr_count_free();
             wr_icache_status <= lv_status; 
+            `logLevel( icache, 1, $format("ICACHE: Status: busy %b # mhb_full %b replay_valid %b stage2_stall %b", lv_status.cache_busy, ifc_mhb.mv_mshr_full(), wr_preread_replay_stage1_valid, wr_preread_stage2_valid))
         endrule
         //
         rule rl_check_pending_requests;
@@ -149,7 +157,7 @@ package nb_icache;
                 Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(wr_preread_icache_valid[lv_set_index]);
                 //
                 Stage2 lv_stage2_data = unpack(0);
-                lv_stage2_data.paddr = wr_lookup_paddr;
+                lv_stage2_data.paddr = wr_lookup_paddr; // TODO: send vaddr
                 lv_stage2_data.req_id = wr_lookup_reqid;
                 // lv_stage2_data.replacement_way <- ifc_replacement.line_replace(lv_set_index,lv_way_valid); // TODO
                 lv_stage2_data.replacement_way = 0; // TODO for testing purposes, always replace way 0
@@ -161,6 +169,7 @@ package nb_icache;
                 //
                 rg_lookup_valid <= wr_lookup_arrays_valid;
                 rg_lookup_stage2 <= lv_stage2_data; // contains partial data
+                `logLevel( icache, 1, $format("ICACHE: Stage1: Read arrays: req_id %d set %b way_valid %b vaddr %h", lv_stage2_data.req_id, lv_set_index, lv_way_valid, wr_lookup_paddr))
             end
         endrule
         //
@@ -178,11 +187,13 @@ package nb_icache;
                 // Extracting corresponding word from the block
                 //
                 Bit#(`blocksize) lv_cache_block = ifc_data.mv_read_response(lv_hitmask);
+                Bit#(`blocksize) lv_cache_block_original = lv_cache_block;
                 Bit#(TAdd#(TAdd#(`wordoffset,`byteoffset),3)) lv_shift_amt = lv_stage2_data.paddr[`wordoffset+`byteoffset+2:0] << 3; // number of bits to shift
                 lv_cache_block = lv_cache_block >> lv_shift_amt;
                 lv_stage2_data.data = lv_cache_block[`wordsize-1:0];
                 //
                 wr_stage2_data <= lv_stage2_data; 
+                `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b # paddr %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.paddr, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
             end
             else begin
                 wr_stage2_data <= rg_stage2_req_data;
@@ -228,6 +239,7 @@ package nb_icache;
                     rg_icache_valid[i][j] <= 0;  
                 end
             end
+            `logLevel( icache, 1, $format("ICACHE: Fence: Invalidating all sets."))
         endrule
         //
         rule rl_itlb_translate_request;
@@ -236,26 +248,36 @@ package nb_icache;
             if(wr_core_req.valid) begin // valid new core req
                 lv_core_req = wr_core_req; 
                 lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr);
+                `logLevel( icache, 1, $format("ICACHE: Stage1: ITLB lookup (current) vaddr %h: ", lv_core_req.vaddr, fshow(lv_itlb_response)))
             end
             else if(wr_preread_replay_stage1_valid && !rg_io_request_issued && !wr_preread_tlb_miss) begin // valid replay
                 lv_core_req = rg_replay_stage1_req_data;
                 lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr);
+                `logLevel( icache, 1, $format("ICACHE: Stage1: ITLB lookup (replay) vaddr %h: ", lv_core_req.vaddr, fshow(lv_itlb_response)))
             end
             wr_itlb_response <= lv_itlb_response;
         endrule
         //
         rule rl_itlb_sfence_request(wr_itlb_sfence);
             ifc_itlb.sfence();
+            `logLevel( icache, 1, $format("ICACHE: Sfence: Invalidating TLB."))
         endrule
         //
         // CRQ can accept response from 4 sources: 
         // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
         //
-        rule rl_accumulate_crq_input;
-            wr_crq_response[0] <= wr_stage2_crq_data;
-            wr_crq_response[1] <= wr_mhb_crq_data;
-            wr_crq_response[2] <= wr_io_crq_data;
-            wr_crq_response[3] <= wr_stage1_crq_data;
+        rule rl_send_responses_to_crq;
+            Vector#(`crq_input_size, ICache_core_response) lv_cache_response;
+
+            lv_cache_response[0] = wr_stage2_crq_data;
+            lv_cache_response[1] = wr_mhb_crq_data;
+            lv_cache_response[2] = wr_io_crq_data;
+            lv_cache_response[3] = wr_stage1_crq_data;
+            ifc_crq.ma_icache_response (lv_cache_response);
+        endrule
+        //
+        rule rl_send_flush_to_crq;
+            ifc_crq.ma_flush(wr_flush);
         endrule
         //
         //
@@ -269,6 +291,7 @@ package nb_icache;
                         rg_stage1_flushed <= True;
                     end
                 end
+                `logLevel( icache, 1, $format("ICACHE: Stage1: Flush."))
             end
             else begin
                 if(wr_no_pending_requests) begin
@@ -279,6 +302,7 @@ package nb_icache;
                         //
                         if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
                         // 
                         if(lv_core_req.fence) begin
@@ -317,24 +341,29 @@ package nb_icache;
                                                 trap: wr_itlb_response.trap,
                                                 cause: wr_itlb_response.cause
                                                 };
+                              `logLevel( icache, 1, $format("ICACHE: Stage1: TLB exception for req_id %d!", lv_core_req.req_id))
                             end
                             else if(wr_itlb_response.hit && !lv_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full) begin  
                                 wr_from_stage1_valid <= True; // Stage2 request data will be received through wr_stage2_data in next cycle
+                              `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                             end
                             else if(wr_itlb_response.hit && lv_is_io) begin
                                 rg_io_request_valid <= True; 
                                 rg_io_request_issued <= False;
                                 rg_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                                 rg_replay_stage1_req_data <= lv_core_req;
+                                `logLevel( icache, 1, $format("ICACHE: Stage1: IO request, enqueueing.", lv_core_req.req_id))
                             end
                             else begin
                                 rg_replay_stage1_valid <= True;
                                 rg_replay_stage1_req_data <= lv_core_req;
                                 if(!wr_itlb_response.hit) begin
                                     rg_tlb_miss <= True; // takes priority over set_conflict
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: TLB miss for req_id %d, setting replay.", lv_core_req.req_id))
                                 end
                                 else if(lv_set_conflict) begin
                                     rg_set_conflict <= True;
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, setting replay.", lv_core_req.req_id))
                                 end    
                             end
                         end
@@ -357,6 +386,7 @@ package nb_icache;
                         //
                         if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
                         //
                         if(wr_itlb_response.trap) begin
@@ -367,24 +397,29 @@ package nb_icache;
                                                 trap: wr_itlb_response.trap,
                                                 cause: wr_itlb_response.cause
                                                 };
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: TLB exception for req_id %d!", lv_core_req.req_id))
                         end
                         else if(wr_itlb_response.hit && !lv_is_io && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin  
                             wr_from_stage1_valid <= True;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                         end
                         else if(wr_itlb_response.hit && lv_is_io) begin
                             rg_replay_stage1_valid <= True; 
                             rg_io_request_valid <= True;
                             rg_io_request_issued <= False; 
                             rg_replay_stage1_req_data <= lv_core_req;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: IO request, enqueueing.", lv_core_req.req_id))
                         end
                         else begin
                             rg_replay_stage1_valid <= True;
                             rg_replay_stage1_req_data <= lv_core_req;
                             if(!wr_itlb_response.hit) begin
                                 rg_tlb_miss <= True; // takes priority over set_conflict
+                                `logLevel( icache, 1, $format("ICACHE: Stage1: TLB miss for req_id %d, setting replay.", lv_core_req.req_id))
                             end
                             else if(lv_set_conflict) begin
                                 rg_set_conflict <= True;
+                                `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, setting replay.", lv_core_req.req_id))
                             end    
                         end
                     end
@@ -399,6 +434,7 @@ package nb_icache;
                         //
                         if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
                             lv_set_conflict = True;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
                         // 
                         if(lv_core_req.fence && ifc_mhb.mv_mshr_empty()) begin
@@ -412,6 +448,7 @@ package nb_icache;
                                                 cause: wr_itlb_response.cause
                                                 };
                             rg_replay_stage1_valid <= False;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Fence."))
                         end
                         else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty()) begin
                             //invalidate TLB
@@ -424,6 +461,7 @@ package nb_icache;
                                                 cause: wr_itlb_response.cause
                                                 };
                             rg_replay_stage1_valid <= False;
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Sfence."))
                         end
                         else begin
                             //
@@ -435,11 +473,13 @@ package nb_icache;
                                 if(wr_preread_stage1_flushed) begin // if Ptwalk response has been stored in tlb for the flushed request, drop it.
                                     rg_stage1_flushed <= False;
                                     rg_replay_stage1_valid <= False;
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Dropping flushed request.", lv_core_req.req_id))
                                 end
                                 else begin
                                     wr_from_stage1_valid <= True;
                                     rg_replay_stage1_valid <= False;
                                     rg_set_conflict <= False;
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                                 end
                             end
                             else begin // had another "set conflict" or "tlb_miss" or "req is a fence/sfence/io and the cache is not empty"
@@ -447,12 +487,15 @@ package nb_icache;
                                 rg_replay_stage1_req_data <= lv_core_req;
                                 if((wr_itlb_response.hit && lv_is_io)) begin
                                     rg_io_request_valid <= True;
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: IO request, enqueueing.", lv_core_req.req_id))
                                 end
                                 if(!wr_itlb_response.hit) begin
                                     rg_tlb_miss <= True; // takes priority over set_conflict
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: TLB miss for req_id %d.", lv_core_req.req_id))
                                 end
                                 else if(lv_set_conflict) begin
                                     rg_set_conflict <= True;
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Set conflict for req_id %d.", lv_core_req.req_id))
                                 end
                             end
                         end
@@ -471,6 +514,9 @@ package nb_icache;
                                     trap: False,
                                     cause: '0
                                     };
+            if (valid) begin
+              `logLevel( icache, 1, $format("ICACHE: MHB: Read response for req_id %d: ", req_id, fshow(crq_data)))
+            end
         endrule
         //
         //
@@ -484,6 +530,7 @@ package nb_icache;
             if(wr_flush) begin
                 wr_stage2_valid <= False;
                 lv_stage2_next_cycle_valid = False;
+                `logLevel( icache, 1, $format("ICACHE: Stage2: Flush."))
             end
             else if(wr_preread_stage2_valid) begin
                 let stage2_data = wr_stage2_data;
@@ -500,6 +547,7 @@ package nb_icache;
                     // TODO Update replacement data with selected way
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_valid = False;
+                    `logLevel( icache, 1, $format("ICACHE: Stage2: RAM hit for req_id %d data %h ", stage2_data.req_id, stage2_data.data))
                 end
                 // MHB hit and corresponding word filled
                 else if(lv_mhb_resp.hit_mhb && lv_mhb_resp.fb_valid) begin
@@ -512,6 +560,7 @@ package nb_icache;
                                             };
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_valid = False;
+                    `logLevel( icache, 1, $format("ICACHE: Stage2: MHB hit for req_id %d data %h ", stage2_data.req_id, lv_mhb_resp.fb_data))
                 end
                 // "Cache miss", "MHB miss" , "MHB hit but word not filled"
                 else begin
@@ -523,10 +572,12 @@ package nb_icache;
                         wr_stage2_valid <= False;
                         lv_stage2_next_cycle_valid = False;
                         // TODO Update replacement on miss (to be implemented)
+                        `logLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, allocating MHB entry: paddr %h hit %b index %h repl_way %d ", stage2_data.req_id, stage2_data.paddr, lv_mhb_resp.hit_mhb, lv_mhb_resp.mhb_index, stage2_data.replacement_way))
                     end
                     else begin // Stall stage 2
                         wr_stage2_valid <= lv_stage2_next_cycle_valid;
                         rg_stage2_req_data <= wr_stage2_data; 
+                        `logLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, MHB full, stalling.", stage2_data.req_id))
                     end
                 end
             end
@@ -554,10 +605,12 @@ package nb_icache;
             if(lv_stage1_io_request.valid) begin
                 ff_mem_request.enq(lv_stage1_io_request);
                 rg_io_request_issued <= True;
+                `logLevel( icache, 1, $format("ICACHE: Request to IO: ", fshow(lv_stage1_io_request)))
             end
             else if(lv_mhb_fill_request.valid) begin
                 ff_mem_request.enq(lv_mhb_fill_request);
                 ifc_mhb.ma_set_issued(lv_mhb_fill_request.valid);
+                `logLevel( icache, 1, $format("ICACHE: Request to Mem: ", fshow(lv_mhb_fill_request)))
             end
         endrule
         //
@@ -577,11 +630,13 @@ package nb_icache;
                     rg_replay_stage1_valid <= False;
                     rg_io_request_valid <= False;
                     rg_io_request_issued <= False;
+                    `logLevel( icache, 1, $format("ICACHE: Response from IO: ", fshow(wr_mem_response)))
                 end
                 else begin
                     // send to LFB
                     rg_fill_valid <= True; // don't need backpressure because of current controller design
                     rg_fill_data <= wr_mem_response;
+                    `logLevel( icache, 1, $format("ICACHE: Response from Mem: ", fshow(wr_mem_response)))
                 end
             end
         endrule
@@ -602,6 +657,7 @@ package nb_icache;
                 // TODO update replacement
                 ifc_tag.ma_write_request(True,lv_paddr,way);
                 ifc_data.ma_write_request(True,lv_paddr,block_data,way);
+                `logLevel( icache, 1, $format("ICACHE: LFB: Fill (release) set %d way %d data %h: ", set_index, way, block_data))
             end
             wr_fb_release_valid <= valid;
             wr_fb_release_index <= set_index;
@@ -614,6 +670,7 @@ package nb_icache;
                 wr_ptwalk_valid_response <= True;  // resets tlb miss replay stall
                 let lv_tlb_miss_response <- ifc_itlb.response_from_ptw(in);
                 wr_tlb_miss_response <= lv_tlb_miss_response;
+                `logLevel( icache, 1, $format("ICACHE: Response from PTW: ", fshow(in)))
             endmethod
         endinterface;
         //
@@ -631,10 +688,16 @@ package nb_icache;
         //
         method Action ma_core_request(ICache_core_request core_req);
             wr_core_req <= core_req;
+            wr_flush <= core_req.flush;
+            `logLevel( icache, 1, $format("ICACHE: Request from core: ", fshow(core_req)))
         endmethod
         //
-        method Vector#(`crq_input_size,ICache_core_response) mv_icache_response();
-            return readVReg(wr_crq_response);
+        method ActionValue#(ICache_core_response) mav_core_response();
+            ICache_core_response lv_resp;
+
+            lv_resp <- ifc_crq.mav_crq_response();
+            `logLevel( icache, 1, $format("ICACHE: Response to core: ", fshow(lv_resp)))
+            return lv_resp;
         endmethod
         //
         method Action ma_csr_status(Bit#(2) prv, Bit#(`xlen) satp);

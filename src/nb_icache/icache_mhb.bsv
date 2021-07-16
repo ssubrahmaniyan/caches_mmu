@@ -1,6 +1,7 @@
 package icache_mhb;
     // i-cache miss handling module (MSHR+Line fill buffer)
     `include "icache_parameters.bsv"
+    `include "Logger.bsv"
     import nb_icache_types ::*;
     import Vector ::*;
     //
