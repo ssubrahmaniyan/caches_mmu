@@ -634,8 +634,9 @@ package nb_icache;
                 end
                 else begin
                     // send to LFB
-                    rg_fill_valid <= True; // don't need backpressure because of current controller design
-                    rg_fill_data <= wr_mem_response;
+                    //rg_fill_valid <= True; // don't need backpressure because of current controller design
+                    //rg_fill_data <= wr_mem_response;
+                    ifc_mhb.ma_fill_from_memory(True,wr_mem_response);
                     `logLevel( icache, 1, $format("ICACHE: Response from Mem: ", fshow(wr_mem_response)))
                 end
             end
@@ -643,8 +644,8 @@ package nb_icache;
         //
         //
         rule rl_fill_from_memory;
-            ifc_mhb.ma_fill_from_memory(rg_fill_valid,rg_fill_data);
-            rg_fill_valid <= False;
+            //ifc_mhb.ma_fill_from_memory(rg_fill_valid,rg_fill_data);
+            //rg_fill_valid <= False;
         endrule
         //
         //
