@@ -311,6 +311,10 @@ package icache_mhb;
                         rg_mshr_req_to_be_served[lv_primary_index] <= (rg_mshr_all_served[lv_primary_index])?lv_secondary_index:
                                                                                     ((wr_req_satisfied)?wr_mshr_req_to_be_served[lv_primary_index]+1:wr_mshr_req_to_be_served[lv_primary_index]);
                     end
+
+                    // if a secondary request arrives after the LFB has been marked "flushed", reset the flushed bit (response required for new request)
+                    rg_fb_flushed[lv_primary_index] <= False;
+
                     wr_allocate_entry_primary_idx <= lv_primary_index;
                     wr_allocate_entry_secondary_idx <= lv_secondary_index;
                 end
