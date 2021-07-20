@@ -713,6 +713,10 @@ package nb_icache;
             wr_fb_release_index <= set_index;
         endrule
         //
+        rule rl_MHB_flush;
+          ifc_mhb.ma_flush(wr_flush);
+        endrule
+        //
         //
         interface get_request_to_ptw = ifc_itlb.get_request_to_ptw;
         interface put_response_from_ptw = interface Put

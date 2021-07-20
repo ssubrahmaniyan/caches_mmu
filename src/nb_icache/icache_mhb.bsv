@@ -90,7 +90,7 @@ package icache_mhb;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
                 Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `offsetbits;
                 `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
-                `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: valid %b req_id %d ofs %d # v %b r %d o %d # v %b r %d o %d # v %b r %d o %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
+                `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
         endrule
         rule rl_display_mhb_pointers;
