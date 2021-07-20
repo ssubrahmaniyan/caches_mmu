@@ -61,8 +61,8 @@ package icache_mhb;
         
         // Wires
         Wire#(Bool) wr_flush <- mkDWire(False);
-        Vector#(`mhb_size,Wire#(Bool)) wr_fb_flushed <- replicateM(mkDWire(False));
         Vector#(`mhb_size,Wire#(Bool)) wr_fb_valid <- replicateM(mkDWire(False));
+        Vector#(`mhb_size,Wire#(Bool)) wr_fb_flushed <- replicateM(mkDWire(False));
         Vector#(`mhb_size,Wire#(Bool)) wr_fb_issued <- replicateM(mkDWire(False));
         Vector#(`mhb_size,Vector#(`imshr_depth,Wire#(Bool))) wr_mshr_valid <- replicateM(replicateM(mkDWire(False))); // read corresponding register in the beginning of the cycle
         Vector#(`mhb_size,Wire#(Bit#(TLog#(`imshr_depth)))) wr_mshr_req_to_be_served <- replicateM(mkDWire(0)); // read corresponding register in the beginning of the cycle
@@ -93,6 +93,7 @@ package icache_mhb;
                 `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
         endrule
+        //
         rule rl_display_mhb_pointers;
             Bit#(`offsetbits) lv_offset = '0;
             Bit#(`paddr) lv_paddr = '0;
@@ -102,10 +103,31 @@ package icache_mhb;
             `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr))
             `logLevel( icache, 1, $format("ICACHE: MHB: laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
         endrule
+        //
+        rule rl_handle_flush;
+          if (wr_flush) begin
+              for(Integer i=0;i<`mhb_size;i=i+1) begin
+                  for(Integer j=0;j<`imshr_depth;j=j+1) begin
+                      rg_mshr_valid[i][j] <= False;
+                  end
+              end
+              //
+              for(Integer i=0;i<`mhb_size;i=i+1) begin
+                  if(!wr_fb_issued[i]) begin
+                      rg_fb_valid[i] <= False;
+                  end
+                  else begin
+                      rg_fb_flushed[i] <= True;
+                  end
+              end
+          end
+        endrule
+        //
         rule rl_read_registers_into_wires;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
                 wr_fb_valid[i] <= rg_fb_valid[i];
                 wr_fb_flushed[i] <= rg_fb_flushed[i];
+                wr_fb_issued[i] <= rg_fb_issued[i];
                 wr_mshr_req_to_be_served[i] <= rg_mshr_req_to_be_served[i];
                 for(Integer j=0;j<`imshr_depth;j=j+1) begin
                     wr_mshr_valid[i][j] <= rg_mshr_valid[i][j];
@@ -115,7 +137,6 @@ package icache_mhb;
         endrule
         //
         rule rl_mhb_counters;
-
             Bool lv_is_full = True;
             Bit#(TAdd#(1,TLog#(`mhb_size))) lv_count_free = '0;
             if(wr_flush) begin
@@ -368,11 +389,13 @@ package icache_mhb;
             return tuple3(lv_req_satisfied,lv_reqid,lv_selected_word);
         endmethod
         //
-        method Mem_request  mv_fill_request();
+        method Mem_request mv_fill_request();
             Mem_request mem_req = unpack(0);
             Bit#(`offsetbits) lv_offset = '0;
             Bit#(`paddr) lv_paddr = '0;
-            if(rg_fb_valid[rg_fill_request_entry_ptr] && !rg_fb_issued[rg_fill_request_entry_ptr] && !wr_flush) begin
+
+            // valid, not issued and no flush
+            if(wr_fb_valid[rg_fill_request_entry_ptr] && !wr_fb_issued[rg_fill_request_entry_ptr] && !wr_flush) begin
                 lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
                 lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
                 mem_req = Mem_request{
@@ -418,23 +441,7 @@ package icache_mhb;
         endmethod
         //
         method Action ma_flush(Bool flush);
-            if(flush) begin
-                wr_flush <= flush;
-                for(Integer i=0;i<`mhb_size;i=i+1) begin
-                    for(Integer j=0;j<`imshr_depth;j=j+1) begin
-                        rg_mshr_valid[i][j] <= False;
-                    end
-                end
-                //
-                for(Integer i=0;i<`mhb_size;i=i+1) begin
-                    if(!rg_fb_issued[i]) begin
-                        rg_fb_valid[i] <= False;                                
-                    end
-                    else begin
-                        rg_fb_flushed[i] <= True;
-                    end
-                end
-            end
+            wr_flush <= flush;
         endmethod
         //
     endmodule

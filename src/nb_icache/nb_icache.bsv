@@ -34,8 +34,6 @@ package nb_icache;
     //
     (*synthesize*)
     (*conflict_free="rl_icache_fence,rl_LFB_release_to_cache"*)
-    //(*conflict_free="rl_poll_response_from_memory,rl_fill_from_memory"*)
-    (*conflict_free="rl_poll_response_from_memory,rl_io_request_handling"*)
     module mknb_icache(Ifc_nb_icache);
 
         // Fifos
@@ -307,6 +305,10 @@ package nb_icache;
             ifc_crq.ma_flush(wr_flush);
         endrule
         //
+        rule rl_send_flush_to_mhb;
+          ifc_mhb.ma_flush(wr_flush);
+        endrule
+        //
         //
         rule rl_stage1;
             if(wr_flush) begin // No new requests are accepted from core in flush cycle
@@ -407,7 +409,7 @@ package nb_icache;
                 // requests pending in pipe
                 else begin
                 //  
-                    // NOTE: CHECK this assumption: implicit condition: !rg_replay_stage1_valid && !rg_stage2_valid (otherwise cache would be busy)
+                    // NOTE: CHECK this assumption: implicit condition: !rg_replay_stage1_valid && !rg_stage2_next_cycle_valid (otherwise cache would be busy)
                     // can happen as mhb full count is registered
                     if(wr_core_req.valid) begin 
                         let lv_core_req = wr_core_req;
@@ -419,7 +421,7 @@ package nb_icache;
                         rg_lookup_ptag <= truncate(wr_itlb_response.address);
                         wr_lookup_reqid <= lv_core_req.req_id;
                         //
-                        // TODO: fence and sfence
+                        // Handle fence and sfence
                         if (lv_core_req.fence || lv_core_req.sfence) begin
                           wr_replay_stage1_valid <= True;
                           wr_replay_stage1_req_data <= lv_core_req;
@@ -469,9 +471,8 @@ package nb_icache;
                     // 
                     // replay pending requests, if any
                     // (if "stage2 free" , "No tlb_miss pending", "No issued io request pending")
-                    // NOTE: CHECK cases
-                    //else if(wr_preread_replay_stage1_valid && !wr_preread_io_valid && !wr_preread_tlb_miss && (!wr_preread_stage2_valid || !wr_stage2_next_cycle_stall)) begin
-                    else if(wr_preread_replay_stage1_valid && !wr_preread_io_valid && !wr_preread_tlb_miss) begin
+                    //else if(wr_preread_replay_stage1_valid && !wr_preread_io_issued && !wr_preread_tlb_miss && !wr_preread_stage2_next_cycle_stall) begin
+                    else if(wr_preread_replay_stage1_valid && !wr_preread_io_issued && !wr_preread_tlb_miss) begin
                         let lv_core_req = wr_preread_replay_stage1_req_data; 
                         Bool lv_set_conflict =  False;  
                         Bool lv_is_io = isIO(wr_itlb_response.address, True);
@@ -495,7 +496,7 @@ package nb_icache;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: Replay: Fence."))
                         end
                         else if(lv_core_req.sfence && ifc_mhb.mv_mshr_empty() && !wr_preread_stage2_valid) begin
-                            //invalidate TLB
+                            // invalidate TLB
                             wr_itlb_sfence <= lv_core_req.sfence;
                             wr_stage1_crq_data <= ICache_core_response{
                                                 valid : lv_core_req.sfence,
@@ -635,7 +636,7 @@ package nb_icache;
         endrule
         //
         //
-        rule rl_io_request_handling;
+        rule rl_handle_fill_request;
             Mem_request lv_stage1_io_request = unpack(0);
             Mem_request lv_mhb_fill_request = unpack(0);
             //
@@ -711,10 +712,6 @@ package nb_icache;
             end
             wr_fb_release_valid <= valid;
             wr_fb_release_index <= set_index;
-        endrule
-        //
-        rule rl_MHB_flush;
-          ifc_mhb.ma_flush(wr_flush);
         endrule
         //
         //
