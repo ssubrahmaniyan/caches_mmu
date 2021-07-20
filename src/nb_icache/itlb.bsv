@@ -108,7 +108,7 @@ package itlb;
                                      address  : signExtend(coreresp),
                                      trap     : trap,
                                      cause    : `Inst_access_fault};
-        `logLevel( itlb, 0, $format("[%2d]ITLB : Transparent Translation. PhyAddr: ", hartid, fshow(lv_resp)))
+        `logLevel( itlb, 0, $format("[%2d]ITLB: Transparent Translation. PhyAddr: ", hartid, fshow(lv_resp)))
       end
       // tlb hit
       else if (lv_hit == 1) begin
@@ -158,7 +158,7 @@ package itlb;
       // tlb miss
       else begin
         // Send virtual - address and indicate it is an instruction access to the PTW
-        `logLevel( itlb, 0, $format("[%2d]ITLB : TLBMiss. Sending Address to PTW:%h", hartid, vaddress))
+        `logLevel( itlb, 0, $format("[%2d]ITLB: TLBMiss. Sending Address to PTW:%h", hartid, vaddress))
         lv_resp.hit = False;
 
         `ifdef perfmonitors
