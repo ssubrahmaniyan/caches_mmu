@@ -52,6 +52,7 @@ package crq;
         rule rl_head_released;
             if(wr_released_head && !wr_flush) begin
                 rg_crq_head <= rg_crq_head + 1;
+                rg_crq_valid[rg_crq_head] <= False;
             end
         endrule
         //

@@ -89,7 +89,7 @@ package icache_mhb;
         rule rl_display_mhb_array;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
                 Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `offsetbits;
-                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
+                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b all_served %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_all_served[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
                 `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
         endrule
@@ -100,8 +100,8 @@ package icache_mhb;
             lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
             lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
 
-            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr))
-            `logLevel( icache, 1, $format("ICACHE: MHB: laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
+            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
+            `logLevel( icache, 1, $format("ICACHE: MHB: fill_req laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
         endrule
         //
         rule rl_handle_flush;
@@ -204,6 +204,8 @@ package icache_mhb;
             Bit#(TLog#(`mhb_size)) lv_mhb_index = rg_serve_mshr_entry_ptr;
             Bit#(TLog#(`imshr_depth)) lv_mshr_req_to_be_served  = wr_mshr_req_to_be_served[lv_mhb_index];
             Bit#(TAdd#(1,TLog#(`imshr_depth))) lv_mshr_pending_count = 0;
+            Bool lv_all_served = False;
+
             for(Integer i=0;i<`imshr_depth;i=i+1) begin
                 if(wr_mshr_valid[lv_mhb_index][i] && !wr_flush) begin // flush will invalidate all mshr entries
                     lv_mshr_pending_count = lv_mshr_pending_count + 1;
@@ -211,13 +213,17 @@ package icache_mhb;
             end
             //
             if(!wr_new_entry_serve_conflict) begin  // if there is no new entry arriving into the same mhb_index
-                Bool lv_all_served = (lv_mshr_pending_count==0 || (lv_mshr_pending_count == 1) && wr_req_satisfied);
+                // NOTE: turning off 2nd condition below for the current implementation: next serve ptr moves sequentially
+                //       and wr_req_satisfied can be 1 on an earlier invalid entry while a later valid entry is still pending
+                //lv_all_served = (lv_mshr_pending_count==0 || (lv_mshr_pending_count == 1) && wr_req_satisfied);
+                lv_all_served = (lv_mshr_pending_count==0);
                 rg_mshr_all_served[lv_mhb_index] <= lv_all_served;
                 //
                 rg_serve_mshr_entry_ptr <= (lv_all_served)?lv_mhb_index+1:lv_mhb_index;
                 //
                 rg_mshr_req_to_be_served[lv_mhb_index] <= (wr_req_satisfied)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served;  // rg_serve_mshr pointer (miss response pointer) can increment further with enhancements
             end
+            `logLevel( icache, 1, $format("ICACHE: MHB: rl_check_all_served: mhb_index %h serve_next %d pending %d serve_conflict %b req_sat %b # all_served %b", lv_mhb_index, lv_mshr_req_to_be_served, lv_mshr_pending_count, wr_new_entry_serve_conflict, wr_req_satisfied, lv_all_served))
         endrule
         //
         method Bool mv_mshr_empty();

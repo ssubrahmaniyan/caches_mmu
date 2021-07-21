@@ -216,7 +216,7 @@ package nb_icache;
                 lv_stage2_data.data = lv_cache_block[`wordsize-1:0];
                 //
                 wr_stage2_data <= lv_stage2_data; 
-                `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b # paddr %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.paddr, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
+                `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b # paddr %h ptag %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.paddr, rg_lookup_ptag, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
             end
             else begin
                 wr_stage2_data <= rg_stage2_req_data;
@@ -366,7 +366,7 @@ package nb_icache;
                             // TODO: may need to rearrange code to move lookup earlier unconditionally (if not optimized by tool)
                             wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
                             wr_lookup_vaddr <= lv_core_req.vaddr;
-                            rg_lookup_ptag <= truncate(wr_itlb_response.address);
+                            rg_lookup_ptag <= truncateLSB(wr_itlb_response.address);
                             wr_lookup_reqid <= lv_core_req.req_id;
                             //
                             if(wr_itlb_response.trap) begin
@@ -418,7 +418,7 @@ package nb_icache;
                         //
                         wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
                         wr_lookup_vaddr <= lv_core_req.vaddr;
-                        rg_lookup_ptag <= truncate(wr_itlb_response.address);
+                        rg_lookup_ptag <= truncateLSB(wr_itlb_response.address);
                         wr_lookup_reqid <= lv_core_req.req_id;
                         //
                         // Handle fence and sfence
@@ -512,7 +512,7 @@ package nb_icache;
                             //
                             wr_lookup_arrays_valid <= lv_core_req.valid; // index into 4 arrays: status, repl, tag, data.
                             wr_lookup_vaddr <= lv_core_req.vaddr;
-                            rg_lookup_ptag <= truncate(wr_itlb_response.address);
+                            rg_lookup_ptag <= truncateLSB(wr_itlb_response.address);
                             wr_lookup_reqid <= lv_core_req.req_id;
                             //
                             if((wr_itlb_response.hit && !lv_is_io) && !lv_set_conflict && !ifc_mhb.mv_mshr_full ) begin
@@ -708,7 +708,7 @@ package nb_icache;
                 // TODO update replacement
                 ifc_tag.ma_write_request(True,lv_paddr,way);
                 ifc_data.ma_write_request(True,lv_paddr,block_data,way);
-                `logLevel( icache, 1, $format("ICACHE: LFB: Fill (release) set %d way %d data %h: ", set_index, way, block_data))
+                `logLevel( icache, 1, $format("ICACHE: LFB: Fill (release) set %d way %d data %h", set_index, way, block_data))
             end
             wr_fb_release_valid <= valid;
             wr_fb_release_index <= set_index;
