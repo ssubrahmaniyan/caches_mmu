@@ -26,10 +26,10 @@ package icache_mhb;
     (*conflict_free="mv_fb_release, ma_allocate_entry"*)
     (*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
     (*conflict_free="rl_check_all_served, ma_allocate_entry"*)
-    //(*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_request_satisfied"*)
-    (*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_lfb_release"*)
+    //(*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_request_satisfied"*)
+    (*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_lfb_release"*)
     (*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
-    (*conflict_free="rl_set_valid_allocate_entry, ma_flush"*)
+    (*conflict_free="rl_set_valid_allocate_read_response, ma_flush"*)
     module mkicache_mhb(Ifc_icache_mhb);
         // MSHR Registers
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_valid <- replicateM(replicateM(mkReg(False)));
@@ -161,15 +161,22 @@ package icache_mhb;
             rg_mshr_empty <= (lv_count_free == `mhb_size);
         endrule
         //
-        rule rl_set_valid_allocate_entry(!wr_flush);
-            // New allocation takes precedence over request satisfied
-            if(wr_allocate_entry) begin
-                rg_mshr_valid[wr_allocate_entry_primary_idx][wr_allocate_entry_secondary_idx] <= True;
+        rule rl_set_valid_allocate_read_response(!wr_flush);
+            for(Integer i=0;i<`mhb_size;i=i+1) begin
+              if (wr_allocate_entry && (wr_allocate_entry_primary_idx == fromInteger(i))) begin
                 rg_fb_valid[wr_allocate_entry_primary_idx] <= True;
-                `logLevel( icache, 1, $format("ICACHE: MHB: allocate (set valid): mhb_index %d sec_index %d", wr_allocate_entry_primary_idx, wr_allocate_entry_secondary_idx))
-            end
-            else if(wr_req_satisfied) begin
-                rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
+              end
+              for(Integer j=0;j<`imshr_depth;j=j+1) begin
+                // New allocation takes precedence over request satisfied (as wr_req_satisfied is true when all secondary entries are invalid but a new secondary entry can be allocated this cycle)
+                if (wr_allocate_entry && (wr_allocate_entry_primary_idx == fromInteger(i)) && (wr_allocate_entry_secondary_idx == fromInteger(j))) begin
+                  rg_mshr_valid[wr_allocate_entry_primary_idx][wr_allocate_entry_secondary_idx] <= True;
+                  `logLevel( icache, 1, $format("ICACHE: MHB: allocate (set valid): mhb_index %d sec_index %d", wr_allocate_entry_primary_idx, wr_allocate_entry_secondary_idx))
+                end
+                else if(wr_req_satisfied && (wr_satisfied_req_primary_idx == fromInteger(i)) && (wr_satisfied_req_secondary_idx == fromInteger(j))) begin
+                  rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
+                  `logLevel( icache, 1, $format("ICACHE: MHB: read_response (set invalid): mhb_index %d sec_index %d", wr_satisfied_req_primary_idx, wr_satisfied_req_secondary_idx))
+                end
+              end
             end
         endrule
         //
