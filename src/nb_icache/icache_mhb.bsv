@@ -26,7 +26,7 @@ package icache_mhb;
     (*conflict_free="mv_fb_release, ma_allocate_entry"*)
     (*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
     (*conflict_free="rl_check_all_served, ma_allocate_entry"*)
-    (*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_request_satisfied"*)
+    //(*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_request_satisfied"*)
     (*conflict_free="rl_set_valid_allocate_entry, rl_set_valid_lfb_release"*)
     (*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
     (*conflict_free="rl_set_valid_allocate_entry, ma_flush"*)
@@ -100,7 +100,7 @@ package icache_mhb;
             lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
             lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
 
-            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
+            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
             `logLevel( icache, 1, $format("ICACHE: MHB: fill_req laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
         endrule
         //
@@ -120,6 +120,7 @@ package icache_mhb;
                       rg_fb_flushed[i] <= True;
                   end
               end
+              `logLevel( icache, 1, $format("ICACHE: MHB: Flush received."))
           end
         endrule
         //
@@ -161,17 +162,22 @@ package icache_mhb;
         endrule
         //
         rule rl_set_valid_allocate_entry(!wr_flush);
+            // New allocation takes precedence over request satisfied
             if(wr_allocate_entry) begin
                 rg_mshr_valid[wr_allocate_entry_primary_idx][wr_allocate_entry_secondary_idx] <= True;
                 rg_fb_valid[wr_allocate_entry_primary_idx] <= True;
+                `logLevel( icache, 1, $format("ICACHE: MHB: allocate (set valid): mhb_index %d sec_index %d", wr_allocate_entry_primary_idx, wr_allocate_entry_secondary_idx))
             end
-        endrule
-        //
-        rule rl_set_valid_request_satisfied(!wr_flush);
-            if(wr_req_satisfied) begin
+            else if(wr_req_satisfied) begin
                 rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
             end
         endrule
+        //
+//        rule rl_set_valid_request_satisfied(!wr_flush);
+//            if(wr_req_satisfied) begin
+//                rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
+//            end
+//        endrule
         //
         rule rl_set_valid_lfb_release;
             if(wr_releasing) begin
@@ -323,10 +329,15 @@ package icache_mhb;
 
                     wr_allocate_entry_primary_idx <= lv_primary_index;
                     wr_allocate_entry_secondary_idx <= lv_secondary_index;
+                    `logLevel( icache, 1, $format("ICACHE: MHB: allocate (hit): mhb_index %d sec_index %d", lv_primary_index, lv_secondary_index))
                 end
 
                 else begin  // Allocate a new MSHR entry
-                    //MSHR Entry
+                    // NOTE: Mark new allocation also as serve conflict otherwise depending on serve pointer, all_served will be set to "true" instead of "false"
+                    if (wr_mhb_free_entry_ptr == rg_serve_mshr_entry_ptr) begin
+                      wr_new_entry_serve_conflict <= True;
+                    end
+                    // MSHR Entry
                     rg_mshr_replacement_way[wr_mhb_free_entry_ptr] <= replacement_way;
                     rg_mshr_req_to_be_served[wr_mhb_free_entry_ptr] <= 0;
                     rg_mshr_all_served[wr_mhb_free_entry_ptr] <= False;
@@ -345,6 +356,7 @@ package icache_mhb;
                     wr_allocate_entry_secondary_idx <= 0;
                     //
                     wr_increment_free_entry_ptr <= True;
+                    `logLevel( icache, 1, $format("ICACHE: MHB: allocate (miss): mhb_index %d sec_index 0", wr_mhb_free_entry_ptr))
                 end
             end
         endmethod

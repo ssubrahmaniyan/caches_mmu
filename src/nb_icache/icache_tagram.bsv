@@ -1,5 +1,6 @@
 package icache_tagram;
     `include "icache_parameters.bsv"
+    `include "Logger.bsv"
     import nb_icache_types ::*;
     import Vector ::*;
     import BRAMCore ::*;
@@ -28,17 +29,18 @@ package icache_tagram;
     // BRAM width = `tagbits
     // BRAM port a is used for reads and port b is used for writes
     // The valid bits are part of a separate structure called "rg_status" (part of nb_icache.bsv)
-    Vector#(`numways,BRAM_DUAL_PORT#(Bit#(`setbits), Bit#(`tagbits))) tag_ram <- replicateM(mkBRAMCore2(1, False));
+    Vector#(`numways,BRAM_DUAL_PORT#(Bit#(`setbits), Bit#(`tagbits))) tag_ram <- replicateM(mkBRAMCore2(`numsets, False));
     // Used store the tag from the read request needed for final hitmask generation
-    Reg#(Bit#(`tagbits)) rg_read_req_tag  <- mkReg(0);
+    //Reg#(Bit#(`tagbits)) rg_read_req_tag  <- mkReg(0);
     //
     method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
       Bit#(`setbits) index = fn_extract_set(address);
       if(valid) begin
-        for(Integer i=0; i<`numways;i=i+1) begin
+        for(Integer i=0; i < `numways; i = i + 1) begin
           tag_ram[i].a.put(False,index,0); 
         end
         //rg_read_req_tag <= truncateLSB(address);
+        `logLevel( icache, 2, $format("ICACHE: TRAM: Read request for set %d", index))
       end
     endmethod
     //
@@ -49,6 +51,7 @@ package icache_tagram;
       Bit#(`tagbits) writetag = truncateLSB(address);
       if(valid) begin
           tag_ram[way].b.put(True,index,writetag); 
+          `logLevel( icache, 2, $format("ICACHE: TRAM: Write request for set %d way %d # tag %h", index, way, writetag))
       end
     endmethod
     //
@@ -60,12 +63,12 @@ package icache_tagram;
       Bit#(`numways) lv_hitmask = 0;
 
       Vector#(`numways, Bit#(`tagbits)) lv_tags;
-      for (Integer i = 0; i<`numways; i = i + 1) begin
+      for (Integer i = 0; i < `numways; i = i + 1) begin
         lv_tags[i] = tag_ram[i].a.read();
       end
       // compare all tags with request tag to generate hitmask
       for (Integer i = 0; i<`numways; i = i + 1) begin
-        lv_hitmask[i] = pack(truncate(lv_tags[i]) == tag_in);
+        lv_hitmask[i] = pack(lv_tags[i] == tag_in);
       end
       return lv_hitmask;
     endmethod

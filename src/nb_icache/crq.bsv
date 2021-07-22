@@ -78,6 +78,8 @@ package crq;
             CRQ_core_response lv_resp = unpack(0);
             ICache_core_response lv_resp_final= unpack(0);
 
+            // TODO: bypass responses from the same cycle for regular requests
+            // NOTE: For fence/sfence, bypassed responses will need a corresponding change in FTQ on the core side
             if(rg_crq_valid[rg_crq_head] && !wr_flush) begin
                 lv_resp = rg_crq_data[rg_crq_head];
                 wr_released_head <= True;
