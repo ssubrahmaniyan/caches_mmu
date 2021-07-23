@@ -198,7 +198,7 @@ package icache_mhb;
                 rg_fb_issued[rg_fill_request_entry_ptr] <= wr_set_issued;
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
-            else if(wr_fb_valid[rg_fill_request_entry_ptr] && !wr_fb_issued[rg_fill_request_entry_ptr]) begin
+            else if(wr_fb_valid[rg_fill_request_entry_ptr] && wr_fb_issued[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
             else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
@@ -236,7 +236,10 @@ package icache_mhb;
                 lv_all_served = (lv_mshr_pending_count==0);
                 rg_mshr_all_served[lv_mhb_index] <= lv_all_served;
                 //
-                rg_serve_mshr_entry_ptr <= (lv_all_served)?lv_mhb_index+1:lv_mhb_index;
+                // serve ptr can be incremented if everything's served in this entry or the fill hasn't issued
+                // TODO: add line fill pending condition; optimize to follow fill_request pointer
+                //rg_serve_mshr_entry_ptr <= (lv_all_served)?lv_mhb_index+1:lv_mhb_index;
+                rg_serve_mshr_entry_ptr <= (lv_all_served) ? lv_mhb_index+1 : ((!wr_fb_valid[lv_mhb_index] || !wr_fb_issued[lv_mhb_index]) ? (lv_mhb_index+1) : lv_mhb_index);
                 //
                 rg_mshr_req_to_be_served[lv_mhb_index] <= (wr_req_satisfied)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served;  // rg_serve_mshr pointer (miss response pointer) can increment further with enhancements
             end

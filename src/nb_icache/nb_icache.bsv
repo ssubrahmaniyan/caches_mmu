@@ -156,6 +156,7 @@ package nb_icache;
             rg_replay_stage1_valid <= wr_replay_stage1_io_response ? False : wr_replay_stage1_valid;
             rg_replay_stage1_req_data <= wr_replay_stage1_req_data;
           end
+          `logLevel( icache, 1, $format("ICACHE: set_replay: wr_stage2_next_stall %b wr_core_req_valid %b wr_stage1_io_resp %b rg_replay_stage1 %b wr_replay_stage1 %b rg_stage1_flushed %b", wr_stage2_next_cycle_stall, wr_core_req.valid, wr_replay_stage1_io_response, wr_preread_replay_stage1_valid, wr_replay_stage1_valid, wr_preread_stage1_flushed))
         endrule
         //
         //
@@ -330,7 +331,9 @@ package nb_icache;
                     if(!wr_preread_tlb_miss && !wr_preread_io_issued && !wr_preread_replay_stage1_req_data.fence && !wr_preread_replay_stage1_req_data.sfence) begin
                         wr_replay_stage1_valid <= False;
                     end
-                    if(wr_preread_tlb_miss || wr_preread_io_issued) begin // set request as flushed, it will be executed but response will not be sent to core
+                    // set request as flushed, it will be executed but response will not be sent to core
+                    // exclude the case when response and flush arrive in the same cycle (responses will be dropped in crq)
+                    if((wr_preread_tlb_miss && !wr_ptwalk_valid_response) || (wr_preread_io_issued && !wr_mem_response.valid)) begin
                         rg_stage1_flushed <= True;
                     end
                 end
@@ -428,6 +431,9 @@ package nb_icache;
                                 else if(lv_set_conflict) begin
                                     rg_set_conflict <= True;
                                     `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, setting replay.", lv_core_req.req_id))
+                                end
+                                else begin
+                                    `logLevel( icache, 1, $format("ICACHE: Stage1: Unknown stall for req_id %d, setting replay.", lv_core_req.req_id))
                                 end 
                             end // tlb miss or set conflict
                         end // !fence and !sfence
@@ -549,13 +555,13 @@ package nb_icache;
         endrule
         //
         //
-        rule rl_update_rg_stage_2;
+        rule rl_update_rg_stage2;
             //rg_stage2_valid <= (wr_from_stage1_valid)?True:wr_stage2_valid;
             rg_stage2_valid <= wr_stage2_valid ? True : wr_from_stage1_valid;
         endrule
         //
         // Only cacheable requests proceed to this stage
-        rule rl_stage_2;
+        rule rl_stage2;
             Bool lv_stage2_next_cycle_stall = wr_preread_stage2_valid;
             if(wr_flush) begin
                 wr_stage2_valid <= False;
