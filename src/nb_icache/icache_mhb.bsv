@@ -193,8 +193,12 @@ package icache_mhb;
         endrule
         //
         rule rl_increment_fb_request_ptr;
+            // Increment fill request pointer if 1) we are setting issued this cycle or 2) entry is valid and already issued or 3) entry is invalid
             if(wr_set_issued) begin
                 rg_fb_issued[rg_fill_request_entry_ptr] <= wr_set_issued;
+                rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
+            end
+            else if(wr_fb_valid[rg_fill_request_entry_ptr] && !wr_fb_issued[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
             else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
