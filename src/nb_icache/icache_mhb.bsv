@@ -19,17 +19,17 @@ package icache_mhb;
         method Action ma_flush(Bool flush);
     endinterface
     (*synthesize*)
-    (*conflict_free="ma_flush, ma_allocate_entry"*)
-    (*conflict_free="ma_set_issued, ma_allocate_entry"*)
     (*conflict_free="ma_fill_from_memory, ma_allocate_entry"*)
-    (*conflict_free="mv_miss_response, ma_allocate_entry"*)
-    (*conflict_free="mv_fb_release, ma_allocate_entry"*)
-    (*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
-    (*conflict_free="rl_check_all_served, ma_allocate_entry"*)
+    //(*conflict_free="ma_flush, ma_allocate_entry"*)
+    //(*conflict_free="ma_set_issued, ma_allocate_entry"*)
+    //(*conflict_free="mv_miss_response, ma_allocate_entry"*)
+    //(*conflict_free="mv_fb_release, ma_allocate_entry"*)
+    //(*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
+    //(*conflict_free="rl_check_all_served, ma_allocate_entry"*)
     //(*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_request_satisfied"*)
-    (*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_lfb_release"*)
-    (*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
-    (*conflict_free="rl_set_valid_allocate_read_response, ma_flush"*)
+    //(*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_lfb_release"*)
+    //(*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
+    //(*conflict_free="rl_set_valid_allocate_read_response, ma_flush"*)
     module mkicache_mhb(Ifc_icache_mhb);
         // MSHR Registers
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_valid <- replicateM(replicateM(mkReg(False)));
@@ -333,13 +333,14 @@ package icache_mhb;
                     // 
                     if(lv_primary_index == rg_serve_mshr_entry_ptr) begin
                         wr_new_entry_serve_conflict <= True;
-                        rg_mshr_all_served[lv_primary_index] <= False;
+                        //rg_mshr_all_served[lv_primary_index] <= False;
                         rg_mshr_req_to_be_served[lv_primary_index] <= (rg_mshr_all_served[lv_primary_index])?lv_secondary_index:
                                                                                     ((wr_req_satisfied)?wr_mshr_req_to_be_served[lv_primary_index]+1:wr_mshr_req_to_be_served[lv_primary_index]);
                     end
 
-                    // if a secondary request arrives after the LFB has been marked "flushed", reset the flushed bit (response required for new request)
+                    // if a secondary request arrives after the LFB has been marked "flushed", reset the flushed bit and all_served (response required for new request)
                     rg_fb_flushed[lv_primary_index] <= False;
+                    rg_mshr_all_served[lv_primary_index] <= False;
 
                     wr_allocate_entry_primary_idx <= lv_primary_index;
                     wr_allocate_entry_secondary_idx <= lv_secondary_index;
