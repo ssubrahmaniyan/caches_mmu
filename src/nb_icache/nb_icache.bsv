@@ -512,15 +512,20 @@ package nb_icache;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
                         //
-                        if(wr_tlb_response.trap && !wr_preread_stage1_flushed) begin
-                            wr_stage1_crq_data <= ICache_core_response{
-                                                  valid : wr_tlb_response.trap,
-                                                  req_id: lv_core_req.req_id,
-                                                  packet: zeroExtend(lv_core_req.vaddr),
-                                                  trap: wr_tlb_response.trap,
-                                                  cause: wr_tlb_response.cause
-                                                  };
-                            `logLevel( icache, 1, $format("ICACHE: Stage1: Exception from TLB for req_id %d, cause %d!", lv_core_req.req_id, wr_tlb_response.cause))
+                        if(wr_tlb_response.trap) begin
+                            if (!wr_preread_stage1_flushed) begin
+                              wr_stage1_crq_data <= ICache_core_response{
+                                                    valid : wr_tlb_response.trap,
+                                                    req_id: lv_core_req.req_id,
+                                                    packet: zeroExtend(lv_core_req.vaddr),
+                                                    trap: wr_tlb_response.trap,
+                                                    cause: wr_tlb_response.cause
+                                                    };
+                              `logLevel( icache, 1, $format("ICACHE: Stage1: Exception from TLB sent for req_id %d, cause %d!", lv_core_req.req_id, wr_tlb_response.cause))
+                            end
+                            else begin
+                              `logLevel( icache, 1, $format("ICACHE: Stage1: Exception from TLB flushed for req_id %d, cause %d!", lv_core_req.req_id, wr_tlb_response.cause))
+                            end // flushed
                         end
                         else if(wr_tlb_response.hit && !wr_preread_stage1_flushed && !lv_is_io && !lv_set_conflict) begin  
                             wr_from_stage1_valid <= True;
