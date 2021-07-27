@@ -67,6 +67,7 @@ package crq;
         //
         // Just enqueue responses from cache into corresponse req_id slot
         method Action ma_icache_response(Vector#(`crq_input_size, ICache_core_response)  in);
+            `logLevel( icache, 1, $format("ICACHE: CRQ: Status: head %d", rg_crq_head))
             for(Integer i=0 ;i< `crq_input_size; i=i+1) begin
                 wr_crq_in[i] <= in[i];
                 `logLevel( icache, 1, $format("ICACHE: CRQ: Request to CRQ (enqueue) %d: ", i, fshow(in[i])))

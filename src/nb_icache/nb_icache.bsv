@@ -703,7 +703,7 @@ package nb_icache;
                     if(!wr_preread_stage1_flushed) begin
                         wr_io_crq_data <= ICache_core_response{
                                                 valid : wr_mem_response.valid,
-                                                req_id: '0,
+                                                req_id: wr_preread_replay_stage1_req_data.req_id,
                                                 packet: wr_mem_response.data,
                                                 trap: wr_mem_response.err,
                                                 cause: `Inst_access_fault
