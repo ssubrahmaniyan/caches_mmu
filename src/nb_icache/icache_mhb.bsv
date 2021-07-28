@@ -208,10 +208,18 @@ package icache_mhb;
         //
         rule rl_increment_mhb_free_entry_ptr;
             Bit#(TLog#(`mhb_size)) lv_free_index = rg_mhb_free_entry_ptr;
-            for(Integer i=0;i<`mhb_size;i=i+1) begin
-                if(wr_increment_free_entry_ptr && !wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
-                    lv_free_index = fromInteger(i);
-                end
+
+            // the free ptr has to move ahead if either a new entry has been allocated or if there's a release in that cycle
+            // NOTE: the free ptr is wrong when the mhb is full and needs to point to the next available entry as soon as it is available
+            if (wr_increment_free_entry_ptr) begin
+              for(Integer i=0;i<`mhb_size;i=i+1) begin
+                  if(!wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
+                      lv_free_index = fromInteger(i);
+                  end
+              end
+            end
+            else if (wr_releasing) begin
+              lv_free_index = wr_releasing_primary_index;
             end
             rg_mhb_free_entry_ptr <= lv_free_index;
         endrule
