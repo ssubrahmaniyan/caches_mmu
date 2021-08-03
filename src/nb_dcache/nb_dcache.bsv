@@ -84,6 +84,7 @@ package nb_dcache;
     interface Get#(IO_Req#(paddr, TMul#(wordsize,8)))                                          subifc_IO_req;
     interface Put#(IO_Resp#(TMul#(wordsize,8)))                                                subifc_IO_resp;
     method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
+    method Action load_drop(Bit#(rob_index) load_rob);
     method Bool cache_busy;
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
@@ -301,6 +302,9 @@ package nb_dcache;
     Wire#(Bool) wr_stall_fb_release <- mkDWire(False);
     Wire#(Bit#(1)) wr_tag_ram_write_valid <- mkDWire(0);
     Wire#(Bit#(setbits)) wr_tag_ram_write_index <- mkDWire(0);
+
+    Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
+    Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
 
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
@@ -525,6 +529,12 @@ package nb_dcache;
           rg_cache_busy<= True;
           `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
         end
+
+        // drop load on directive from core (TODO: optimize tlb lookup/side-band)
+        else if ((req.origin == Load_buffer) && wr_load_drop_valid && (wr_load_drop_robid == req.rob)) begin
+          `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped in stage1.", req.rob))
+        end
+
 `ifdef supervisor
         else if(!resp_from_tlb.tlbmiss) begin      //Hit in the TLB
 `else
@@ -1251,14 +1261,21 @@ package nb_dcache;
     //----------------------------- Flush ---------------------------------//
 
     //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
-    rule rl_flush_ff_req_from_core(rg_flush.valid && core_req.origin!=Store_commit && core_req.origin!=PTW && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob));
-      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
+    rule rl_flush_ff_req_from_core(  (rg_flush.valid && (core_req.origin!=Store_commit) && (core_req.origin!=PTW)
+                                                    && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
+                                   || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) );
+      if (rg_flush.valid) begin
+        `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
+      end
+      else begin
+        `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped from input fifo.", core_req.rob))
+      end
       ff_req_from_core.deq;
     endrule
 
     let first_stage_req= ff_first_stage.first;
-    rule rl_flush_ff_first_stage(rg_flush.valid && first_stage_req.origin!=Store_commit && first_stage_req.origin!=PTW
-    && should_flush(rg_flush.head, rg_flush.flush_rob, first_stage_req.rob));
+    rule rl_flush_ff_first_stage(rg_flush.valid && (first_stage_req.origin!=Store_commit) && (first_stage_req.origin!=PTW)
+                                                && should_flush(rg_flush.head, rg_flush.flush_rob, first_stage_req.rob));
       `logLevel( dcache, 2, $format("DCACHE : Flushing ff_first_stage: ", fshow(first_stage_req)))
       wr_stage1_deq<= True;
       `ifdef atomic
@@ -1729,6 +1746,12 @@ package nb_dcache;
                                     flush_rob: flush_rob };
       rg_flush<= flush_signal;
       `logLevel( dcache, 2, $format("DCACHE : Flush generated: ", fshow(flush_signal)))
+    endmethod
+
+    method Action load_drop(Bit#(rob_index) load_rob);
+      wr_load_drop_valid <= True;
+      wr_load_drop_robid <= load_rob;
+      `logLevel( dcache, 2, $format("DCACHE : Load (early) drop received for rob_id %d", load_rob))
     endmethod
 
 `ifdef supervisor
