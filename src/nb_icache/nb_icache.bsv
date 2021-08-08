@@ -54,6 +54,7 @@ package nb_icache;
         // IRQ registers
         Reg#(Bool) rg_io_request_valid <- mkReg(False);
         Reg#(Bool) rg_io_request_issued <- mkReg(False);
+        Reg#(Bit#(`paddr)) rg_io_request_paddr <- mkReg(0);
 
         // Stage 2 registers
         Reg#(Bool) rg_stage2_valid <- mkReg(False);
@@ -278,7 +279,7 @@ package nb_icache;
                 `logLevel( icache, 1, $format("ICACHE: Stage1: ITLB lookup (current) vaddr %h: ", lv_core_req.vaddr, fshow(lv_itlb_response)))
             end
             else if(wr_preread_replay_stage1_valid && !wr_preread_replay_stage1_req_data.fence && !wr_preread_replay_stage1_req_data.sfence 
-                    && !rg_io_request_issued && !wr_preread_tlb_miss) begin // valid replay
+                    && !wr_preread_io_valid && !wr_preread_tlb_miss) begin // valid replay
                 lv_core_req = wr_preread_replay_stage1_req_data;
                 lv_itlb_response <- ifc_itlb.translate(lv_core_req.vaddr);
                 `logLevel( icache, 1, $format("ICACHE: Stage1: ITLB lookup (replay) vaddr %h: ", lv_core_req.vaddr, fshow(lv_itlb_response)))
@@ -439,9 +440,13 @@ package nb_icache;
                                 wr_from_stage1_valid <= True; // Stage2 request data will be received through wr_stage2_data in next cycle
                               `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                             end
+                            else if(wr_tlb_response.hit && wr_preread_stage1_flushed) begin
+                              `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for flushed req_id %d, dropping.", lv_core_req.req_id))
+                            end
                             else if(wr_tlb_response.hit && lv_is_io) begin
                                 rg_io_request_valid <= True; 
                                 rg_io_request_issued <= False;
+                                rg_io_request_paddr <= wr_tlb_response.address;
                                 wr_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                                 wr_replay_stage1_req_data <= lv_core_req;
                                 `logLevel( icache, 1, $format("ICACHE: Stage1: IO request (req_id %d), enqueueing.", lv_core_req.req_id))
@@ -458,7 +463,9 @@ package nb_icache;
                                     `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, setting replay.", lv_core_req.req_id))
                                 end
                                 else begin
+                                    // TODO: add assertion
                                     `logLevel( icache, 1, $format("ICACHE: Stage1: Unknown stall for req_id %d, setting replay.", lv_core_req.req_id))
+                                    $finish(0);
                                 end 
                             end // tlb miss or set conflict
                         end // !fence and !sfence
@@ -531,9 +538,13 @@ package nb_icache;
                             wr_from_stage1_valid <= True;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                         end
+                        else if(wr_tlb_response.hit && wr_preread_stage1_flushed) begin
+                            `logLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for flushed req_id %d, dropping.", lv_core_req.req_id))
+                        end
                         else if(wr_tlb_response.hit && lv_is_io) begin
                             rg_io_request_valid <= True;
                             rg_io_request_issued <= False; 
+                            rg_io_request_paddr <= wr_tlb_response.address;
                             wr_replay_stage1_valid <= True; // request is not actually replayed, just to stall Cache till response is received from fabric
                             wr_replay_stage1_req_data <= lv_core_req;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: IO request (req_id %d), enqueueing.", lv_core_req.req_id))
@@ -550,7 +561,9 @@ package nb_icache;
                                 `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, setting replay.", lv_core_req.req_id))
                             end
                             else begin
+                              // TODO: add assertion
                               `logLevel( icache, 1, $format("ICACHE: Stage1: Unknown stall for req_id %d, setting replay.", lv_core_req.req_id))
+                              $finish(0);
                             end 
                         end // tlb miss or set conflict
                     end // stage1 enabled
@@ -674,7 +687,7 @@ package nb_icache;
             // no flush, replay valid, io valid and not issued, mshr empty (TODO: stage2)
             if(!wr_flush && wr_preread_replay_stage1_valid && wr_preread_io_valid && !wr_preread_io_issued && ifc_mhb.mv_mshr_empty()) begin
                 lv_stage1_io_request = Mem_request{ valid: True,
-                                                paddr: wr_tlb_response.address,
+                                                paddr: rg_io_request_paddr,
                                                 mhb_id: 0,
                                                 burst_len: 0,
                                                 burst_size: 3'b010,
