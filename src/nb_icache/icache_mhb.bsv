@@ -138,7 +138,7 @@ package icache_mhb;
         endrule
         //
         rule rl_mhb_counters;
-            Bool lv_is_full = True;
+            Bool lv_is_full = True, lv_entry_valid = True;
             Bit#(TAdd#(1,TLog#(`mhb_size))) lv_count_free = '0;
             if(wr_flush) begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
@@ -150,7 +150,9 @@ package icache_mhb;
             end
             else begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
-                    if(!wr_fb_valid[i]) begin
+                    // In a regular cycle (no flush), allocation can happen => include the condition for registered mshr_full state
+                    lv_entry_valid = wr_fb_valid[i] || (wr_allocate_entry && (wr_allocate_entry_primary_idx == fromInteger(i)));
+                    if(!lv_entry_valid) begin
                         lv_is_full = False;
                         lv_count_free = lv_count_free + 1;
                     end
