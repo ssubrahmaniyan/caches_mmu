@@ -354,7 +354,7 @@ package dcache_lib;
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
     method ActionValue#(DataWordResponse#(blocksize,wordsize)) mv_word_select(
-                                              Bit#(TLog#(blocksize)) blocknum, 
+                                              Bit#(TMax#(1,TLog#(blocksize))) blocknum, 
                                               Bit#(ways) wayselect );
     //method DataLineResponse#(blocksize,wordsize) mv_line_select(Bit#(ways) wayselect );
     method ActionValue#(DataLineResponse#(blocksize,wordsize)) mv_line_select(Bit#(ways) wayselect );
@@ -368,7 +368,8 @@ package dcache_lib;
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
-          Log#(blocksize, blockbits),
+          Log#(blocksize, blockbits1),
+          Max#(1,blockbits1,blockbits),
           Log#(sets, setbits),
           Mul#(wordsize,8, respwidth),
 
@@ -396,7 +397,7 @@ package dcache_lib;
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
                                                       <- replicateM(mkmem_config1rw_ecc(False));
   `else
-    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, 1)) v_data
                                                       <- replicateM(mkmem_config1rw(False));
   `endif
   `ifdef dcache_zbus
@@ -416,10 +417,10 @@ package dcache_lib;
 
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          v_data[i].request(0, index, dataline, banks);
+          v_data[i].request(0, index, dataline, '1);
         end
       else
-        v_data[way].request(1, index, dataline, banks);
+        v_data[way].request(1, index, dataline, '1);
     endmethod
     method ActionValue#(DataLineResponse#(blocksize,wordsize)) mv_line_select(Bit#(ways) wayselect );
     `ifdef ASSERT
@@ -864,7 +865,7 @@ package dcache_lib;
 
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
-                                      Bit#(TLog#(blocksize))              init_bank);
+                                      Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
 
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
@@ -895,7 +896,8 @@ package dcache_lib;
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
-          Log#(blocksize, blockbits),
+          Log#(blocksize, blockbits1),
+          Max#(1,blockbits1,blockbits),
           Log#(sets, setbits),
           Mul#(wordsize,8, respwidth),
           Add#(wordbits,blockbits,_a),  // _a total bits to index a byte in a cache line.
@@ -964,7 +966,7 @@ package dcache_lib;
     Reg#(Bit#(TLog#(fbsize)))                       rg_fbtail     <- mkReg(0);
     /*doc:reg: temporary register holding the WE for the data to be updated in the fillbuffer from
     the memory response*/
-    Reg#(Bit#(TLog#(blocksize)))           rg_next_bank<- mkReg(0);
+    Reg#(Bit#(TMax#(1,TLog#(blocksize))))           rg_next_bank<- mkReg(0);
 
     
     /*doc:var: variable indicating the fillbuffer is full*/
@@ -1025,10 +1027,10 @@ package dcache_lib;
     endmethod
     method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
-                                      Bit#(TLog#(blocksize))              init_bank);
-      Bit#(TLog#(blocksize)) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
+                                      Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
+      Bit#(TMax#(1,TLog#(blocksize))) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
       v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
-      rg_next_bank <= lv_current_bank + 1;
+      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?1:0);
       if(mem_resp.last) begin
         v_fb_line_valid[fbindex] <= True;
         rg_fb_enables <= 0;
@@ -1043,7 +1045,7 @@ package dcache_lib;
     method Action ma_from_storebuffer(Bit#(respwidth) mask, Bit#(respwidth)  dataword,
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
 
-      Bit#(blockbits) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
+      Bit#(TMax#(1,blockbits)) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
       v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) |
                                          (mask & dataword);
       v_fb_dirty[fbindex] <= 1;
@@ -1276,8 +1278,8 @@ package dcache_lib;
     method Bool mv_sb_head_valid;
   endinterface : Ifc_storebuffer
 
-  (*conflict_free="ma_allocate_entry, ma_increment_head"*)
-  (*conflict_free="ma_commit_store, ma_increment_head"*)
+  /*(*conflict_free="ma_allocate_entry, ma_increment_head"*)
+  (*conflict_free="ma_commit_store, ma_increment_head"*)*/
   module mk_storebuffer#(parameter Bit#(32) id)
     (Ifc_storebuffer#(addr, wordsize, esize, sbsize, fbsize))
     provisos( Log#(wordsize,wordbits),
@@ -1348,7 +1350,7 @@ package dcache_lib;
     Bool sb_empty=!(any(isTrue, readVReg(v_sb_valid)));
 
     /*doc:reg: */
-    Reg#(Bool) rg_sb_busy <- mkReg(False);
+    ConfigReg#(Bool) rg_sb_busy <- mkConfigReg(False);
   
   `ifdef sva_assert
     property headOverflow();
@@ -1522,7 +1524,7 @@ package dcache_lib;
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_fb_v2
-  (*synthesize*)
+//  (*synthesize*)
   module mkstorebuffer#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
     let ifc();
     mk_storebuffer#(id) _temp(ifc);

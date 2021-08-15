@@ -85,17 +85,19 @@ package dcache_types;
       Fmt result = $format("{va:%h",value.address);
       if (value.fence)
         result = result + $format(" is a Fence op");
-      else if (value.access !=2 && !value.ptwalk_req)
+      else if (value.access !=2 `ifdef supervisor && !value.ptwalk_req `endif )
         result = result + $format(" is a %s%s op", access2str(value.access), size2str(value.size));
     `ifdef atomic
-      else if (value.access == 2 && !value.ptwalk_req)
+      else if (value.access == 2 `ifdef supervisor && !value.ptwalk_req `endif )
         result = result + $format(" is a %s op",amo2str(value.atomic_op));
     `endif
       
       if (value.access != 0)
         result = result + $format(", data:%h",value.data);
+    `ifdef supervisor
       if (value.ptwalk_req)
         result = result + $format(" coming from PTWALK");
+    `endif
       else 
         result = result + $format(" coming from CORE");
     return result + $format("}"); 
