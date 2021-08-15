@@ -925,13 +925,13 @@ dataline ))
     interface put_pa_from_tlb = toPut(ff_from_tlb);
     interface get_hold_req = toGet(ff_hold_request);
   `endif
-    `ifdef perfmonitors
-      method mv_perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access
-                            , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss ,
-                              wr_total_write_miss , wr_total_atomic_miss , wr_total_read_fb_hits,
-                              wr_total_write_fb_hits, wr_total_atomic_fb_hits,
-                              wr_total_fb_releases, wr_total_evictions };
-    `endif
+  `ifdef perfmonitors
+    method mv_perf_counters = {wr_total_read_access , wr_total_write_access , wr_total_atomic_access
+                          , wr_total_io_reads , wr_total_io_writes , wr_total_read_miss ,
+                            wr_total_write_miss , wr_total_atomic_miss , wr_total_read_fb_hits,
+                            wr_total_write_fb_hits, wr_total_atomic_fb_hits,
+                            wr_total_fb_releases, wr_total_evictions };
+  `endif
     method mv_storebuffer_empty = m_storebuffer.mv_sb_empty;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !sb_full && !m_storebuffer.mv_sb_busy

@@ -185,7 +185,7 @@ package ptwalk_rv64;
       
       Bool fault = False;
 `ifndef iclass
-      Bit#(6) cause = 0;
+      Bit#(`causesize) cause = 0;
 `else
       Bit#(`causesize) cause = 0;
 `endif

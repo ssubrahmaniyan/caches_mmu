@@ -33,7 +33,9 @@ package icache_types;
   typedef struct{
     Bit#(addr)    address;
     Bit#(esize)   epochs;
+  `ifdef ifence
     Bool          fence;
+  `endif
   `ifdef supervisor
     Bool          sfence;
   `endif

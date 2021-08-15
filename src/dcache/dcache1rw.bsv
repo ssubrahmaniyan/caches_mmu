@@ -166,7 +166,7 @@ package dcache1rw;
   import io_func :: * ;
  
   typedef struct{
-    Bit#(TLog#(blocks)) init_bank;
+    Bit#(TMax#(1,TLog#(blocks))) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
   } Pending_req#(numeric type fbsize, numeric type blocks) deriving(Bits, Eq);
 
@@ -248,6 +248,8 @@ package dcache1rw;
   // the following 2 conflict in responding to the ptw. however, only one of them can feed responses
   // to the PTW
   (*conflict_free="rl_response_to_core, rl_io_response"*)
+  /*(*conflict_free="m_storebuffer_ma_allocate_entry, m_storebuffer_ma_increment_head"*)
+  (*conflict_free="m_storebuffer_ma_commit_store, m_storebuffer_ma_increment_head"*)*/
   (*synthesize*)
   module mkdcache#( parameter Bit#(32) id
     `ifdef pmp ,
@@ -1182,7 +1184,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       ff_mem_io_resp.deq;
       Bit#(`causesize) lv_cause = io_entry.access == 0?`Load_access_fault:`Store_access_fault;
       let lv_response = DMem_core_response{word:mem_response.error?truncate(io_entry.vaddr): 
-                                          (io_entry.access == 2)? rg_atomic_rd_data: mem_response.data, 
+                                         `ifdef atomic (io_entry.access == 2)? rg_atomic_rd_data: `endif mem_response.data, 
                                           trap: mem_response.error,
                                           entry_alloc: False,
                                           is_io: False, cause: lv_cause, epochs: io_entry.epoch};

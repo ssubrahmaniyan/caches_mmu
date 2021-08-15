@@ -2,7 +2,7 @@
 `define respwidth TMul#(`dwords,8)
 `define linewidth TMul#(`dblocks, TMul#(`dwords,8))
 `define setbits TLog#(`dsets)
-`define blockbits TLog#(`dblocks)
+`define blockbits TMax#(1,TLog#(`dblocks))
 `define wordbits TLog#(`dwords)
 `define tagbits TSub#(`paddr, TAdd#(TAdd#(`wordbits, `blockbits),`setbits))
 `define deccsize TAdd#(2, TLog#(TMul#(`dwords,8)))
