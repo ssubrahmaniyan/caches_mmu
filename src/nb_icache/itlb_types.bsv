@@ -1,3 +1,13 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details :
+
+--------------------------------------------------------------------------------------------------
+*/
+
 package itlb_types;
   import Vector :: * ;
   `include "common_tlb.defines"

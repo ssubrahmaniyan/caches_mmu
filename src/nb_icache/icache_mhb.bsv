@@ -1,3 +1,13 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details : I-Cache Miss Handling Buffer (MHB)
+          // MHB : LFB + MSHR
+
+--------------------------------------------------------------------------------------------------
+*/
 package icache_mhb;
     // i-cache miss handling module (MSHR+Line fill buffer)
     `include "icache_parameters.bsv"
@@ -301,6 +311,7 @@ package icache_mhb;
             end
 
             resp.mhb_index = {primary_index,secondary_index};
+            resp.replacement_way = rg_mshr_replacement_way[primary_index];
 
             // check if the requested word is filled in LFB
             if(rg_fb_valid[primary_index] && rg_fb_filled[primary_index][requested_word]==1'b1) begin

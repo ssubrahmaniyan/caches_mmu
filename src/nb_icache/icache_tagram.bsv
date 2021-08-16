@@ -1,13 +1,22 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details : I-Cache Tag Array
+
+--------------------------------------------------------------------------------------------------
+*/
 package icache_tagram;
-    `include "icache_parameters.bsv"
-    `include "Logger.bsv"
-    import nb_icache_types ::*;
-    import Vector ::*;
-    import BRAMCore ::*;
+  `include "icache_parameters.bsv"
+  `include "Logger.bsv"
+  import nb_icache_types ::*;
+  import Vector ::*;
+  import BRAMCore ::*;
     
-    // Following modules provides the design for the Tag RAM of a non-blocking VIPT cache 
-    // The design is built on top of a BRAMCore2 module (1-read, 1-write port)
-    interface Ifc_icache_tagram;
+  // Following modules provides the design for the Tag RAM of a non-blocking VIPT cache 
+  // The design is built on top of a BRAMCore2 module (1-read, 1-write port)
+  interface Ifc_icache_tagram;
 
     // This method is used to initiate a read on the Tag RAM. Read latency is 2 cycles
     method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
@@ -28,10 +37,8 @@ package icache_tagram;
     // BRAM length = `numsets 
     // BRAM width = `tagbits
     // BRAM port a is used for reads and port b is used for writes
-    // The valid bits are part of a separate structure called "rg_status" (part of nb_icache.bsv)
+    // The valid bits are part of a separate structure called "rg_icache_valid" (part of nb_icache.bsv)
     Vector#(`numways,BRAM_DUAL_PORT#(Bit#(`setbits), Bit#(`tagbits))) tag_ram <- replicateM(mkBRAMCore2(`numsets, False));
-    // Used store the tag from the read request needed for final hitmask generation
-    //Reg#(Bit#(`tagbits)) rg_read_req_tag  <- mkReg(0);
     //
     method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
       Bit#(`setbits) index = fn_extract_set(address);
@@ -39,7 +46,6 @@ package icache_tagram;
         for(Integer i=0; i < `numways; i = i + 1) begin
           tag_ram[i].a.put(False,index,0); 
         end
-        //rg_read_req_tag <= truncateLSB(address);
         `logLevel( icache, 2, $format("ICACHE: TRAM: Read request for set %d", index))
       end
     endmethod
@@ -55,10 +61,8 @@ package icache_tagram;
       end
     endmethod
     //
-    //method Bit#(`numways) mv_read_response;
     method Bit#(`numways) mv_read_response(Bit#(`tagbits) read_req_tag);
 
-      //Bit#(`tagbits) tag_in = rg_read_req_tag;
       Bit#(`tagbits) tag_in = read_req_tag;
       Bit#(`numways) lv_hitmask = 0;
 

@@ -1,3 +1,7 @@
+/*
+see LICENSE.iitm
+--------------------------------------------------------------------------------------------------
+*/
 `include "parameters.bsv"
 
 // Parameters used for non-blocking I-cache
@@ -12,6 +16,9 @@
 `define byteoffset 4     // (Bits) log2(wordsize/8)
 `define offsetbits 6    // (Bits) wordoffset+byteoffset
 `define tagbits 20      // (Bits) `paddr(32) - (setbits+wordoffset+byteoffset)
+//`define irepl_lru True
+`define irepl_rrobin True
+//`define irepl_plru True
 `define ibuswidth 128 // (Bits)
 `define fetch_width 128 // (Bits)
 `define mhb_size 8

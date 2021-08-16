@@ -1,8 +1,9 @@
 /*
 see LICENSE.iitm
-Author: Neel Gala, Nitya Ranganathan
-Email id: neelgala@gmail.com, nitya.ranganathan@gmail.com
-Details: Fully associative ITLB (Instruction Translation Lookaside Buffer) for nb_icache
+
+Author : Neel Gala, Nitya Ranganathan
+Email id : neelgala@gmail.com, nitya.ranganathan@gmail.com
+Details : Fully associative ITLB (Instruction Translation Lookaside Buffer) for nb_icache
 
 --------------------------------------------------------------------------------------------------
 */

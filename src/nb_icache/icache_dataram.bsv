@@ -1,3 +1,12 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details : I-Cache Data Array
+
+--------------------------------------------------------------------------------------------------
+*/
 package icache_dataram;
     `include "icache_parameters.bsv"
     `include "Logger.bsv"

@@ -1,8 +1,16 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details :
+  // Implements Core response Queue:  
+  //    A structure that has 2^reqid_width entries and keeps track of requests and 
+  //    fetched data in order so that responses can be sent to the core in order.
+
+--------------------------------------------------------------------------------------------------
+*/
 package crq;
-    // Implements Core response Queue:  
-    // A structure that has 2^reqid_width entries and keeps track of requests and 
-    // fetched data in order so that responses can be sent to the core in order.
-    //
     import nb_icache_types     ::*;
     import Vector              ::*;
     import DReg                ::*;

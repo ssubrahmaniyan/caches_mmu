@@ -1,3 +1,12 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details :
+
+--------------------------------------------------------------------------------------------------
+*/
 package nb_icache_types;
   import Vector :: * ;
   import itlb_types ::*;
@@ -58,6 +67,7 @@ package nb_icache_types;
         Bit#(TAdd#(TLog#(`mhb_size),TLog#(`imshr_depth))) mhb_index;
         Bool fb_valid;
         Bit#(`wordsize) fb_data;
+        Bit#(TLog#(`numways)) replacement_way;
     } MHB_lookup_resp deriving(Bits, Eq,FShow);
     //    
     typedef struct{
@@ -67,6 +77,7 @@ package nb_icache_types;
         Bit#(`wordsize) data;
         Bit#(TLog#(`numways)) replacement_way;
         Vector#(`numways,Bit#(1)) way_valid;
+        Bit#(TLog#(`numways)) hit_way;
     } Stage2 deriving(Bits,Eq,FShow);
     
     typedef struct{

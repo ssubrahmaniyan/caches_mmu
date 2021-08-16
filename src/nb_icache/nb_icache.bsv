@@ -1,22 +1,37 @@
+/*
+see LICENSE.iitm
+
+Author : Sujay Pandit, Nitya Ranganathan
+Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
+Details : Non-Blocking I-Cache
+          // Components: ITLB, Data Array, Tag Array, Valid bits, Replacement Bits, MHB, CRQ
+          // VIPT cache supporting multiple misses under a miss
+          // Requests from core received in-order
+          // Responses to core sent in-order
+          // TODO: Performance enhancements, Cache-side prefetch support
+
+--------------------------------------------------------------------------------------------------
+*/
 package nb_icache;
-    import icache_tagram    ::*;
-    import icache_dataram   ::*;
-    import icache_mhb       ::*;
-    import itlb             ::*;
-    import io_func          ::*;
-    import itlb_types       ::*;
-    import nb_icache_types  ::*;
-    import common_tlb_types ::*;
-    import crq              ::*;
+    import icache_tagram      ::*;
+    import icache_dataram     ::*;
+    import icache_replacement ::*;
+    import icache_mhb         ::*;
+    import itlb               ::*;
+    import io_func            ::*;
+    import itlb_types         ::*;
+    import nb_icache_types    ::*;
+    import common_tlb_types   ::*;
+    import crq                ::*;
     `include "icache_parameters.bsv"
     `include "Logger.bsv"
     //
-    import DReg             ::*;
-    import GetPut           ::*;
-    import Vector           ::*;
-    import FIFO             ::*;
-    import FIFOF            ::*;
-    import SpecialFIFOs     ::*; 
+    import DReg               ::*;
+    import GetPut             ::*;
+    import Vector             ::*;
+    //import FIFO               ::*;
+    import FIFOF              ::*;
+    import SpecialFIFOs       ::*; 
     
 
     interface Ifc_nb_icache;
@@ -33,7 +48,6 @@ package nb_icache;
     endinterface
     //
     (*synthesize*)
-    //(*conflict_free="rl_icache_fence,rl_LFB_release_to_cache"*)
     module mknb_icache(Ifc_nb_icache);
 
         // Fifos
@@ -91,6 +105,7 @@ package nb_icache;
         Wire#(Bool) wr_lookup_arrays_valid <- mkDWire(False);
         Wire#(Bit#(`vaddr)) wr_lookup_vaddr <- mkDWire(0);
         Wire#(Bit#(`reqid_width)) wr_lookup_reqid <- mkDWire(0);
+        Wire#(Bit#(TLog#(`numways))) wr_replacement_way <- mkDWire(0);
 
         Wire#(Bool) wr_replay_stage1_valid <- mkDWire(False);
         Wire#(Bool) wr_replay_stage1_tlb_response <- mkDWire(False);
@@ -117,18 +132,16 @@ package nb_icache;
         Wire#(Bool) wr_preread_io_valid <- mkDWire(False);
         Wire#(Bool) wr_preread_io_issued <- mkDWire(False);
 
-
-
-
-        // Initialize structures
+        // I-Cache structures
         Vector#(`numsets, Vector#(`numways,Reg#(Bit#(1)))) rg_icache_valid <- replicateM(replicateM(mkReg(0)));
         Ifc_icache_tagram ifc_tag <- mkicache_tagram();
         Ifc_icache_dataram ifc_data <- mkicache_dataram();
         Ifc_icache_mhb ifc_mhb <- mkicache_mhb();
-        // Ifc_replace#(`numsets,`numways) ifc_replacement <- mkreplace(`irepl);
+        Ifc_icache_replacement ifc_replacement <- mkicache_replacement();
         Ifc_itlb ifc_itlb <- mkitlb(0);
         Ifc_crq ifc_crq <- mk_crq();
-        //
+
+
         rule rl_pre_read_registers;
             for(Integer i=0;i<`numsets;i=i+1) begin
                 for(Integer j=0;j<`numways;j=j+1) begin
@@ -177,16 +190,29 @@ package nb_icache;
             `logLevel( icache, 1, $format("ICACHE: Status: pending_requests? %b", (wr_preread_stage2_valid || !ifc_mhb.mv_mshr_empty())))
         endrule
         //
+        rule rl_lookup_replacement;
+          Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+          Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(wr_preread_icache_valid[lv_set_index]);
+          Bit#(TLog#(`numways)) lv_replacement_way = '0;
+
+          lv_replacement_way <- ifc_replacement.mav_replace_way(lv_set_index, lv_way_valid); // TODO
+          wr_replacement_way <= lv_replacement_way;
+        endrule
+        //
         rule rl_lookup_arrays;
             if(wr_lookup_arrays_valid) begin
-                Bit#(`setbits) lv_set_index= wr_lookup_vaddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+                Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
                 Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(wr_preread_icache_valid[lv_set_index]);
                 //
                 Stage2 lv_stage2_data = unpack(0);
                 lv_stage2_data.paddr = wr_tlb_response.address;
                 lv_stage2_data.req_id = wr_lookup_reqid;
-                // lv_stage2_data.replacement_way <- ifc_replacement.line_replace(lv_set_index,lv_way_valid); // TODO
-                lv_stage2_data.replacement_way = 0; // TODO for testing purposes, always replace way 0
+                if (`numways == 1) begin // direct-mapped
+                  lv_stage2_data.replacement_way = 0; // always way = 0
+                end
+                else begin // set-associative
+                  lv_stage2_data.replacement_way = wr_replacement_way;
+                end
                 lv_stage2_data.way_valid = lv_way_valid;
                 //
                 // send BRAM request
@@ -209,6 +235,13 @@ package nb_icache;
                 lv_tagram_response = ifc_tag.mv_read_response(rg_lookup_ptag);
                 lv_hitmask = (lv_tagram_response & pack(lv_stage2_data.way_valid));
                 lv_stage2_data.tag_hit = unpack(|lv_hitmask);
+
+                lv_stage2_data.hit_way = '0;
+                for (Integer i=0; i<`numways; i=i+1) begin
+                  if (lv_hitmask[i] == 1) begin
+                    lv_stage2_data.hit_way = fromInteger(i);
+                  end
+                end
                 //     
                 // Extracting corresponding word from the block
                 //
@@ -219,7 +252,7 @@ package nb_icache;
                 lv_stage2_data.data = lv_cache_block[`wordsize-1:0];
                 //
                 wr_stage2_data <= lv_stage2_data; 
-                `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b # paddr %h ptag %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.paddr, rg_lookup_ptag, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
+                `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b way %d # paddr %h ptag %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.hit_way, lv_stage2_data.paddr, rg_lookup_ptag, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
             end
             else begin
                 wr_stage2_data <= rg_stage2_req_data;
@@ -262,10 +295,15 @@ package nb_icache;
         //
         //
         rule rl_icache_fence(wr_icache_fence);
+            // reset valid bits
             for(Integer i=0;i<`numsets;i=i+1) begin
                 for(Integer j=0;j<`numways;j=j+1) begin
                     rg_icache_valid[i][j] <= 0;  
                 end
+            end
+            // reset replacement
+            if (`numways > 1) begin
+              ifc_replacement.ma_reset();
             end
             `logLevel( icache, 1, $format("ICACHE: Fence: Invalidating all sets."))
         endrule
@@ -625,6 +663,8 @@ package nb_icache;
             end
             else if(wr_preread_stage2_valid) begin
                 let stage2_data = wr_stage2_data;
+                Bit#(`setbits) lv_set_index = stage2_data.paddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+
                 MHB_lookup_resp lv_mhb_resp = ifc_mhb.mv_mshr_lookup(rg_stage2_valid,stage2_data.paddr);
                 // cache hit
                 if(stage2_data.tag_hit) begin
@@ -635,7 +675,9 @@ package nb_icache;
                                                 trap: False,
                                                 cause: '0
                                                 };
-                    // TODO Update replacement data with selected way
+                    if (`numways > 1) begin
+                      ifc_replacement.ma_update(lv_set_index, stage2_data.hit_way, True);
+                    end
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_stall = False;
                     `logLevel( icache, 1, $format("ICACHE: Stage2: RAM hit for req_id %d data %h", stage2_data.req_id, stage2_data.data))
@@ -649,6 +691,9 @@ package nb_icache;
                                             trap: False,
                                             cause: '0
                                             };
+                    if (`numways > 1) begin
+                      ifc_replacement.ma_update(lv_set_index, lv_mhb_resp.replacement_way, True);
+                    end
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_stall = False;
                     `logLevel( icache, 1, $format("ICACHE: Stage2: MHB hit for req_id %d data %h", stage2_data.req_id, lv_mhb_resp.fb_data))
@@ -662,14 +707,24 @@ package nb_icache;
                                                 stage2_data.paddr,stage2_data.req_id,stage2_data.replacement_way);
                         wr_stage2_valid <= False;
                         lv_stage2_next_cycle_stall = False;
-                        // TODO Update replacement on miss (to be implemented)
                         `logLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, allocating MHB entry: paddr %h hit %b index %h repl_way %d ", stage2_data.req_id, stage2_data.paddr, lv_mhb_resp.hit_mhb, lv_mhb_resp.mhb_index, stage2_data.replacement_way))
+
+                        // update replacement on hit/miss
+                        if (`numways > 1) begin
+                          if (lv_mhb_resp.hit_mhb) begin
+                            ifc_replacement.ma_update(lv_set_index, lv_mhb_resp.replacement_way, True);
+                          end
+                          else begin
+                            ifc_replacement.ma_update(lv_set_index, '0, False);
+                          end
+                        end
                     end
                     else begin // Stall stage 2
                         //wr_stage2_valid <= lv_stage2_next_cycle_stall; // always True under this condition
                         wr_stage2_valid <= True;
                         rg_stage2_req_data <= wr_stage2_data; 
                         `logLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, MHB full, stalling.", stage2_data.req_id))
+                        // stall => no replacement update
                     end
                 end
             end
