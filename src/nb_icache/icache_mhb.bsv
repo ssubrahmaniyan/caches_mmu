@@ -77,6 +77,8 @@ package icache_mhb;
         Vector#(`mhb_size,Vector#(`imshr_depth,Wire#(Bool))) wr_mshr_valid <- replicateM(replicateM(mkDWire(False))); // read corresponding register in the beginning of the cycle
         Vector#(`mhb_size,Wire#(Bit#(TLog#(`imshr_depth)))) wr_mshr_req_to_be_served <- replicateM(mkDWire(0)); // read corresponding register in the beginning of the cycle
         Wire#(Bool) wr_new_entry_serve_conflict <- mkDWire(False); // if a new entry arrives to same index as the one being served
+        Wire#(Bool) wr_mshr_full <- mkDWire(False);
+        Wire#(Bool) wr_mshr_empty <- mkDWire(False);
         //
         Wire#(Bool) wr_req_satisfied <- mkDWire(False); // when serving miss requests to CRQ
         Wire#(Bit#(TLog#(`mhb_size))) wr_satisfied_req_primary_idx <- mkDWire(0);
@@ -170,7 +172,9 @@ package icache_mhb;
             end 
             rg_mshr_free_count <= lv_count_free;
             rg_mshr_full <= lv_is_full;
+            wr_mshr_full <= lv_is_full;
             rg_mshr_empty <= (lv_count_free == `mhb_size);
+            wr_mshr_empty <= (lv_count_free == `mhb_size);
         endrule
         //
         rule rl_set_valid_allocate_read_response(!wr_flush);
@@ -201,17 +205,25 @@ package icache_mhb;
         rule rl_set_valid_lfb_release;
             if(wr_releasing) begin
                 rg_fb_valid[wr_releasing_primary_index] <= False;
+                `logLevel( icache, 1, $format("ICACHE: MHB: LFB %d released.", wr_releasing_primary_index))
             end
         endrule
         //
         rule rl_increment_fb_request_ptr;
-            // Increment fill request pointer if 1) we are setting issued this cycle or 2) entry is valid and already issued or 3) entry is invalid
+            // Increment/set fill request pointer if
+            //   1) we are setting issued this cycle or
+            //   2) entry is valid and already issued or
+            //   3) a new entry is allocated in empty mhb or
+            //   4) entry is invalid
             if(wr_set_issued) begin
                 rg_fb_issued[rg_fill_request_entry_ptr] <= wr_set_issued;
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
             else if(wr_fb_valid[rg_fill_request_entry_ptr] && wr_fb_issued[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
+            end
+            else if(wr_mshr_empty && wr_increment_free_entry_ptr) begin
+                rg_fill_request_entry_ptr <= rg_mhb_free_entry_ptr;
             end
             else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
@@ -222,8 +234,8 @@ package icache_mhb;
             Bit#(TLog#(`mhb_size)) lv_free_index = rg_mhb_free_entry_ptr;
             Bool lv_available = False;
 
-            // the free ptr has to move ahead if either a new entry has been allocated or if there's a release in that cycle
-            // NOTE: the free ptr is wrong when the mhb is full and needs to point to the next available entry as soon as it is available
+            // NOTE: The free ptr has to move ahead if either a new entry has been allocated or if there's a release in that cycle
+            //       The pointer is wrong when the mhb is full (allocation disabled on full) and needs to point to the next available entry as soon as it is available
             if (wr_increment_free_entry_ptr) begin
               for(Integer i=0;i<`mhb_size;i=i+1) begin
                   if(!wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
@@ -232,7 +244,8 @@ package icache_mhb;
                   end
               end
             end
-            if (wr_releasing && !lv_available) begin
+            //if (wr_releasing && !lv_available) begin
+            if (wr_releasing && wr_mshr_full) begin
               lv_free_index = wr_releasing_primary_index;
             end
             rg_mhb_free_entry_ptr <= lv_free_index;

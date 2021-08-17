@@ -726,10 +726,14 @@ package nb_icache;
                         `logLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, MHB full, stalling.", stage2_data.req_id))
                         // stall => no replacement update
                     end
-                end
+                end // miss
             end
+            else begin // stage2 invalid
+              `logLevel( icache, 1, $format("ICACHE: Stage2: Disabled."))
+            end
+
             // Convey to stage 1 in the current cycle that stage 2 will be free next cycle
-            // So that stage 1 can latch a request for stage 2 in the current cycle itself.
+            // So that stage 1 can latch a request for stage 2 in the current cycle.
             wr_stage2_next_cycle_stall <= lv_stage2_next_cycle_stall;
             rg_stage2_next_cycle_stall <= lv_stage2_next_cycle_stall;
         endrule
