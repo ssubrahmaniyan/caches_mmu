@@ -1266,9 +1266,10 @@ package dcache_lib;
     method ActionValue#(Tuple2#(Bit#(TMul#(wordsize,8)),Bit#(TMul#(wordsize,8)))) 
                                                             mav_check_sb_hit (Bit#(addr) phyaddr);
     method Action ma_allocate_entry (Bit#(addr) address, Bit#(TMul#(8,wordsize)) data, 
-            Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size
+      Bit#(esize) epochs, Bit#(TLog#(fbsize)) fbindex, Bit#(2) size
           `ifdef atomic ,Bool atomic, Bit#(TMul#(8,wordsize)) read_data, Bit#(5) atomic_op `endif );
-    method Action ma_commit_store;
+    //method Action ma_commit_store;
+    method Action ma_commit_store(Bit#(TLog#(sbsize)) sbid);
     method Action ma_increment_head;
     method Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)) mv_sb_head;
     method Bool mv_sb_full;
@@ -1276,6 +1277,7 @@ package dcache_lib;
     method Bool mv_sb_busy;
     method Bool mv_sb_head_commit;
     method Bool mv_sb_head_valid;
+    method Bit#(TLog#(sbsize)) mv_sb_curr_tail;
   endinterface : Ifc_storebuffer
 
   /*(*conflict_free="ma_allocate_entry, ma_increment_head"*)
@@ -1465,11 +1467,12 @@ package dcache_lib;
     method mv_sb_full = sb_full;
     method mv_sb_empty = sb_empty;
 
-    method Action ma_commit_store;
+    method Action ma_commit_store(Bit#(TLog#(sbsize)) sbid);
     `ifdef ASSERT
       dynamicAssert(v_sb_valid[rg_head],"SB commit to invalid entry.");
+      dynamicAssert(!v_sb_commit[sbid][0],"SB commit to already commit entry.");
     `endif
-      v_sb_commit[rg_head][0]<=True;
+      v_sb_commit[sbid][0]<=True;
     endmethod:ma_commit_store
 
     method Action ma_increment_head;
@@ -1489,6 +1492,7 @@ package dcache_lib;
     method mv_sb_busy = rg_sb_busy;
     method mv_sb_head_commit = v_sb_commit[rg_head][1]; 
     method mv_sb_head_valid = v_sb_valid[rg_head];
+    method mv_sb_curr_tail = rg_tail;
   endmodule : mk_storebuffer
 
 `ifdef dcache_dualport
