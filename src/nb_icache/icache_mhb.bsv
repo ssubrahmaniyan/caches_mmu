@@ -79,6 +79,7 @@ package icache_mhb;
         Wire#(Bool) wr_new_entry_serve_conflict <- mkDWire(False); // if a new entry arrives to same index as the one being served
         Wire#(Bool) wr_mshr_full <- mkDWire(False);
         Wire#(Bool) wr_mshr_empty <- mkDWire(False);
+        Wire#(Bool) wr_mshr_pending_fill <- mkDWire(False);
         //
         Wire#(Bool) wr_req_satisfied <- mkDWire(False); // when serving miss requests to CRQ
         Wire#(Bit#(TLog#(`mhb_size))) wr_satisfied_req_primary_idx <- mkDWire(0);
@@ -152,6 +153,7 @@ package icache_mhb;
         rule rl_mhb_counters;
             Bool lv_is_full = True, lv_entry_valid = True;
             Bit#(TAdd#(1,TLog#(`mhb_size))) lv_count_free = '0;
+            Bool lv_pending_fill = False;
             if(wr_flush) begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
                     if(!wr_fb_valid[i] || (wr_fb_valid[i] && !wr_fb_issued[i])) begin // flush will invalidate entries which haven't yet been issued to memory
@@ -159,6 +161,7 @@ package icache_mhb;
                         lv_count_free = lv_count_free + 1;
                     end
                 end
+                lv_pending_fill = False;
             end
             else begin
                 for(Integer i=0;i<`mhb_size;i=i+1) begin
@@ -168,6 +171,9 @@ package icache_mhb;
                         lv_is_full = False;
                         lv_count_free = lv_count_free + 1;
                     end
+                    if (wr_fb_valid[i] && !wr_fb_issued[i]) begin
+                      lv_pending_fill = True;
+                    end
                 end
             end 
             rg_mshr_free_count <= lv_count_free;
@@ -175,6 +181,7 @@ package icache_mhb;
             wr_mshr_full <= lv_is_full;
             rg_mshr_empty <= (lv_count_free == `mhb_size);
             wr_mshr_empty <= (lv_count_free == `mhb_size);
+            wr_mshr_pending_fill <= lv_pending_fill;
         endrule
         //
         rule rl_set_valid_allocate_read_response(!wr_flush);
@@ -222,7 +229,7 @@ package icache_mhb;
             else if(wr_fb_valid[rg_fill_request_entry_ptr] && wr_fb_issued[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
-            else if(wr_mshr_empty && wr_increment_free_entry_ptr) begin
+            else if(!wr_mshr_pending_fill && wr_increment_free_entry_ptr) begin
                 rg_fill_request_entry_ptr <= rg_mhb_free_entry_ptr;
             end
             else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
