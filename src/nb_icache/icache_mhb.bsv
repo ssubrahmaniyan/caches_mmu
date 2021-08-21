@@ -217,20 +217,24 @@ package icache_mhb;
         endrule
         //
         rule rl_increment_fb_request_ptr;
-            // Increment/set fill request pointer if
-            //   1) we are setting issued this cycle or
-            //   2) entry is valid and already issued or
-            //   3) a new entry is allocated in empty mhb or
-            //   4) entry is invalid
-            if(wr_set_issued) begin
+            // set issued in lfb entry
+            if (wr_set_issued) begin
                 rg_fb_issued[rg_fill_request_entry_ptr] <= wr_set_issued;
+            end
+
+            // Increment/set fill request pointer if (TODO: optimize)
+            //   1) a new entry is allocated in empty mhb or
+            //   2) we are setting issued this cycle or
+            //   3) entry is valid and already issued or
+            //   4) entry is invalid
+            if(!wr_mshr_pending_fill && wr_increment_free_entry_ptr) begin // TODO: include "issued" in this cycle
+                rg_fill_request_entry_ptr <= rg_mhb_free_entry_ptr;
+            end
+            else if(wr_set_issued) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
             end
             else if(wr_fb_valid[rg_fill_request_entry_ptr] && wr_fb_issued[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
-            end
-            else if(!wr_mshr_pending_fill && wr_increment_free_entry_ptr) begin
-                rg_fill_request_entry_ptr <= rg_mhb_free_entry_ptr;
             end
             else if(!wr_fb_valid[rg_fill_request_entry_ptr]) begin
                 rg_fill_request_entry_ptr <= rg_fill_request_entry_ptr + 1;
