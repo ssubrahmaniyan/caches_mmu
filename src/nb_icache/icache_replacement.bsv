@@ -97,6 +97,7 @@ module mkicache_replacement(Ifc_icache_replacement);
               rg_replace[wr_update_set][j] <= wr_replace[wr_update_set][j] - 1;
             end
           end // for
+          `logLevel( icache, 2, $format("ICACHE: REPL: Update on hit: set %d way %d", wr_update_set, wr_update_way))
 
         // round robin
         `elsif irepl_rrobin
@@ -122,6 +123,7 @@ module mkicache_replacement(Ifc_icache_replacement);
               rg_replace[wr_update_set][j] <= wr_replace[wr_update_set][j] - 1;
             end
           end // for
+          `logLevel( icache, 2, $format("ICACHE: REPL: Update on miss: set %d way %d", wr_update_set, rg_prev_replace_way))
 
         // round robin
         `elsif irepl_rrobin
