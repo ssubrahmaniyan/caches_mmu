@@ -21,8 +21,10 @@ package dmem;
   import io_func::*;
   `include "dcache.defines"
 `ifdef dcache
-  `ifdef dcache_dualport
+  `ifdef dcache_2rw
     import dcache2rw :: *;
+  `elsif dcache_1r1w
+    import dcache1r1w :: *;
   `else
     import dcache1rw :: *;
   `endif
