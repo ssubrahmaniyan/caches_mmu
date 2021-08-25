@@ -1836,7 +1836,8 @@ package dcache_lib;
     Vector#( sbsize, ConfigReg#(Bool) ) v_sb_valid <- replicateM(mkConfigRegA(False)) ;
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
-    Vector#(sbsize, ConfigReg#(Bool)) v_sb_commit <- replicateM(mkConfigRegA(False));
+    //Vector#(sbsize, ConfigReg#(Bool)) v_sb_commit <- replicateM(mkConfigRegA(False));
+    Vector#(sbsize, Array#(Reg#(Bool))) v_sb_commit <- replicateM(mkCRegA(2,False));
     /*doc:reg: A vector of registers holding all the meta data of stores being presented by the core
      * to the cache*/
     Vector#( sbsize, ConfigReg#(SBEntry#(paddr, dataword, esize, lbbits))) v_sb_meta <- replicateM(mkConfigRegU);
@@ -1899,13 +1900,13 @@ package dcache_lib;
   `endif
 
     /*doc:rule: */
-    rule rl_commit_from_sb_to_line(v_sb_valid[rg_sb_head] && v_sb_commit[rg_sb_head] && 
+    rule rl_commit_from_sb_to_line(v_sb_valid[rg_sb_head] && v_sb_commit[rg_sb_head][1] && 
       v_lb_valid[v_sb_meta[rg_sb_head].lbindex] && !rg_sb_busy);
     `ifdef ASSERT
       dynamicAssert(v_lb_valid[v_sb_meta[rg_sb_head].lbindex] ,"SB: commiting STORE to an empty line");
     `endif
       v_sb_valid[rg_sb_head] <= False;
-      v_sb_commit[rg_sb_head] <= False;
+      v_sb_commit[rg_sb_head][1] <= False;
       let sb = v_sb_meta[rg_sb_head];
       `logLevel( dcache, 0, $format("[%2d]SB: Commiting Store from entry@[%2d]: ",id, rg_sb_head, fshow(sb)))
 
@@ -1960,10 +1961,10 @@ package dcache_lib;
       Bit#(dataword) storemask = temp << shiftamt;
     `ifdef ASSERT
       dynamicAssert(!v_sb_valid[rg_sb_tail],"Valid SB Entry Allocated");
-      dynamicAssert(!v_sb_commit[rg_sb_tail],"Commit field of SB is already set");
+      dynamicAssert(!v_sb_commit[rg_sb_tail][1],"Commit field of SB is already set");
     `endif
       v_sb_valid[rg_sb_tail] <= True;
-      v_sb_commit[rg_sb_tail] <= False;
+      //v_sb_commit[rg_sb_tail] <= False;
       let _s = SBEntry{address:address, data: data, epoch: epochs, lbindex: lbindex,
                                       mask: storemask, size:truncate(size)};
       v_sb_meta[rg_sb_tail] <= _s;
@@ -2067,15 +2068,15 @@ package dcache_lib;
       let {epoch, sbid} = c;
     `ifdef ASSERT
       dynamicAssert(v_sb_valid[sbid] ,"SB: commiting STORE from empty entry");
-      dynamicAssert(!v_sb_commit[sbid] ,"SB: commit field not False");
+      dynamicAssert(!v_sb_commit[sbid][0] ,"SB: commit field not False");
     `endif
       `logLevel( dcache, 0, $format("[%2d]SB: making entry ready for commit [%2d]: ",id, sbid))
       let sb = v_sb_meta[sbid];
       if (epoch == sb.epoch)
-        v_sb_commit[sbid] <= True;
+        v_sb_commit[sbid][0] <= True;
       else begin
         v_sb_valid[sbid] <= False;
-        v_sb_commit[sbid] <= False;
+        v_sb_commit[sbid][0] <= False;
         v_lb_sbpending[sb.lbindex][sbid][1] <= 0;
         if (rg_sb_head == fromInteger(v_sbsize - 1))
           rg_sb_head <= 0;

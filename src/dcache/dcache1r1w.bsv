@@ -192,7 +192,7 @@ package dcache1r1w;
     
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the request from the core.*/
-    FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkSizedFIFOF(2);
+    FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_core_request <- mkUGSizedFIFOF(2);
 
     /*doc:fifo: This fifo stores the response that needs to be sent back to the core.*/
     FIFOF#(DMem_core_response#(`respwidth,`desize))ff_core_response <- mkSizedBypassFIFOF(2);
@@ -382,7 +382,8 @@ package dcache1r1w;
     endrule*/
 
     rule rl_fence_operation(rg_fence_stall && ff_core_request.first.fence && sb_empty && io_empty
-                            && !rg_performing_replay[0] && !rg_miss_handling && !rg_eviction_required);
+            && ff_core_request.notEmpty && !rg_performing_replay[0] 
+            && !rg_miss_handling && !rg_eviction_required);
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence processing set:%d way:%b",id,rg_fence_set, rg_fence_way))
       `logLevel( dcache, 0, $format("[%2d]DCACHE: Fence flags: v:%d d:%d",id,
                        v_reg_valid[fromOInt(unpack(rg_fence_way))][rg_fence_set],
@@ -435,6 +436,7 @@ package dcache1r1w;
     /*doc:rule: This rule checks the tag rams for a hit*/
     rule rl_ram_check(!ff_core_request.first.fence && !rg_miss_handling && !sb_full
                       && !sb_busy && !rg_eviction_required && !rg_performing_replay[0]
+                      && ff_core_request.notEmpty
                   `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif );
       let req = ff_core_request.first;
       `logLevel( dcache, 2, $format("[%2d]DCACHE: RAM Processing Req:",id,fshow(req)))
@@ -650,16 +652,18 @@ package dcache1r1w;
         rg_fill_eviction <= False;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Initiating eviction of dirty line replaced", id))
       end
-      if (rg_recent_req == rg_fill_set || rg_fill_eviction) begin
+      if ((rg_recent_req == rg_fill_set || rg_fill_eviction) && ff_core_request.notEmpty) begin
         rg_performing_replay[1] <= True;
       end
     endrule:rl_fill_release
 
     /*doc:rule: */
-    rule rl_store_release(m_storebuffer.mv_release_head.release_ready && (sb_full || rg_fence_stall) &&
+    rule rl_store_release(m_storebuffer.mv_release_head.release_ready && 
+                          (sb_full || rg_fence_stall || !ff_core_request.notEmpty) &&
                           !m_storebuffer.mv_line_empty && !rg_eviction_required && 
                           !rg_performing_replay[1]);
       let lb_entry = m_storebuffer.mv_release_head;
+      `logLevel( dcache, 0, $format("[%2d]DCACHE: Store release from entry:%d",id,m_storebuffer.mv_lb_tail))
 	    Bit#(`setbits) set_index = lb_entry.address[v_setbits+v_blockbits+v_wordbits-1:v_blockbits+v_wordbits];
       Bit#(`dways) lv_set_valid=?;
       Bit#(`dways) lv_set_dirty=?;
@@ -692,7 +696,7 @@ package dcache1r1w;
         m_storebuffer.ma_release;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: ",id, fshow(lb_entry), " to tag:%h set:%d way:%d",
           lv_tag, set_index, waynum))
-        if (rg_recent_req == set_index || rg_store_eviction) begin
+        if ( (rg_recent_req == set_index || rg_store_eviction) && ff_core_request.notEmpty) begin
           rg_performing_replay[1] <= True;
         end
       end
