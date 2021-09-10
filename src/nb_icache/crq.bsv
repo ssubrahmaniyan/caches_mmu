@@ -25,11 +25,14 @@ package crq;
         lv_crq_data.cause = in.cause;
         return lv_crq_data;
     endfunction
+
     interface Ifc_crq;
         method Action ma_icache_response(Vector#(`crq_input_size, ICache_core_response)  in);
         method Action ma_flush(Bool flush);
         method ActionValue#(ICache_core_response) mav_crq_response();
     endinterface
+
+    (*synthesize*)
     module mk_crq(Ifc_crq);
         // Registers
         Vector#(`crq_size,Reg#(Bool)) rg_crq_valid <- replicateM(mkReg(False));
@@ -58,6 +61,7 @@ package crq;
         //
         //
         rule rl_head_released;
+            // NOTE: for bypassed responses, the current rule's invalidation should override the valid bit setting in the above rule (for the head entry)
             if(wr_released_head && !wr_flush) begin
                 rg_crq_head <= rg_crq_head + 1;
                 rg_crq_valid[rg_crq_head] <= False;
@@ -87,18 +91,35 @@ package crq;
             CRQ_core_response lv_resp = unpack(0);
             ICache_core_response lv_resp_final= unpack(0);
 
-            // TODO: bypass responses from the same cycle for regular requests
-            // NOTE: For fence/sfence, bypassed responses will need a corresponding change in FTQ on the core side
-            if(rg_crq_valid[rg_crq_head] && !wr_flush) begin
+            if (!wr_flush) begin
+              // latched response
+              if(rg_crq_valid[rg_crq_head] && !wr_flush) begin
                 lv_resp = rg_crq_data[rg_crq_head];
                 wr_released_head <= True;
                 `logLevel( icache, 1, $format("ICACHE: CRQ: Response to Core (dequeue): ", fshow(lv_resp)))
-            end
-            lv_resp_final = ICache_core_response { valid   : lv_resp.valid,
-                                                   req_id  : rg_crq_head,
-                                                   packet  : lv_resp.packet,
-                                                   trap    : lv_resp.trap,
-                                                   cause   : lv_resp.cause };
+              end
+              // bypass responses in the same cycle for regular requests without exception response
+              //    NOTE: stage1 responses (fence, sfence, exception) have to be latched before sending
+              //    TODO: For stage1 responses coming back in the same cycle, a corresponding change in FTQ is needed
+              else if (wr_crq_in[0].valid && (wr_crq_in[0].req_id == rg_crq_head)) begin // stage2
+                lv_resp = fn_extract_crq_data(wr_crq_in[0]);
+                wr_released_head <= True;
+              end
+              else if (wr_crq_in[1].valid && (wr_crq_in[1].req_id == rg_crq_head)) begin // mhb
+                lv_resp = fn_extract_crq_data(wr_crq_in[1]);
+                wr_released_head <= True;
+              end
+              else if (wr_crq_in[2].valid && (wr_crq_in[2].req_id == rg_crq_head)) begin // io
+                lv_resp = fn_extract_crq_data(wr_crq_in[2]);
+                wr_released_head <= True;
+              end
+
+              lv_resp_final = ICache_core_response { valid   : lv_resp.valid,
+                                                     req_id  : rg_crq_head,
+                                                     packet  : lv_resp.packet,
+                                                     trap    : lv_resp.trap,
+                                                     cause   : lv_resp.cause };
+            end // !flush
             return lv_resp_final;
         endmethod
         //
