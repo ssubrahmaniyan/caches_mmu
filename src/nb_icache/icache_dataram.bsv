@@ -17,13 +17,13 @@ package icache_dataram;
         // method to initiate a read request (read latency 2 cycles)
         method Action ma_read_request( Bool valid,Bit#(`vaddr) address);
 
-        // method to initiate a write.
+        // method to initiate a write
         method Action ma_write_request( Bool valid,
                               Bit#(`paddr) address,
                               Bit#(`blocksize) data,
                               Bit#(TLog#(`numways)) way);
 
-        //This method will return block from the bank specified by the hitmask
+        // This method will return the block from the bank specified by the hitmask
         method Bit#(`blocksize) mv_read_response(Bit#(`numways) hitmask);
     endinterface
     (*synthesize*)

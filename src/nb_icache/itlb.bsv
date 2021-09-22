@@ -101,7 +101,7 @@ package itlb;
       Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = vaddress[`vaddr - 1 : `maxvaddr];
 
       // transparent translation
-      if(satp_mode == 0 || wr_priv == 3)begin
+      if (satp_mode == 0 || wr_priv == 3) begin
         Bit#(`paddr) coreresp = truncate(vaddress);
         Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(vaddress);
         Bool trap = |upper_bits == 1;

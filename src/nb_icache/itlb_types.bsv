@@ -31,14 +31,14 @@ package itlb_types;
     typedef struct{
         Bit#(addr)        address;
         Bool              sfence;
-    }ITLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
+    } ITLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
     
     typedef struct{
         Bool              hit;
         Bit#(addr)        address;
         Bool              trap;
         Bit#(`causesize)  cause;
-    }ITLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
+    } ITLB_core_response# (numeric type addr) deriving(Bits, Eq, FShow);
 
     
     // -------------------------- TLB Structs ----------------------------------------------------//
@@ -52,7 +52,7 @@ package itlb_types;
         Bool a;					//accessed already
         Bool d;					//dirty
     } TLB_permissions deriving(Eq, FShow);
-    
+
     instance Bits#(TLB_permissions,8);
         /*doc:func: */
         function Bit#(8) pack (TLB_permissions p);

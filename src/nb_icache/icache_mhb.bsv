@@ -4,17 +4,16 @@ see LICENSE.iitm
 Author : Sujay Pandit, Nitya Ranganathan
 Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
 Details : I-Cache Miss Handling Buffer (MHB)
-          // MHB : LFB + MSHR
+          // MHB : LFB + MSHR (Line Fill Buffers + Miss Status Handling Registers)
 
 --------------------------------------------------------------------------------------------------
 */
 package icache_mhb;
-    // i-cache miss handling module (MSHR+Line fill buffer)
     `include "icache_parameters.bsv"
     `include "Logger.bsv"
     import nb_icache_types ::*;
     import Vector ::*;
-    //
+
     interface Ifc_icache_mhb;
         method Bool mv_mshr_empty();
         method Bool mv_mshr_full();
@@ -28,18 +27,9 @@ package icache_mhb;
         method Action ma_set_issued(Bool valid);
         method Action ma_flush(Bool flush);
     endinterface
+
     (*synthesize*)
     (*conflict_free="ma_fill_from_memory, ma_allocate_entry"*)
-    //(*conflict_free="ma_flush, ma_allocate_entry"*)
-    //(*conflict_free="ma_set_issued, ma_allocate_entry"*)
-    //(*conflict_free="mv_miss_response, ma_allocate_entry"*)
-    //(*conflict_free="mv_fb_release, ma_allocate_entry"*)
-    //(*conflict_free="rl_increment_fb_request_ptr, ma_allocate_entry"*)
-    //(*conflict_free="rl_check_all_served, ma_allocate_entry"*)
-    //(*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_request_satisfied"*)
-    //(*conflict_free="rl_set_valid_allocate_read_response, rl_set_valid_lfb_release"*)
-    //(*conflict_free="ma_flush, rl_set_valid_lfb_release"*)
-    //(*conflict_free="rl_set_valid_allocate_read_response, ma_flush"*)
     module mkicache_mhb(Ifc_icache_mhb);
         // MSHR Registers
         Vector#(`mhb_size,Vector#(`imshr_depth,Reg#(Bool))) rg_mshr_valid <- replicateM(replicateM(mkReg(False)));
@@ -203,12 +193,6 @@ package icache_mhb;
             end
         endrule
         //
-//        rule rl_set_valid_request_satisfied(!wr_flush);
-//            if(wr_req_satisfied) begin
-//                rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
-//            end
-//        endrule
-        //
         rule rl_set_valid_lfb_release;
             if(wr_releasing) begin
                 rg_fb_valid[wr_releasing_primary_index] <= False;
@@ -284,7 +268,6 @@ package icache_mhb;
                 //
                 // serve ptr can be incremented if everything's served in this entry or the fill hasn't issued
                 // TODO: add line fill pending condition; optimize to follow fill_request pointer
-                //rg_serve_mshr_entry_ptr <= (lv_all_served)?lv_mhb_index+1:lv_mhb_index;
                 rg_serve_mshr_entry_ptr <= (lv_all_served) ? lv_mhb_index+1 : ((!wr_fb_valid[lv_mhb_index] || !wr_fb_issued[lv_mhb_index]) ? (lv_mhb_index+1) : lv_mhb_index);
                 //
                 rg_mshr_req_to_be_served[lv_mhb_index] <= (wr_req_satisfied)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served;  // rg_serve_mshr pointer (miss response pointer) can increment further with enhancements
