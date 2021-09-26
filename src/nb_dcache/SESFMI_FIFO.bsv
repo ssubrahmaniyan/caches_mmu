@@ -113,8 +113,9 @@ package SESFMI_FIFO;
   endmodule
 
   (*synthesize*)
+        // in the current controller design, 2nd stage has to be single entry latch for correctness (was 2 entries earlier)
 	(*preempts="initialize, (decCtr, incCtr, both)"*)
-	module mkSESFMI_second_stage_inst(Ifc_SESFMI_FIFO#(2, Bool));
+	module mkSESFMI_second_stage_inst(Ifc_SESFMI_FIFO#(1, Bool));
     let ifc();
     mkSESFMI_FIFO#(False) _temp(ifc);
     return (ifc);

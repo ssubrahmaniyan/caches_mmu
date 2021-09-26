@@ -240,9 +240,15 @@ package nb_dcache;
     FIFO#(Bit#(TAdd#(tagbits,2))) ff_first_stage_tag[ways_val];
     for(Integer i=0; i<ways_val; i=i+1)
       ff_first_stage_tag[i]<- mkBypassFIFO;
-    FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkGFIFOF(True, False);
-    Ifc_SESFMI_FIFO#(2, Bool) cff_second_stage_valid <- mkSESFMI_second_stage_inst;
-    Ifc_SEMF_FIFO#(2, Tuple2#(Bit#(rob_index), Bool)) cff_second_stage_rob_id <- mkSEMF_FIFO(?);
+
+    // NOTE: Only single entry FIFO in 2nd stage is allowed (was 2 entry guarded FIFO + custom FIFOs earlier) in the current controller design (260921)
+    //       On a tag mismatch and FB miss, a max. of 1 request is allowed to wait in the 2nd stage latch.
+    //       This is because we need to look at the waiting request and poll the FB every cycle to check for possible conflict with the FB address and stall FB release on a match.
+    //       This request, if stalled, waits because the MSHR is not ready yet or because the previous request to memory/L2 is still waiting.
+    //       See note from 150121.
+    FIFOF#(Cache_req#(paddr, datawidth, rob_index, prf_index)) ff_second_stage <- mkPipelineFIFOF;
+    Ifc_SESFMI_FIFO#(1, Bool) cff_second_stage_valid <- mkSESFMI_second_stage_inst;
+    Ifc_SEMF_FIFO#(1, Tuple2#(Bit#(rob_index), Bool)) cff_second_stage_rob_id <- mkSEMF_FIFO(?);
     FIFO#(Req_from_core#(paddr, datawidth, rob_index, prf_index, lsq_index)) ff_io_info <- mkFIFO;
 
     Reg#(Bool) rg_cache_busy <- mkConfigReg(True);  //TODO has to be reset depending upon when the leaf page is received
@@ -1292,16 +1298,17 @@ package nb_dcache;
     //If ff_second_stage is empty, flush is over. Hence, reset valid bit of rg_flush
     (*no_implicit_conditions, fire_when_enabled*)
     rule rl_flush_ff_second_stage(rg_flush.valid);
-      Vector#(2,Bool) valid= cff_second_stage_valid.contents;
-      Vector#(2,Tuple2#(Bit#(rob_index), Bool)) meta= cff_second_stage_rob_id.contents;
+      Vector#(1,Bool) valid= cff_second_stage_valid.contents;
+      Vector#(1,Tuple2#(Bit#(rob_index), Bool)) meta= cff_second_stage_rob_id.contents;
 
       if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[0])) && valid[0] && tpl_2(meta[0]))
         valid[0]= False;
-      if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[1])) && valid[1] && tpl_2(meta[1]))
-        valid[1]= False;
+      //if(should_flush(rg_flush.head, rg_flush.flush_rob, tpl_1(meta[1])) && valid[1] && tpl_2(meta[1]))
+      //  valid[1]= False;
 
       cff_second_stage_valid.initialize(valid);
-      `logLevel( dcache, 2, $format("DCACHE : Flusing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
+      `logLevel( dcache, 2, $format("DCACHE : Flushing everything! meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
+      //`logLevel( dcache, 2, $format("DCACHE : Flushing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
       mshr.flush(rg_flush);
     endrule
 
