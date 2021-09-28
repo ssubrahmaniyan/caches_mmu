@@ -17,7 +17,8 @@ package mshr;
 	import Vector::*;
 	import SEMF_FIFO::*;
 	import SESFMI_FIFO::*;
-	`include "parameters.txt"
+        import Assert  :: * ;
+	`include "nb_dcache.defines"
 
 	interface Ifc_mshr#(numeric type paddr,
 											numeric type linewidthbits,
@@ -350,9 +351,9 @@ package mshr;
 				if(rg_fb_released) begin
 					rg_curr_fb_id<= tagged Invalid;
           rg_fb_released<= False;
-          `ifdef ASSERT
-            dynamicAssert(!ff_mshr[curr_rid].notEmpty,"ff_mshr[%d] is not Empty when FB is being released",curr_rid);
-          `endif
+          //`ifdef ASSERT
+          //  dynamicAssert(!ff_mshr[curr_rid].notEmpty,"ff_mshr[curr_rid] is not Empty when FB is being released");
+          //`endif
 					`logLevel( dcache, 2, $format("MSHR : No more pending requests of id: %d", curr_rid))
 				end
 				if(ff_mshr[curr_rid].notEmpty) begin

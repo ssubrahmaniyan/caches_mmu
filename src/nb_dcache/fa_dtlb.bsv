@@ -10,7 +10,6 @@ Details:
 package fa_dtlb;
   `include "Logger.bsv"
   `include "nb_dcache.defines"
-  `include "parameters.txt"
   import FIFO :: * ;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;

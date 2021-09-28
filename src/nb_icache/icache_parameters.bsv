@@ -2,34 +2,36 @@
 see LICENSE.iitm
 --------------------------------------------------------------------------------------------------
 */
-`include "parameters.bsv"
 
-// Parameters used for non-blocking I-cache
-`define paddr 32
-`define numsets 64      // (Integer)
-`define numways 4       // (Integer)
-`define blocksize 512   // (Bits)
-`define wordsize 128    // (Bits) 
-`define wordsperblock 4 // (Integer) blocksize/wordsize
-`define setbits 6       // (Bits) Log2(numsets)
-`define wordoffset 2     // (Bits) Log2(wordsperblock)  
-`define byteoffset 4     // (Bits) log2(wordsize/8)
-`define offsetbits 6    // (Bits) wordoffset+byteoffset
-`define tagbits 20      // (Bits) `paddr(32) - (setbits+wordoffset+byteoffset)
-//`define irepl_lru True
-`define irepl_rrobin True
-//`define irepl_plru True
-`define ibuswidth 128 // (Bits)
-`define fetch_width 128 // (Bits)
-`define mhb_size 8
-`define crq_size `ftq_size
+// Parameters used for non-blocking I-Cache
+`define numsets `isets                                    // number of sets
+`define numways `iways                                    // number of ways
+`define wordsize TMul#(`iwords, 8)                        // (Bits) chunk width
+`define wordsperblock `iblocks                            // chunks per cache block
+`define setbits TLog#(`isets)                             // (Bits) Log2(numsets)
+`define blocksize TMul#(`wordsize, `iblocks)              // (Bits) wordsize * wordsperblock
+`define wordoffset TLog#(`iblocks)                        // (Bits) Log2(wordsperblock)
+`define byteoffset TLog#(`iwords)                         // (Bits) Log2(iwords)
+`define offsetbits TAdd#(TLog#(`iblocks), TLog#(`iwords)) // (Bits) wordoffset + byteoffset
+`define tagbits TSub#(`paddr, TAdd#(TAdd#(TLog#(`isets), TLog#(`iblocks)), TLog#(`iwords))) // (Bits) paddr - (setbits + wordoffset + byteoffset)
+
+`define mhb_size `imhb_size
+`define fb_depth TDiv#(TMul#(`wordsize, `iblocks), `ibuswidth) // number of sub-entries per LFB entry (blocksize / ibuswidth)
+
+`define crq_size `ftq_size  // Core Response Queue should have the same number of entries as FTQ
+`define crq_input_size 4    // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
 `define reqid_width TLog#(`ftq_size)
-`define crq_input_size 4 // "Stage 2 hit (MHB/Cache)", "Request served in MHB" , "I/O Response", "Stage1 (ITLB trap/Fences)"
-`define imshr_depth 4
-`define fb_depth 4
-`define irq_size 1
-`define causesize 5
-//i-class supports sv39
+
+`define v_wordsize valueOf(`wordsize)
+`define v_setbits valueOf(`setbits)
+`define v_blocksize valueOf(`blocksize)
+`define v_wordoffset valueOf(`wordoffset)
+`define v_byteoffset valueOf(`byteoffset)
+`define v_offsetbits valueOf(`offsetbits)
+`define v_tagbits valueOf(`tagbits)
+`define v_fb_depth valueOf(`fb_depth)
+
+// I-Class supports sv39
 `ifdef sv32
   `define vpnsize 20
   `define ppnsize 22

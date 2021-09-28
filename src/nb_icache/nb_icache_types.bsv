@@ -3,7 +3,7 @@ see LICENSE.iitm
 
 Author : Sujay Pandit, Nitya Ranganathan
 Email id : contact.sujaypandit@gmail.com, nitya.ranganathan@gmail.com
-Details :
+Details : I-Cache types
 
 --------------------------------------------------------------------------------------------------
 */
@@ -87,7 +87,7 @@ package nb_icache_types;
     } Replay deriving(Bits,Eq,FShow);
     //
     function Bit#(`setbits) fn_extract_set(Bit#(`vaddr) address);
-        return address[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset];
+        return address[`v_setbits+`v_wordoffset+`v_byteoffset-1:`v_wordoffset+`v_byteoffset];
     endfunction
     //
 endpackage

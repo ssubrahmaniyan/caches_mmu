@@ -48,7 +48,6 @@ package nb_dcache;
   import replacement_dcache::*;
   import Assert  :: * ;
   import io_func::*;
-  `include "parameters.txt"
   `include "parameters.bsv"
   `include "nb_dcache.defines"
 

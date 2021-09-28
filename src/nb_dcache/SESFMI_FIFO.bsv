@@ -12,7 +12,7 @@ package SESFMI_FIFO;
 	import Vector::*;
 	import SCtr::*;
 	import ConfigReg::*;
-	`include "parameters.txt"
+        `include "nb_dcache.defines"
 
 	interface Ifc_SESFMI_FIFO#(numeric type depth, type a);
 		method Action enq(a item);

@@ -91,7 +91,7 @@ package icache_mhb;
         //
         rule rl_display_mhb_array;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
-                Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `offsetbits;
+                Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `v_offsetbits;
                 `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b all_served %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_all_served[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
                 `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
@@ -100,7 +100,7 @@ package icache_mhb;
         rule rl_display_mhb_pointers;
             Bit#(`offsetbits) lv_offset = '0;
             Bit#(`paddr) lv_paddr = '0;
-            lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
+            lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `v_byteoffset;
             lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
 
             `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
@@ -295,7 +295,7 @@ package icache_mhb;
             //
             Bit#(TLog#(`mhb_size)) primary_index = 0;
             Bit#(TLog#(`imshr_depth)) secondary_index = 0;
-            Bit#(`wordoffset) requested_word = address[`wordoffset+`byteoffset-1:`byteoffset];
+            Bit#(`wordoffset) requested_word = address[`v_wordoffset+`v_byteoffset-1:`v_byteoffset];
             Bit#(TSub#(`paddr,`offsetbits)) block_addr = truncateLSB(address);
             MHB_lookup_resp resp = unpack(0);
             resp.valid = valid;
@@ -341,7 +341,7 @@ package icache_mhb;
                 Bit#(`wordsize) lv_selected_word = lv_fb_data[requested_word];
                 Bit#(`wordsize) lv_selected_word_next = (requested_word == '1) ? '0 : lv_fb_data[requested_word+1];
                 Bit#(TMul#(2,`wordsize)) lv_selected_word_double = {lv_selected_word_next, lv_selected_word} >> lv_shift_amt;
-                resp.fb_data = lv_selected_word_double[`wordsize-1:0];
+                resp.fb_data = lv_selected_word_double[`v_wordsize-1:0];
             end
             //
             return resp;
@@ -393,8 +393,8 @@ package icache_mhb;
                     rg_fb_flushed[wr_mhb_free_entry_ptr] <= False;
                     rg_fb_block_address[wr_mhb_free_entry_ptr] <= truncateLSB(address);
                     rg_fb_filled[wr_mhb_free_entry_ptr] <= '0;
-                    rg_fb_word_to_be_filled[wr_mhb_free_entry_ptr] <= address[`wordoffset+`byteoffset-1:`byteoffset]; 
-                    for(Integer i=0;i<`fb_depth;i=i+1)
+                    rg_fb_word_to_be_filled[wr_mhb_free_entry_ptr] <= address[`v_wordoffset+`v_byteoffset-1:`v_byteoffset];
+                    for(Integer i=0;i<`v_fb_depth;i=i+1)
                         rg_fb_data[wr_mhb_free_entry_ptr][i] <= unpack(0);
                     //
                     wr_allocate_entry_primary_idx <= wr_mhb_free_entry_ptr;
@@ -447,7 +447,7 @@ package icache_mhb;
             Bit#(`wordsize) lv_selected_word = lv_fb_data[lv_req_word];
             Bit#(`wordsize) lv_selected_word_next = (lv_req_word == '1) ? '0 : lv_fb_data[lv_req_word+1];
             Bit#(TMul#(2,`wordsize)) lv_selected_word_double = {lv_selected_word_next, lv_selected_word} >> lv_shift_amt;
-            lv_selected_word = lv_selected_word_double[`wordsize-1:0];
+            lv_selected_word = lv_selected_word_double[`v_wordsize-1:0];
             //
             wr_req_satisfied <= (lv_req_satisfied || !lv_entry_valid);
             wr_satisfied_req_primary_idx <= lv_primary_index;
@@ -463,7 +463,7 @@ package icache_mhb;
 
             // valid, not issued and no flush
             if(wr_fb_valid[rg_fill_request_entry_ptr] && !wr_fb_issued[rg_fill_request_entry_ptr] && !wr_flush) begin
-                lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `byteoffset;
+                lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `v_byteoffset;
                 lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
                 mem_req = Mem_request{
                             valid: True,

@@ -189,7 +189,7 @@ package nb_icache;
         endrule
         //
         rule rl_lookup_replacement;
-          Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+          Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`v_setbits+`v_byteoffset+`v_wordoffset-1:`v_byteoffset+`v_wordoffset];
           Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(wr_preread_icache_valid[lv_set_index]);
           Bit#(TLog#(`numways)) lv_replacement_way = '0;
 
@@ -199,7 +199,7 @@ package nb_icache;
         //
         rule rl_lookup_arrays;
             if(wr_lookup_arrays_valid) begin
-                Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+                Bit#(`setbits) lv_set_index = wr_lookup_vaddr[`v_setbits+`v_byteoffset+`v_wordoffset-1:`v_byteoffset+`v_wordoffset];
                 Vector#(`numways,Bit#(1)) lv_way_valid = readVReg(wr_preread_icache_valid[lv_set_index]);
                 //
                 Stage2 lv_stage2_data = unpack(0);
@@ -245,9 +245,9 @@ package nb_icache;
                 //
                 Bit#(`blocksize) lv_cache_block = ifc_data.mv_read_response(lv_hitmask);
                 Bit#(`blocksize) lv_cache_block_original = lv_cache_block;
-                Bit#(TAdd#(TAdd#(`wordoffset,`byteoffset),3)) lv_shift_amt = lv_stage2_data.paddr[`wordoffset+`byteoffset+2:0] << 3; // number of bits to shift
+                Bit#(TAdd#(TAdd#(`wordoffset,`byteoffset),3)) lv_shift_amt = lv_stage2_data.paddr[`v_wordoffset+`v_byteoffset+2:0] << 3; // number of bits to shift
                 lv_cache_block = lv_cache_block >> lv_shift_amt;
-                lv_stage2_data.data = lv_cache_block[`wordsize-1:0];
+                lv_stage2_data.data = lv_cache_block[`v_wordsize-1:0];
                 //
                 wr_stage2_data <= lv_stage2_data; 
                 `logLevel( icache, 1, $format("ICACHE: Stage2: Read response: req_id %d hit_mask %b hit %b way %d # paddr %h ptag %h data %h shift %d packet %h", lv_stage2_data.req_id, lv_hitmask, lv_stage2_data.tag_hit, lv_stage2_data.hit_way, lv_stage2_data.paddr, rg_lookup_ptag, lv_cache_block_original, lv_shift_amt, lv_stage2_data.data))
@@ -407,7 +407,7 @@ package nb_icache;
                         Bool lv_set_conflict =  False; 
                         Bool lv_is_io = isIO(wr_tlb_response.address, True);  
                         //
-                        if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
+                        if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`v_setbits+`v_wordoffset+`v_byteoffset-1:`v_wordoffset+`v_byteoffset])) begin
                             lv_set_conflict = True;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
@@ -535,7 +535,7 @@ package nb_icache;
                         rg_lookup_ptag <= truncateLSB(wr_tlb_response.address);
                         wr_lookup_reqid <= lv_core_req.req_id;
                         //
-                        if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`setbits+`wordoffset+`byteoffset-1:`wordoffset+`byteoffset])) begin
+                        if(wr_fb_release_valid && (wr_fb_release_index == lv_core_req.vaddr[`v_setbits+`v_wordoffset+`v_byteoffset-1:`v_wordoffset+`v_byteoffset])) begin
                             lv_set_conflict = True;
                             `logLevel( icache, 1, $format("ICACHE: Stage1: Set conflict for req_id %d, set %d", lv_core_req.req_id, wr_fb_release_index))
                         end
@@ -646,7 +646,7 @@ package nb_icache;
             end
             else if(wr_preread_stage2_valid) begin
                 let stage2_data = wr_stage2_data;
-                Bit#(`setbits) lv_set_index = stage2_data.paddr[`setbits+`byteoffset+`wordoffset-1:`byteoffset+`wordoffset];
+                Bit#(`setbits) lv_set_index = stage2_data.paddr[`v_setbits+`v_byteoffset+`v_wordoffset-1:`v_byteoffset+`v_wordoffset];
 
                 MHB_lookup_resp lv_mhb_resp = ifc_mhb.mv_mshr_lookup(rg_stage2_valid,stage2_data.paddr);
                 // cache hit
