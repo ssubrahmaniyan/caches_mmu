@@ -1265,7 +1265,7 @@ package nb_dcache;
 
     //----------------------------- Flush ---------------------------------//
 
-    //If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
+    // If flush req is received, and the req is not Store_commit, and this instruction needn't be flushed
     rule rl_flush_ff_req_from_core(  (rg_flush.valid && (core_req.origin!=Store_commit) && (core_req.origin!=PTW)
                                                     && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
                                    || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) );
@@ -1670,16 +1670,31 @@ package nb_dcache;
                                        `endif };
     endrule
 
-    interface subifc_req_from_core= toPut(ff_req_from_core);
+    interface subifc_req_from_core = interface Put
+      method Action put(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index) core_req);
+        // TODO: change conditions here if bypass fifo is replaced with a wire
+        if (   (rg_flush.valid && (core_req.origin != Store_commit) && (core_req.origin != PTW)
+                               && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
+            || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) ) begin
+          if (rg_flush.valid) begin
+            `logLevel( dcache, 2, $format("DCACHE : Core request dropped: in flush range ", fshow(core_req)))
+          end
+          else begin
+            `logLevel( dcache, 2, $format("DCACHE : Core request dropped: load (early) with robid %d", core_req.rob))
+          end
+        end // flush or drop
+        else begin
+          `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
+          ff_req_from_core.enq(core_req);
+        end
+      endmethod
+    endinterface;
+
     interface subifc_resp_to_core= interface Get
-      method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get
-      // flushing the response is handled in core (instead of checking here for non-store, non-ptw)
-      //if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
-    `ifdef supervisor // Do not drop PTW responses
-      ;
-    `else
-      if(!rg_fence_wait_for_ff_first_stage_empty);
-    `endif
+      // NOTE: flushing the response is handled in core (instead of checking here for non-store, non-ptw)
+      //       was: if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
+      // If supervisor is supported, do not drop PTW responses
+      method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get `ifndef supervisor if(!rg_fence_wait_for_ff_first_stage_empty) `endif ;
         `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
