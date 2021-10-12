@@ -268,6 +268,25 @@ package nb_dcache_types;
     DCache_exception exception;
   } IO_Resp#(numeric type data) deriving (Bits, Eq, FShow);
 
+`ifdef perfmonitors
+  typedef struct {
+    Bit#(1) request_total;
+    Bit#(1) request_io;
+    Bit#(1) request_fence;
+    Bit#(1) load_hit_cache;
+    Bit#(1) store_hit_cache;
+    Bit#(1) ptw_hit_cache;
+    Bit#(1) load_hit_lfb;
+    Bit#(1) store_hit_lfb;
+    Bit#(1) ptw_hit_lfb;
+    Bit#(1) load_dropped_input;
+    Bit#(1) load_dropped_stage1;
+    Bit#(1) fill_request;
+    Bit#(1) prefetch_mshr_allocated;
+    Bit#(1) dtlb_miss;
+  } DCACHE_cntrs deriving(Bits, Eq, FShow);
+`endif
+
   `ifdef atomic
   function Bit#(datawidth) fn_atomic_op (Bit#(5) op, Bit#(datawidth) rs2, Bit#(datawidth) loaded)
   provisos(Add#(a__, 32, datawidth));

@@ -44,6 +44,9 @@ package nb_icache;
         method ICache_status mv_icache_status();
         interface Get#(Mem_request) get_read_mem_req;
         interface Get#(PTWalk_tlb_request#(`vaddr)) get_request_to_ptw;
+        `ifdef perfmonitors
+          method ICACHE_cntrs mv_icache_perf_counters();
+        `endif
     endinterface
 
     (*synthesize*)
@@ -129,6 +132,17 @@ package nb_icache;
         Vector#(`numsets, Vector#(`numways,Wire#(Bit#(1)))) wr_preread_icache_valid <- replicateM(replicateM(mkDWire(0)));
         Wire#(Bool) wr_preread_io_valid <- mkDWire(False);
         Wire#(Bool) wr_preread_io_issued <- mkDWire(False);
+
+        `ifdef perfmonitors
+          Wire#(Bit#(1)) wr_request_total <- mkDWire(0);
+          Wire#(Bit#(1)) wr_request_io <- mkDWire(0);
+          Wire#(Bit#(1)) wr_request_fence <- mkDWire(0);
+          Wire#(Bit#(1)) wr_read_hit_cache <- mkDWire(0);
+          Wire#(Bit#(1)) wr_read_hit_lfb <- mkDWire(0);
+          Wire#(Bit#(1)) wr_fill_request <- mkDWire(0);
+          Wire#(Bit#(1)) wr_prefetch_mshr_allocated <- mkDWire(0);
+          Wire#(Bit#(1)) wr_itlb_miss <- mkDWire(0);
+        `endif 
 
         // I-Cache structures
         Vector#(`numsets, Vector#(`numways,Reg#(Bit#(1)))) rg_icache_valid <- replicateM(replicateM(mkReg(0)));
@@ -477,6 +491,9 @@ package nb_icache;
                                 wr_replay_stage1_req_data <= lv_core_req;
                                 if(!wr_tlb_response.hit) begin
                                     rg_tlb_miss <= True; // takes priority over set_conflict
+                                    `ifdef perfmonitors
+                                      wr_itlb_miss <= 1;
+                                    `endif
                                     `logLevel( icache, 1, $format("ICACHE: Stage1: TLB miss for req_id %d, setting replay.", lv_core_req.req_id))
                                 end
                                 else if(lv_set_conflict) begin
@@ -575,6 +592,9 @@ package nb_icache;
                             wr_replay_stage1_req_data <= lv_core_req;
                             if(!wr_tlb_response.hit) begin
                                 rg_tlb_miss <= True; // takes priority over set_conflict
+                                `ifdef perfmonitors
+                                  wr_itlb_miss <= 1;
+                                `endif
                                 `logLevel( icache, 1, $format("ICACHE: Stage1: TLB miss for req_id %d, setting replay.", lv_core_req.req_id))
                             end
                             else if(lv_set_conflict) begin
@@ -663,6 +683,10 @@ package nb_icache;
                     end
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_stall = False;
+
+                    `ifdef perfmonitors
+                      wr_read_hit_cache <= 1;
+                    `endif
                     `logLevel( icache, 1, $format("ICACHE: Stage2: RAM hit for req_id %d data %h", stage2_data.req_id, stage2_data.data))
                 end
                 // MHB hit and corresponding word filled
@@ -679,6 +703,10 @@ package nb_icache;
                     end
                     wr_stage2_valid <= False;
                     lv_stage2_next_cycle_stall = False;
+
+                    `ifdef perfmonitors
+                      wr_read_hit_lfb <= 1;
+                    `endif
                     `logLevel( icache, 1, $format("ICACHE: Stage2: MHB hit for req_id %d data %h", stage2_data.req_id, lv_mhb_resp.fb_data))
                 end
                 // "Cache miss", "MHB miss" , "MHB hit but word not filled"
@@ -741,11 +769,19 @@ package nb_icache;
             if(lv_stage1_io_request.valid) begin
                 ff_mem_request.enq(lv_stage1_io_request);
                 rg_io_request_issued <= True;
+
+                `ifdef perfmonitors
+                  wr_request_io <= 1;
+                `endif
                 `logLevel( icache, 1, $format("ICACHE: Request to IO: ", fshow(lv_stage1_io_request)))
             end
             else if(lv_mhb_fill_request.valid) begin
                 ff_mem_request.enq(lv_mhb_fill_request);
                 ifc_mhb.ma_set_issued(lv_mhb_fill_request.valid);
+
+                `ifdef perfmonitors
+                  wr_fill_request <= 1;
+                `endif
                 `logLevel( icache, 1, $format("ICACHE: Request to Mem: ", fshow(lv_mhb_fill_request)))
             end
         endrule
@@ -824,6 +860,14 @@ package nb_icache;
         method Action ma_core_request(ICache_core_request core_req);
             wr_core_req <= core_req;
             wr_flush <= core_req.flush;
+            `ifdef perfmonitors
+              if (core_req.valid && !core_req.flush) begin
+                wr_request_total <= 1;
+              end
+              if (core_req.valid && !core_req.flush && (core_req.fence || core_req.sfence)) begin
+                wr_request_fence <= 1;
+              end
+            `endif
             `logLevel( icache, 1, $format("ICACHE: Request from core: ", fshow(core_req)))
         endmethod
         //
@@ -839,6 +883,22 @@ package nb_icache;
             ifc_itlb.ma_satp_from_csr(satp);
             ifc_itlb.ma_curr_priv(prv);
         endmethod
+
+        `ifdef perfmonitors
+          method ICACHE_cntrs mv_icache_perf_counters();
+            ICACHE_cntrs lv_ctr = unpack(0);
+            lv_ctr.request_total = wr_request_total;
+            lv_ctr.request_io = wr_request_io;
+            lv_ctr.request_fence = wr_request_fence;
+            lv_ctr.read_hit_cache = wr_read_hit_cache;
+            lv_ctr.read_hit_lfb = wr_read_hit_lfb;
+            lv_ctr.fill_request = wr_fill_request;
+            lv_ctr.prefetch_mshr_allocated = wr_prefetch_mshr_allocated;
+            lv_ctr.itlb_miss = wr_itlb_miss;
+
+            return lv_ctr;
+          endmethod
+        `endif
 
     endmodule // mk_nbicache
 

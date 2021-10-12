@@ -59,7 +59,6 @@ package nb_icache_types;
         Bit#(TLog#(`mhb_size)) mhb_id;
     } Mem_response deriving(Bits, Eq, FShow);
 
-    //
     typedef struct{
         Bool valid;
         Bool hit_mhb;
@@ -69,7 +68,7 @@ package nb_icache_types;
         Bit#(`wordsize) fb_data;
         Bit#(TLog#(`numways)) replacement_way;
     } MHB_lookup_resp deriving(Bits, Eq,FShow);
-    //    
+
     typedef struct{
         Bool tag_hit;
         Bit#(`reqid_width) req_id;
@@ -85,6 +84,26 @@ package nb_icache_types;
         Bit#(`paddr) paddr;
         Bool is_io;
     } Replay deriving(Bits,Eq,FShow);
+
+`ifdef perfmonitors
+    typedef struct {
+        Bit#(1) request_total;
+        Bit#(1) request_io;
+        `ifdef nb_icache
+          Bit#(1) request_fence;
+          Bit#(1) read_hit_cache;
+        `else
+          Bit#(1) read_miss_cache;
+        `endif
+        Bit#(1) read_hit_lfb;
+        Bit#(1) fill_request;
+        `ifdef nb_icache
+          Bit#(1) prefetch_mshr_allocated;
+        `endif
+        Bit#(1) itlb_miss;
+    } ICACHE_cntrs deriving(Bits, Eq, FShow);
+`endif
+
     //
     function Bit#(`setbits) fn_extract_set(Bit#(`vaddr) address);
         return address[`v_setbits+`v_wordoffset+`v_byteoffset-1:`v_wordoffset+`v_byteoffset];

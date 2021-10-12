@@ -88,6 +88,9 @@ package nb_dcache;
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
 `endif
+`ifdef perfmonitors
+    method DCACHE_cntrs mv_dcache_perf_counters();
+`endif
   endinterface
 
   (*preempts = "rl_MSHR_req_to_fill_buffer, rl_stage2_req_to_fb"*)
@@ -217,7 +220,12 @@ package nb_dcache;
 
     ////////////////////////////// Interface signals ///////////////////////////////////////////////
     //These handle the interface signals
-    FIFOF#(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index)) ff_req_from_core <- mkBypassFIFOF;
+    `ifdef iclass
+      // only pipeline latch (at input) for simpler flush logic and timing
+      FIFOF#(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index)) ff_req_from_core <- mkPipelineFIFOF;
+    `else
+      FIFOF#(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index)) ff_req_from_core <- mkBypassFIFOF;
+    `endif
     Wire#(Resp_to_core#(datawidth, prf_index, rob_index)) wr_resp_to_core <- mkWire;
     
     //If a req is a miss in the TLB, that request would be sent to the PTW module. PTW module will
@@ -311,6 +319,22 @@ package nb_dcache;
     Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
     Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
 
+  `ifdef perfmonitors
+    Wire#(Bit#(1)) wr_request_total <- mkDWire(0);
+    Wire#(Bit#(1)) wr_request_io <- mkDWire(0);
+    Wire#(Bit#(1)) wr_request_fence <- mkDWire(0);
+    Wire#(Bit#(1)) wr_load_hit_cache <- mkDWire(0);
+    Wire#(Bit#(1)) wr_store_hit_cache <- mkDWire(0);
+    Wire#(Bit#(1)) wr_ptw_hit_cache <- mkDWire(0);
+    Wire#(Bit#(1)) wr_load_hit_lfb <- mkDWire(0);
+    Wire#(Bit#(1)) wr_store_hit_lfb <- mkDWire(0);
+    Wire#(Bit#(1)) wr_ptw_hit_lfb <- mkDWire(0);
+    Wire#(Bit#(1)) wr_load_dropped_input <- mkDWire(0);
+    Wire#(Bit#(1)) wr_load_dropped_stage1 <- mkDWire(0);
+    Wire#(Bit#(1)) wr_fill_request <- mkDWire(0);
+    Wire#(Bit#(1)) wr_prefetch_mshr_allocated <- mkDWire(0);
+    Wire#(Bit#(1)) wr_dtlb_miss <- mkDWire(0);
+  `endif
     
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
       Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
@@ -533,11 +557,17 @@ package nb_dcache;
           rg_fence_wait_for_ff_first_stage_empty<= True;
           rg_cache_busy<= True;
           `logLevel( dcache, 1, $format("DCACHE : Fence instruction received."))
+          `ifdef perfmonitors
+            wr_request_fence <= 1;
+          `endif
         end
 
         // drop load on directive from core (TODO: optimize tlb lookup/side-band)
         else if ((req.origin == Load_buffer) && wr_load_drop_valid && (wr_load_drop_robid == req.rob)) begin
           `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped in stage1.", req.rob))
+          `ifdef perfmonitors
+            wr_load_dropped_stage1 <= 1;
+          `endif
         end
 
 `ifdef supervisor
@@ -602,6 +632,9 @@ package nb_dcache;
                 ff_io_info.enq(req);
                 rg_access_fault_response<= tuple4(defaultValue, ?, ?, core_req.addr);
                 rg_cache_busy<= True;
+                `ifdef perfmonitors
+                  wr_request_io <= 1;
+                `endif
               end
               else begin
                 `logLevel( dcache, 2, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
@@ -619,8 +652,8 @@ package nb_dcache;
               `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
             end
           `endif
-          end
-        end
+          end // no trap
+        end // TLB hit
         else begin    //Miss in the TLB and not IO or fence operation
           if (core_req.origin != Store_buffer) begin
             `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
@@ -630,8 +663,15 @@ package nb_dcache;
           else begin
             `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
           end
+          `ifdef perfmonitors
+            wr_dtlb_miss <= 1;
+          `endif
         end
         `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
+
+        `ifdef perfmonitors
+          wr_request_total <= 1;
+        `endif
       //end
     endrule
 
@@ -744,6 +784,19 @@ package nb_dcache;
         if((!wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) || req.origin==Store_buffer) begin
           wr_stage1_deq<= True;
         end
+
+
+        `ifdef perfmonitors
+          if (req.origin == Load_buffer) begin
+            wr_load_hit_cache <= 1;
+          end
+          else if (req.origin == Store_commit) begin
+            wr_store_hit_cache <= 1;
+          end
+          else if (req.origin == PTW) begin
+            wr_ptw_hit_cache <= 1;
+          end
+        `endif
 
         //If MSHR req is not sending response, then this stage can send a response for hit.
         if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
@@ -907,6 +960,7 @@ package nb_dcache;
           data_to_core= 0;
         end
       `endif
+
         if(send_resp && !wr_is_mshr_resp_to_core) begin
           wr_stage2_fb_resp_to_core<= Resp_to_core { data: data_to_core,
                                                      prf_index: req.prf_index,
@@ -918,6 +972,19 @@ package nb_dcache;
                                                        `endif `endif
                                                      `endif };
         end
+
+
+        `ifdef perfmonitors
+          if (req.origin == Load_buffer) begin
+            wr_load_hit_lfb <= 1;
+          end
+          else if (req.origin == Store_commit) begin
+            wr_store_hit_lfb <= 1;
+          end
+          else if (req.origin == PTW) begin
+            wr_ptw_hit_lfb <= 1;
+          end
+        `endif
         //else do nothing
       end
       else if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
@@ -1047,6 +1114,13 @@ package nb_dcache;
           ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
                                                   id: zeroExtend(new_mshr_id),
                                                   is_burst: True });
+
+          `ifdef perfmonitors
+            wr_fill_request <= 1;
+            if (req.origin == Store_buffer) begin
+              wr_prefetch_mshr_allocated <= 1;
+            end
+          `endif
         end
         else if(tpl_1(mshr_resp)==Allocated) begin
           deq_prev_fifo= True;
@@ -1274,6 +1348,9 @@ package nb_dcache;
       end
       else begin
         `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped from input fifo.", core_req.rob))
+        `ifdef perfmonitors
+          wr_load_dropped_input <= 1;
+        `endif
       end
       ff_req_from_core.deq;
     endrule
@@ -1672,21 +1749,26 @@ package nb_dcache;
 
     interface subifc_req_from_core = interface Put
       method Action put(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index) core_req);
-        // TODO: change conditions here if bypass fifo is replaced with a wire
-        if (   (rg_flush.valid && (core_req.origin != Store_commit) && (core_req.origin != PTW)
-                               && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
-            || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) ) begin
-          if (rg_flush.valid) begin
-            `logLevel( dcache, 2, $format("DCACHE : Core request dropped: in flush range ", fshow(core_req)))
-          end
+        `ifdef iclass // single pipeline latch between lsu and cache
+            `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
+            ff_req_from_core.enq(core_req);
+        `else
+          // TODO: change conditions here if bypass fifo is replaced with a wire
+          if (   (rg_flush.valid && (core_req.origin != Store_commit) && (core_req.origin != PTW)
+                                 && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
+              || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) ) begin
+            if (rg_flush.valid) begin
+              `logLevel( dcache, 2, $format("DCACHE : Core request dropped: in flush range ", fshow(core_req)))
+            end
+            else begin
+              `logLevel( dcache, 2, $format("DCACHE : Core request dropped: load (early) with robid %d", core_req.rob))
+            end
+          end // flush or drop
           else begin
-            `logLevel( dcache, 2, $format("DCACHE : Core request dropped: load (early) with robid %d", core_req.rob))
+            `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
+            ff_req_from_core.enq(core_req);
           end
-        end // flush or drop
-        else begin
-          `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
-          ff_req_from_core.enq(core_req);
-        end
+        `endif
       endmethod
     endinterface;
 
@@ -1778,6 +1860,28 @@ package nb_dcache;
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       return dtlb.early_lookup(vaddr, is_store);
+    endmethod
+`endif
+
+`ifdef perfmonitors
+    method DCACHE_cntrs mv_dcache_perf_counters();
+      DCACHE_cntrs lv_ctr = unpack(0);
+      lv_ctr.request_total = wr_request_total;
+      lv_ctr.request_io = wr_request_io;
+      lv_ctr.request_fence = wr_request_fence;
+      lv_ctr.load_hit_cache = wr_load_hit_cache;
+      lv_ctr.store_hit_cache = wr_store_hit_cache;
+      lv_ctr.ptw_hit_cache = wr_ptw_hit_cache;
+      lv_ctr.load_hit_lfb = wr_load_hit_lfb;
+      lv_ctr.store_hit_lfb = wr_store_hit_lfb;
+      lv_ctr.ptw_hit_lfb = wr_ptw_hit_lfb;
+      lv_ctr.load_dropped_input = wr_load_dropped_input;
+      lv_ctr.load_dropped_stage1 = wr_load_dropped_stage1;
+      lv_ctr.fill_request = wr_fill_request;
+      lv_ctr.prefetch_mshr_allocated = wr_prefetch_mshr_allocated;
+      lv_ctr.dtlb_miss = wr_dtlb_miss;
+
+      return lv_ctr;
     endmethod
 `endif
 
