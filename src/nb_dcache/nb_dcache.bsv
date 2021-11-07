@@ -91,6 +91,13 @@ package nb_dcache;
 `ifdef perfmonitors
     method DCACHE_cntrs mv_dcache_perf_counters();
 `endif
+`ifdef simulate
+  `ifdef fesvr_sim
+    `ifndef baremetal_sim
+        method Action debug_print();
+    `endif
+  `endif
+`endif
   endinterface
 
   (*preempts = "rl_MSHR_req_to_fill_buffer, rl_stage2_req_to_fb"*)
@@ -336,6 +343,15 @@ package nb_dcache;
     Wire#(Bit#(1)) wr_dtlb_miss <- mkDWire(0);
   `endif
     
+`ifdef simulate
+  `ifdef fesvr_sim
+    `ifndef baremetal_sim
+        Wire#(Bit#(1)) wr_debug_print <- mkDWire(0);
+    `endif
+  `endif
+`endif
+
+
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
       Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
                              size[1 : 0] == 1?'hFFFF : 
@@ -451,7 +467,7 @@ package nb_dcache;
 //    endfunction
 
     rule rl_initialize(!rg_initialize_done);
-      `logLevel( dcache, 2, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
+      `logLevel( dcache, 1, $format("DCACHE : Clearing valid bit of set_index: %d", rg_initialize_index))
       for(Integer i=0; i<ways_val; i=i+1) begin
         tag_arr[i].write(rg_initialize_index, 'd0);
       end
@@ -474,18 +490,18 @@ package nb_dcache;
     let core_req= ff_req_from_core.first;
     //if prev req was store, and current req is load (or from PTW), and the word address matches, then stall
     rule rl_stall_d(tpl_1(rg_prev_req_info));
-      `logLevel( dcache, 2, $format("DCACHE_INFO : Core_req: ", fshow(core_req)))
-      `logLevel( dcache, 2, $format("DCACHE_INFO : rg_prev_req_info: ", fshow(rg_prev_req_info)))
+      `logLevel( dcache, 1, $format("DCACHE_INFO : Core_req: ", fshow(core_req)))
+      `logLevel( dcache, 1, $format("DCACHE_INFO : rg_prev_req_info: ", fshow(rg_prev_req_info)))
       Bit#(TSub#(vaddr,wordbits)) lv_prev_addr= truncateLSB(tpl_2(rg_prev_req_info));
       Bit#(TSub#(vaddr,wordbits)) lv_curr_addr= truncateLSB(core_req.addr);
-      `logLevel( dcache, 2, $format("DCACHE_INFO : prev_addr: %h curr_addr: %h", lv_prev_addr, lv_curr_addr))
+      `logLevel( dcache, 1, $format("DCACHE_INFO : prev_addr: %h curr_addr: %h", lv_prev_addr, lv_curr_addr))
     endrule
 
     rule rl_stall_for_load_after_store_to_same_word(tpl_1(rg_prev_req_info) &&
     (core_req.origin==Load_buffer || core_req.origin==PTW) &&
     tpl_2(rg_prev_req_info)==truncateLSB(core_req.addr));
       rg_prev_req_info<= tuple2(False, ?);
-      `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as prev was store. Core_req: ", fshow(core_req)))
+      `logLevel( dcache, 1, $format("DCACHE : Stalling req from core as prev was store. Core_req: ", fshow(core_req)))
     endrule
 
     // NOTE: Tag and Data RAM implementation changed to BRAM (1R1W): was register file (with hack to delay read to 2nd cycle) earlier
@@ -493,7 +509,7 @@ package nb_dcache;
     //       Need to delay the read until the write is performed.
     Bit#(set_bits) stage1_set_index = core_req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
     rule rl_stall_for_set_conflict((wr_tag_ram_write_valid == 1) && (stage1_set_index == wr_tag_ram_write_index));
-      `logLevel( dcache, 2, $format("DCACHE : Stalling req from core as write is being performed to same set. Core_req: ", fshow(core_req)))
+      `logLevel( dcache, 1, $format("DCACHE : Stalling req from core as write is being performed to same set. Core_req: ", fshow(core_req)))
     endrule
 
 `ifdef supervisor
@@ -526,7 +542,7 @@ package nb_dcache;
         else begin
           set_index= core_req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
         end
-        `logLevel( dcache, 2, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
+        `logLevel( dcache, 1, $format("DCACHE : Stage 1 Core_req: ", fshow(core_req), "set_index: %d", set_index))
         
         for(Integer i = 0;i<ways_val;i = i+1) begin
           data_arr[i].read(set_index);
@@ -564,7 +580,7 @@ package nb_dcache;
 
         // drop load on directive from core (TODO: optimize tlb lookup/side-band)
         else if ((req.origin == Load_buffer) && wr_load_drop_valid && (wr_load_drop_robid == req.rob)) begin
-          `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped in stage1.", req.rob))
+          `logLevel( dcache, 1, $format("DCACHE : Load (early) with robid %d dropped in stage1.", req.rob))
           `ifdef perfmonitors
             wr_load_dropped_stage1 <= 1;
           `endif
@@ -575,7 +591,7 @@ package nb_dcache;
 `else
         else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
 `endif
-          `logLevel( dcache, 2, $format("DCACHE : Hit in the TLB"))
+          `logLevel( dcache, 1, $format("DCACHE : Hit in the TLB"))
           if(resp_from_tlb.trap) begin  //Access fault
             if (req.origin != Store_buffer) begin
               rg_cache_busy<= True;
@@ -583,7 +599,7 @@ package nb_dcache;
               rg_access_fault_response<= tuple4(resp_from_tlb.exception, core_req.prf_index, core_req.rob, core_req.addr);
             end
             else begin
-              `logLevel( dcache, 2, $format("DCACHE : Access fault on prefetch request address: dropping."))
+              `logLevel( dcache, 1, $format("DCACHE : Access fault on prefetch request address: dropping."))
             end
           end
           else begin  //Access is valid
@@ -608,7 +624,7 @@ package nb_dcache;
             // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
             `ifdef store_early_ack
               if (!is_IO_access && (req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
-                `logLevel( dcache, 2, $format("DCACHE : Regular store, sending early response: rob: %h prf: %h", req.rob, req.prf_index))
+                `logLevel( dcache, 1, $format("DCACHE : Regular store, sending early response: rob: %h prf: %h", req.rob, req.prf_index))
                 wr_early_resp_to_core_valid <= 1;
                 wr_early_resp_to_core <= Resp_to_core { data: '0,
                                                         prf_index: req.prf_index,
@@ -625,7 +641,7 @@ package nb_dcache;
             if(is_IO_access) begin  //IO operation
               if (req.origin != Store_buffer) begin
                 //Enqueue into a separate FIFO that handles IO Requests
-                `logLevel( dcache, 2, $format("DCACHE : IO request sent to Stage2"))
+                `logLevel( dcache, 1, $format("DCACHE : IO request sent to Stage2"))
                 `ifdef ASSERT
                   dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
                 `endif
@@ -637,11 +653,11 @@ package nb_dcache;
                 `endif
               end
               else begin
-                `logLevel( dcache, 2, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
+                `logLevel( dcache, 1, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
               end
             end
             else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
-              `logLevel( dcache, 2, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
+              `logLevel( dcache, 1, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
               ff_first_stage.enq(req);
             end
           `ifdef atomic
@@ -649,25 +665,25 @@ package nb_dcache;
               rg_sc_fail<= True;
               rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
               rg_cache_busy<= True;
-              `logLevel( dcache, 2, $format("DCACHE : Atomic failed"))
+              `logLevel( dcache, 1, $format("DCACHE : Atomic failed"))
             end
           `endif
           end // no trap
         end // TLB hit
         else begin    //Miss in the TLB and not IO or fence operation
           if (core_req.origin != Store_buffer) begin
-            `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB"))
+            `logLevel( dcache, 1, $format("DCACHE : Miss in the TLB"))
             wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
             rg_cache_busy<= True;
           end
           else begin
-            `logLevel( dcache, 2, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
+            `logLevel( dcache, 1, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
           end
           `ifdef perfmonitors
             wr_dtlb_miss <= 1;
           `endif
         end
-        `logLevel( dcache, 2, $format("DCACHE : Physical addr from TLB: %h", req.addr))
+        `logLevel( dcache, 1, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 
         `ifdef perfmonitors
           wr_request_total <= 1;
@@ -677,7 +693,7 @@ package nb_dcache;
 
     rule rl_access_fault_response_to_core(!wr_is_mshr_resp_to_core &&
     tpl_1(rg_access_fault_response)!=defaultValue && rg_cache_busy);
-      `logLevel( dcache, 2, $format("DCACHE : Access fault! ", fshow(rg_access_fault_response)))
+      `logLevel( dcache, 1, $format("DCACHE : Access fault! ", fshow(rg_access_fault_response)))
       wr_resp_to_core<= Resp_to_core {data: zeroExtend(tpl_4(rg_access_fault_response)),
                                       rob: tpl_3(rg_access_fault_response),
                                       prf_index: tpl_2(rg_access_fault_response),
@@ -693,7 +709,7 @@ package nb_dcache;
 
   `ifdef atomic
     rule rl_sc_fail_response_to_core(!wr_is_mshr_resp_to_core && rg_sc_fail && !rg_fence && rg_cache_busy);
-      `logLevel( dcache, 2, $format("DCACHE : SC failed for prf: %h rob: %h", tpl_2(rg_access_fault_response), tpl_3(rg_access_fault_response)))
+      `logLevel( dcache, 1, $format("DCACHE : SC failed for prf: %h rob: %h", tpl_2(rg_access_fault_response), tpl_3(rg_access_fault_response)))
       wr_resp_to_core<= Resp_to_core {data: 'd1,
                                       prf_index: tpl_2(rg_access_fault_response),
                                       rob: tpl_3(rg_access_fault_response),
@@ -712,9 +728,9 @@ package nb_dcache;
     rule rl_page_fault_response_to_core(!wr_is_mshr_resp_to_core && (rg_page_fault || rg_leaf_page_response) && rg_cache_busy);
       // TODO: page fault response
       if (rg_page_fault)
-        `logLevel( dcache, 2, $format("DCACHE : Page fault!"))
+        `logLevel( dcache, 1, $format("DCACHE : Page fault!"))
       else
-        `logLevel( dcache, 2, $format("DCACHE : Leaf page found!"))
+        `logLevel( dcache, 1, $format("DCACHE : Leaf page found!"))
       rg_page_fault <= False;
       rg_leaf_page_response <= False;
       rg_cache_busy <= False;
@@ -731,7 +747,7 @@ package nb_dcache;
     rule rl_read_tag_response(ff_first_stage.notEmpty);
       for(Integer i = 0; i<ways_val; i = i+1) begin
         let temp = tag_arr[i].read_response;
-        `logLevel( dcache, 2, $format("DCACHE : Stage2 tag[%d] read: %h", i, temp))
+        `logLevel( dcache, 1, $format("DCACHE : Stage2 tag[%d] read: %h", i, temp))
         ff_first_stage_tag[i].enq(temp);
       end
     endrule
@@ -744,7 +760,7 @@ package nb_dcache;
     rule rl_tag_and_data_array_read_response(!rg_SRAM_fence[0] `ifdef atomic &&& rg_atomic_hit_info matches tagged Invalid `endif
     &&& !stall_due_to_eviction_buf_release);
       let req= ff_first_stage.first;
-      `logLevel( dcache, 2, $format("DCACHE : Stage2 req: ", fshow(req)))
+      `logLevel( dcache, 1, $format("DCACHE : Stage2 req: ", fshow(req)))
 
       Bit#(linewidth) dataline [ways_val];
       Bit#(TAdd#(tagbits,2)) tag;
@@ -758,7 +774,7 @@ package nb_dcache;
         tag = ff_first_stage_tag[i].first;
         //If a tag in the SRAMs is valid and is equal to the tag of the request, it's a hit in the cache
         if(tag[tagbits_val]==1 && tag[tagbits_val-1:0]== req_tag) begin    
-          `logLevel( dcache, 2, $format("DCACHE : Hit at way num: %d tag: %h req_tag: %h", i, tag, req_tag ))
+          `logLevel( dcache, 1, $format("DCACHE : Hit at way num: %d tag: %h req_tag: %h", i, tag, req_tag ))
           way_num= fromInteger(i);  //Store the index of the tag match
         end
       end
@@ -768,8 +784,8 @@ package nb_dcache;
         Bit#(setbits) set_index = req.addr[setbits_val + lineoffset_val - 1 : lineoffset_val];
         let hit_line= dataline[hit_way];  //TODO change this to OInt type
         let hit_tag= tag_arr[hit_way].read_response;
-        `logLevel( dcache, 2, $format("DCACHE : Hit in the dcache", fshow(req)))
-        `logLevel( dcache, 2, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, hit_line, hit_tag))
+        `logLevel( dcache, 1, $format("DCACHE : Hit in the dcache", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : Hit at set_index: %d way_num: %d line: %h tag: %h", set_index, hit_way, hit_line, hit_tag))
 
         Bit#(datawidth) data_to_core= fn_extract_data(hit_line, truncate(req.addr), req.access_size);  //TODO Make UniqueWrapper for this fn
 
@@ -818,7 +834,7 @@ package nb_dcache;
                                                   `endif };
           end
           repl.update_set(set_index, hit_way);  //Update the replacement bits on a hit
-          `logLevel( dcache, 2, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
+          `logLevel( dcache, 1, $format("DCACHE : Hit response to proc. data: %h prf_index: %h", data_to_core, req.prf_index))
         
           //For a store instruction, update the appropriate data and tag bits in the SRAM.
           //TODO If MSHR is sending response in a cycle, should the store happen in that or
@@ -830,7 +846,7 @@ package nb_dcache;
             tag_arr[hit_way].write(set_index, {1'b1, hit_tag[tagbits_val:0]}); //Setting the dirty bit
             wr_tag_ram_write_valid <= 1;
             wr_tag_ram_write_index <= set_index;
-            `logLevel( dcache, 2, $format("DCACHE : Hit for store. Writing: %h", write_data))
+            `logLevel( dcache, 1, $format("DCACHE : Hit for store. Writing: %h", write_data))
           end
         end
         `ifdef atomic
@@ -844,9 +860,9 @@ package nb_dcache;
       //MSHR is sending a req to FB and the curr line addr of FB = ff_first_stage request's line addr
       //TODO 14082020. Can we check if MSHR is not full and ff_second_stage is Empty, and if so, forward the req to MSHR?
       else if(isValid(wr_mshr_req_to_fb) && fill_buffer.line_addr == get_line_addr(req.addr)) begin
-        `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling req: ", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : MSHR polling FB and MSHR sending resp to core. Hence stalling req: ", fshow(req)))
         //if(req.origin!=Store_commit || !wr_is_mshr_resp_to_core) begin
-        //  `logLevel( dcache, 2, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
+        //  `logLevel( dcache, 1, $format("DCACHE : MSHR polling FB. Miss in the dcache. Sending req: ", fshow(req), "to ff_second_stage"))
         //  wr_stage2_enq<= convert_to_Cache_req(req);
         //  if(req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif ) begin
         //    wr_sram_resp_to_core<= Resp_to_core { data: ?,
@@ -860,11 +876,11 @@ package nb_dcache;
       end
       // NOTE: load/store/ptw address matches fb line, no request from mshr but 2nd stage ff also holds request to same line (080621)
       else if((req.origin != Store_buffer) && (fill_buffer.line_addr == get_line_addr(req.addr)) && (wr_ff_second_stage_req_to_curr_fb)) begin
-        `logLevel( dcache, 2, $format("DCACHE : FB fill to same line, 2nd stage ff stalled. Hence stalling req: ", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : FB fill to same line, 2nd stage ff stalled. Hence stalling req: ", fshow(req)))
       end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
-        //`logLevel( dcache, 2, $format("DCACHE : #### ", fshow(req)))
+        //`logLevel( dcache, 1, $format("DCACHE : #### ", fshow(req)))
       end
     endrule
 
@@ -900,8 +916,8 @@ package nb_dcache;
                                                                             ,  atomic_result: atomic_result
                                                                             `endif `endif
                                                                           `endif };
-      `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit req: ", fshow(req)))
-      `logLevel( dcache, 2, $format("DCACHE : Stage 2 atomics hit resp: ", fshow(resp)))
+      `logLevel( dcache, 1, $format("DCACHE : Stage 2 atomics hit req: ", fshow(req)))
+      `logLevel( dcache, 1, $format("DCACHE : Stage 2 atomics hit resp: ", fshow(resp)))
       wr_sram_resp_to_core<= resp;
     endrule
   `endif
@@ -933,7 +949,7 @@ package nb_dcache;
       //Fill buffer holds the data corresponding to the line (and the data is valid in the fill buffer) and
       //if a response needs to be sent (i.e. a load_buffer or a PTW request).
       //Here, fb_data is the complete fill buffer line
-      `logLevel( dcache, 2, $format("DCACHE : Not a hit in SRAM. Checking fill buffer for req:", fshow(req)))
+      `logLevel( dcache, 1, $format("DCACHE : Not a hit in SRAM. Checking fill buffer for req:", fshow(req)))
       //if(req.origin==Store_commit && !wr_is_mshr_resp_to_core)  //TODO Arjun NEW.
       //  lv_stage1_fb_deq= True;
 
@@ -941,7 +957,7 @@ package nb_dcache;
         if(!wr_is_mshr_resp_to_core || req.origin==Store_buffer) begin
           lv_stage1_fb_deq= True;
         end
-        `logLevel( dcache, 2, $format("DCACHE : Fill buffer hit with data: %h for prf_index: %h",  fb_data, req.prf_index))
+        `logLevel( dcache, 1, $format("DCACHE : Fill buffer hit with data: %h for prf_index: %h",  fb_data, req.prf_index))
         Bit#(datawidth) data_to_core= fn_extract_data(fb_data, truncate(req.addr), req.access_size);
         // NaN Boxing for sp loads (FLW)
         if ((req.access_size == 3'b010) && (req.dest_type == FPRF)) begin
@@ -988,28 +1004,28 @@ package nb_dcache;
         //else do nothing
       end
       else if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
-        `logLevel( dcache, 2, $format("DCACHE : Req to same line_addr: %h that is being filled in the FB. Stalling... ", fill_buffer.line_addr))
+        `logLevel( dcache, 1, $format("DCACHE : Req to same line_addr: %h that is being filled in the FB. Stalling... ", fill_buffer.line_addr))
       end
       //else if(mshr.entries_full && ff_second_stage.notEmpty)  begin
       //  //dynamicAssert(!ff_second_stage.notFull,"ff_second_stage is FULL when MSHR entries are full");
-      //  `logLevel( dcache, 2, $format("DCACHE : MSHR entries are full, and ff_second_stage has one entry. Stalling... "))
+      //  `logLevel( dcache, 1, $format("DCACHE : MSHR entries are full, and ff_second_stage has one entry. Stalling... "))
       //end
 
       //If current req is to same line as that of the prev req that was enqueued, and it is the second
       //entry in the FIFO (which can be found by checking if ff_second_stage is Full),
       //then don't send req to fill buffer, but stall
       //else if(get_line_addr(req.addr) == rg_prev_second_stage_line_addr && !ff_second_stage.notFull) begin
-      //  `logLevel( dcache, 2, $format("DCACHE : MSHR busy, ff_second_stage full, and prev req enqueued in second stage is to same line addr. Stalling... "))
+      //  `logLevel( dcache, 1, $format("DCACHE : MSHR busy, ff_second_stage full, and prev req enqueued in second stage is to same line addr. Stalling... "))
       //end
       else if(mshr.entries_full || mshr.one_fifo_full) begin
-        `logLevel( dcache, 2, $format("DCACHE : MSHR busy. Stalling second stage... "))
+        `logLevel( dcache, 1, $format("DCACHE : MSHR busy. Stalling second stage... "))
       end
       else begin
         // NOTE: Turning off enqueue to 2nd stage and store response to core in flush cycle (220221)
         // For a store miss in the flush cycle, response is sent to the core, and 2nd stage enqueue happens but rl_fb_enq_ff_second_stage below
         // fires only if flush is invalid => enqueue to cff and dequeue from first stage fifo are disabled in flush cycle
         if (!rg_flush.valid) begin
-          `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
+          `logLevel( dcache, 1, $format("DCACHE : Miss request. Fill buffer miss for req: ", fshow(req)))
           Bool is_store_instruction= (req.origin==Store_commit `ifdef atomic && !req.is_atomic `endif );
 
           //if store instructions, and mshr is sending response to core, then do not enqueue request into next cycle
@@ -1022,16 +1038,16 @@ package nb_dcache;
             let second_stage_req= convert_to_Cache_req(req);
             ff_second_stage.enq(second_stage_req);
             wr_stage2_fb_enq<= second_stage_req;
-            `logLevel( dcache, 2, $format("DCACHE : Converted to cache request"))
+            `logLevel( dcache, 1, $format("DCACHE : Converted to cache request"))
           end
 
           if(is_store_instruction) begin
             if(wr_is_mshr_resp_to_core) begin
-              `logLevel( dcache, 2, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
+              `logLevel( dcache, 1, $format("DCACHE : MSHR responding to core. Hence stalling Store req: ", fshow(req)))
             end
             else begin
               `ifndef store_early_ack
-                `logLevel( dcache, 2, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
+                `logLevel( dcache, 1, $format("DCACHE : Sending store response for prf_index: %h ", req.prf_index))
                 wr_stage2_fb_resp_to_core<= Resp_to_core { data: ?,
                                                            prf_index: '0,
                                                            rob: req.rob,
@@ -1046,7 +1062,7 @@ package nb_dcache;
           end // store
         end // flush invalid
         else begin
-          `logLevel( dcache, 2, $format("DCACHE : Miss request. Fill buffer miss, flush cycle: no enqueue to 2nd stage for req: ", fshow(req)))
+          `logLevel( dcache, 1, $format("DCACHE : Miss request. Fill buffer miss, flush cycle: no enqueue to 2nd stage for req: ", fshow(req)))
         end
       end
 
@@ -1054,7 +1070,7 @@ package nb_dcache;
     endrule
 
     rule rl_enq_ff_second_stage(!rg_flush.valid);
-    //  `logLevel( dcache, 2, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
+    //  `logLevel( dcache, 1, $format("DCACHE : ff_second_stage enq req: ", fshow(wr_stage2_enq)))
     //  wr_stage1_deq_enq<= True;
     //  ff_second_stage.enq(wr_stage2_enq);
     //  Bool can_flush= wr_stage2_enq.origin!=Store_commit;
@@ -1063,7 +1079,7 @@ package nb_dcache;
     endrule
 
     rule rl_fb_enq_ff_second_stage(!rg_flush.valid && cff_second_stage_valid.notFull);
-      `logLevel( dcache, 2, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
+      `logLevel( dcache, 1, $format("DCACHE : ff_second_stage fb enq req: ", fshow(wr_stage2_fb_enq)))
       wr_stage1_fb_deq_enq<= True;
       rg_prev_second_stage_line_addr<= get_line_addr(wr_stage2_fb_enq.addr);
       //ff_second_stage.enq(wr_stage2_fb_enq);
@@ -1073,17 +1089,17 @@ package nb_dcache;
     endrule
 
     rule rl_sram_resp_to_core;
-      `logLevel( dcache, 2, $format("DCACHE : SRAM response", fshow(wr_sram_resp_to_core)))
+      `logLevel( dcache, 1, $format("DCACHE : SRAM response", fshow(wr_sram_resp_to_core)))
       wr_resp_to_core<= wr_sram_resp_to_core;
     endrule
 
     rule rl_stage2_fb_resp_to_core;
-      `logLevel( dcache, 2, $format("DCACHE : FB response", fshow(wr_stage2_fb_resp_to_core)))
+      `logLevel( dcache, 1, $format("DCACHE : FB response", fshow(wr_stage2_fb_resp_to_core)))
       wr_resp_to_core<= wr_stage2_fb_resp_to_core;
     endrule
 
     rule rl_deq_ff_first_stage(wr_stage1_fb_deq || wr_stage1_deq || wr_stage1_fb_deq_enq || wr_stage1_deq_enq);
-      `logLevel( dcache, 2, $format("Deq by stage1_fb:%b stage1:%b wr_stage1_fb_deq_enq:%b stage1_deq_enq:%b ",
+      `logLevel( dcache, 1, $format("Deq by stage1_fb:%b stage1:%b wr_stage1_fb_deq_enq:%b stage1_deq_enq:%b ",
       wr_stage1_fb_deq, wr_stage1_deq, wr_stage1_fb_deq_enq, wr_stage1_deq_enq))
 
       ff_first_stage.deq;
@@ -1096,7 +1112,7 @@ package nb_dcache;
     // and removing check for index 0 in rl_flush_ff_second_stage.
     rule rl_access_MSHRs(!rg_flush.valid);
       let req= ff_second_stage.first;
-      `logLevel( dcache, 2, $format("DCACHE : Stage 3 req: ", fshow(req)))
+      `logLevel( dcache, 1, $format("DCACHE : Stage 3 req: ", fshow(req)))
       req.rob= tpl_1(cff_second_stage_rob_id.first);
 
       Bool deq_prev_fifo= False;
@@ -1109,7 +1125,7 @@ package nb_dcache;
           Bit#(TSub#(paddr,busoffset)) line_addr= req.addr[paddr_val-1:busoffset_val];
           Bit#(busoffset) zeros= 'd0;
           Bit#(paddr) mem_addr= {line_addr, zeros};
-          `logLevel( dcache, 2, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",new_mshr_id, mem_addr))
+          `logLevel( dcache, 1, $format("DCACHE : MSHR %d initiated a memory request for addr: %h",new_mshr_id, mem_addr))
           deq_prev_fifo= True;
           ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
                                                   id: zeroExtend(new_mshr_id),
@@ -1124,21 +1140,21 @@ package nb_dcache;
         end
         else if(tpl_1(mshr_resp)==Allocated) begin
           deq_prev_fifo= True;
-          `logLevel( dcache, 2, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
+          `logLevel( dcache, 1, $format("DCACHE : MSHR already allocated for this req addr: %h", req.addr))
         end
 `ifdef prefetch_throttle
         else if (tpl_1(mshr_resp)==Dropped) begin
           deq_prev_fifo = True;
-          `logLevel( dcache, 2, $format("DCACHE : MSHR NOT allocated for prefetch req (dropped) with addr: %h", req.addr))
+          `logLevel( dcache, 1, $format("DCACHE : MSHR NOT allocated for prefetch req (dropped) with addr: %h", req.addr))
         end
 `endif
         else begin
-          `logLevel( dcache, 2, $format("DCACHE : MSHR is busy. Stalling Stage3."))
+          `logLevel( dcache, 1, $format("DCACHE : MSHR is busy. Stalling Stage3."))
         end
       end
       else begin
         deq_prev_fifo= True;
-        `logLevel( dcache, 2, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : Discarding ff_second_stage req: ", fshow(req)))
       end
 
       if(deq_prev_fifo) begin
@@ -1156,7 +1172,7 @@ package nb_dcache;
       else
         lv_id_to_mshr= tagged Valid truncate(resp_from_mem.id);
       let maybe_req_from_mshr<- mshr.req_to_fb(lv_id_to_mshr);    //Receive the request from MSHR corresponding to the rid
-      `logLevel( dcache, 2, $format("DCACHE : Request from MSHR to FB: ", fshow(maybe_req_from_mshr)))
+      `logLevel( dcache, 1, $format("DCACHE : Request from MSHR to FB: ", fshow(maybe_req_from_mshr)))
       //if(tpl_1(maybe_req_from_mshr)) begin
         wr_mshr_req_to_fb<= maybe_req_from_mshr;
       //end
@@ -1179,7 +1195,7 @@ package nb_dcache;
     //Also, in the case of a hit, if it were a Load request or a PTW request, a response is sent.
     rule rl_MSHR_req_to_fill_buffer(wr_mshr_req_to_fb matches tagged Valid .req_from_mshr);
       //let req_from_mshr= wr_mshr_req_to_fb;
-      `logLevel( dcache, 2, $format("DCACHE :Sending  Request from MSHR to FB. "))
+      `logLevel( dcache, 1, $format("DCACHE :Sending  Request from MSHR to FB. "))
       let fb_addr= get_line_addr(req_from_mshr.addr);
       //Send the req to fill buffer and check if it's a hit
       let fill_buffer_resp<- fill_buffer.request(req_from_mshr);       //Send request to fill buffer
@@ -1191,7 +1207,7 @@ package nb_dcache;
         end
       `endif
       if(fill_buffer_resp matches tagged Valid .fb_data) begin
-        `logLevel( dcache, 2, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
+        `logLevel( dcache, 1, $format("DCACHE : Response data from FB to MSHR: %h", fb_data ))
         mshr.ack_from_fb;
         Bool send_resp= (req_from_mshr.origin==Load_buffer || req_from_mshr.origin==PTW
                          `ifdef atomic || req_from_mshr.is_atomic `endif );
@@ -1224,12 +1240,12 @@ package nb_dcache;
       end
       //else do nothing
       else begin
-        `logLevel( dcache, 2, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
+        `logLevel( dcache, 1, $format("DCACHE : Data for MSHR req is not yet available in the FB" ))
       end
     endrule
 
     rule rl_MSHR_resp_to_core;
-      `logLevel( dcache, 2, $format("DCACHE : MSHR reponse", fshow(wr_mshr_resp_to_core)))
+      `logLevel( dcache, 1, $format("DCACHE : MSHR reponse", fshow(wr_mshr_resp_to_core)))
       wr_resp_to_core<= wr_mshr_resp_to_core;
     endrule
    
@@ -1238,7 +1254,7 @@ package nb_dcache;
       let req= ff_first_stage.first;
       if(fill_buffer.line_addr == get_line_addr(req.addr) && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
         wr_ff_first_stage_store_req_to_curr_fb<= True;
-        `logLevel( dcache, 2, $format("DCACHE : ff_first_stage req to curr FB. Req: ", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : ff_first_stage req to curr FB. Req: ", fshow(req)))
       end
     endrule
 
@@ -1247,7 +1263,7 @@ package nb_dcache;
       let req= ff_second_stage.first;
       if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
         wr_ff_second_stage_req_to_curr_fb<= True;
-        `logLevel( dcache, 2, $format("DCACHE : ff_second_stage req to curr FB. (FB release stall if valid) Req: ", fshow(req)))
+        `logLevel( dcache, 1, $format("DCACHE : ff_second_stage req to curr FB. (FB release stall if valid) Req: ", fshow(req)))
       end
     endrule
 
@@ -1264,7 +1280,7 @@ package nb_dcache;
     rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
     && !wr_ff_first_stage_store_req_to_curr_fb && !wr_ff_second_stage_req_to_curr_fb && !wr_stall_fb_release);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
-      `logLevel( dcache, 2, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
+      `logLevel( dcache, 1, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin
         data_arr[i].read(set_index);
         tag_arr[i].read(set_index);
@@ -1306,7 +1322,7 @@ package nb_dcache;
       tag_arr[waynum].write(set_index, lv_dirty_valid_tag);
       wr_tag_ram_write_valid <= 1;
       wr_tag_ram_write_index <= set_index;
-      `logLevel( dcache, 2, $format("DCACHE : Updating way_num: %d and set_index: %d with data: %h and tag: %h", waynum, set_index, fb_data, lv_dirty_valid_tag))
+      `logLevel( dcache, 1, $format("DCACHE : Updating way_num: %d and set_index: %d with data: %h and tag: %h", waynum, set_index, fb_data, lv_dirty_valid_tag))
 
       //Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
       if(valid[waynum]==1 && dirty[waynum]==1) begin
@@ -1317,10 +1333,10 @@ package nb_dcache;
         ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                   data: dataline[waynum],
                                                   is_burst: True });
-        `logLevel( dcache, 2, $format("DCACHE : Evicting cache line. Addr: %x Data: %x ", evict_lineaddr, dataline[waynum]))
+        `logLevel( dcache, 1, $format("DCACHE : Evicting cache line. Addr: %x Data: %x ", evict_lineaddr, dataline[waynum]))
       end
       else begin
-        `logLevel( dcache, 2, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
+        `logLevel( dcache, 1, $format("DCACHE : Updated line is not dirty. Hence, no updation to eviction buffer"))
       end
       rg_fb_state<= Release_FB;
       mshr.fb_released;
@@ -1332,7 +1348,7 @@ package nb_dcache;
     rule rl_release_eviction_buffer(rg_fb_state==Release_FB);
       fill_buffer.release_fb;
       rg_fb_state<= Read_SRAMs;
-      `logLevel( dcache, 2, $format("DCACHE : Freeing FB"))
+      `logLevel( dcache, 1, $format("DCACHE : Freeing FB"))
     endrule
 
     //---------------------------------------------------------------------//
@@ -1344,10 +1360,10 @@ package nb_dcache;
                                                     && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
                                    || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) );
       if (rg_flush.valid) begin
-        `logLevel( dcache, 2, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
+        `logLevel( dcache, 1, $format("DCACHE : Flushing ff_req_from_core: ", fshow(core_req)))
       end
       else begin
-        `logLevel( dcache, 2, $format("DCACHE : Load (early) with robid %d dropped from input fifo.", core_req.rob))
+        `logLevel( dcache, 1, $format("DCACHE : Load (early) with robid %d dropped from input fifo.", core_req.rob))
         `ifdef perfmonitors
           wr_load_dropped_input <= 1;
         `endif
@@ -1358,7 +1374,7 @@ package nb_dcache;
     let first_stage_req= ff_first_stage.first;
     rule rl_flush_ff_first_stage(rg_flush.valid && (first_stage_req.origin!=Store_commit) && (first_stage_req.origin!=PTW)
                                                 && should_flush(rg_flush.head, rg_flush.flush_rob, first_stage_req.rob));
-      `logLevel( dcache, 2, $format("DCACHE : Flushing ff_first_stage: ", fshow(first_stage_req)))
+      `logLevel( dcache, 1, $format("DCACHE : Flushing ff_first_stage: ", fshow(first_stage_req)))
       wr_stage1_deq<= True;
       `ifdef atomic
       rg_atomic_hit_info<= tagged Invalid;
@@ -1383,8 +1399,8 @@ package nb_dcache;
       //  valid[1]= False;
 
       cff_second_stage_valid.initialize(valid);
-      `logLevel( dcache, 2, $format("DCACHE : Flushing everything! meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
-      //`logLevel( dcache, 2, $format("DCACHE : Flushing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
+      `logLevel( dcache, 1, $format("DCACHE : Flushing everything! meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
+      //`logLevel( dcache, 1, $format("DCACHE : Flushing everything! meta1: 'h%h meta0: 'h%h old_valid: %b new_valid: %b", pack(meta[1]), pack(meta[0]), pack(cff_second_stage_valid.contents), valid ))
       mshr.flush(rg_flush);
     endrule
 
@@ -1426,10 +1442,10 @@ package nb_dcache;
         ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                   data: data,
                                                   is_burst: True });
-        `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
+        `logLevel( dcache, 1, $format("DCACHE : Fence. Fill buffer writing to mem. Addr: %x Data: %x ", evict_lineaddr, data))
       end
       else begin
-        `logLevel( dcache, 2, $format("DCACHE : Fence. Fill buffer released and MSHR freed (clean line). Addr: %x Data: %x ", evict_lineaddr, data))
+        `logLevel( dcache, 1, $format("DCACHE : Fence. Fill buffer released and MSHR freed (clean line). Addr: %x Data: %x ", evict_lineaddr, data))
       end
 
       //The fill buffer entry can be released once the req has been enqueued in ff_write_req_to_mem.
@@ -1468,12 +1484,12 @@ package nb_dcache;
     //  for(Integer i = 0; i<ways_val; i = i+1) begin
     //    dataline[i]= data_arr[i].read_response;
     //    tag[i]= tag_arr[i].read_response;
-    //    `logLevel( dcache, 2, $format("DCACHE : Data[%d]: %d and Tag [%d]: %d ", i, dataline[i], i, tag[i]))
+    //    `logLevel( dcache, 1, $format("DCACHE : Data[%d]: %d and Tag [%d]: %d ", i, dataline[i], i, tag[i]))
     //  end
     //  for(Integer i = 0; i<ways_val; i = i+1) begin
     //    valid[i]= tag[i][tagbits_val];    //Valid bit
     //    dirty[i]= tag[i][tagbits_val+1];  //Dirty bit
-    //    `logLevel( dcache, 2, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
+    //    `logLevel( dcache, 1, $format("DCACHE : Dirty and Valid [%d]: %d%d", i, dirty[i], valid[i]))
     //  end
     //endrule
 
@@ -1501,7 +1517,7 @@ package nb_dcache;
       // read response for this set; register data, tag, valid & dirty
       // conservative (slow fence): no checks and valid/dirty resets this cycle
       else if (rg_fence_state == 'h1) begin
-        `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
+        `logLevel( dcache, 1, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
 
         for (Integer i = 0; i<ways_val; i = i+1) begin
           dataline[i] = data_arr[i].read_response;
@@ -1609,7 +1625,7 @@ package nb_dcache;
 //      Bool incr_fence_set_index= False;
 //      Bool lv_evict= False;
 //      Bit#(TLog#(ways)) evict_index= 0;
-//      `logLevel( dcache, 2, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
+//      `logLevel( dcache, 1, $format("DCACHE : Fencing set: %d", rg_fence_set_index))
 //
 //      for(Integer i = 0; i<ways_val; i = i+1) begin
 //        dataline[i]= data_arr[i].read_response;
@@ -1688,7 +1704,7 @@ package nb_dcache;
     //discarded.
 
     rule rl_disp1(rg_fence && !rg_SRAM_fence[0]);
-      `logLevel( dcache, 2, $format("DCACHE : Fence SRAM done. mshr.not_empty: %b rg_io_req_sent: %b ", mshr.not_empty, rg_io_req_sent))
+      `logLevel( dcache, 1, $format("DCACHE : Fence SRAM done. mshr.not_empty: %b rg_io_req_sent: %b ", mshr.not_empty, rg_io_req_sent))
     endrule
 
     rule rl_SRAM_and_MSHR_done_fencing(rg_fence && !rg_SRAM_fence[0] && !mshr.not_empty && !rg_io_req_sent);
@@ -1709,7 +1725,7 @@ package nb_dcache;
                                          ,  atomic_result: 0
                                          `endif `endif
                                        `endif };
-      `logLevel( dcache, 2, $format("DCACHE : Fencing done. "))
+      `logLevel( dcache, 1, $format("DCACHE : Fencing done. "))
     endrule
 
     rule rl_send_io_request(!rg_io_req_sent && !rg_fence); //TODO should this rule have !rg_fence?
@@ -1728,7 +1744,7 @@ package nb_dcache;
       let resp= ff_io_resp.first;
       ff_io_resp.deq;
       ff_io_info.deq;
-      `logLevel( dcache, 2, $format("DCACHE : IO Resp: ", fshow(ff_io_resp.first)))
+      `logLevel( dcache, 1, $format("DCACHE : IO Resp: ", fshow(ff_io_resp.first)))
       //In this implementation, the fence finishes only after receiving any pending IO responses.
       //Hence, if an IO response is received in the middle of a fence request, rg_cache_busy should
       //remain True until the fence operation is over.
@@ -1747,10 +1763,80 @@ package nb_dcache;
                                        `endif };
     endrule
 
+`ifdef simulate
+  `ifdef fesvr_sim
+    `ifndef baremetal_sim
+        rule rl_debug_print01 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: ========================== No progress ==========================");
+
+          $display($time, " PT: DCACHE: Core_req: valid %b", ff_req_from_core.notEmpty);
+          $display($time, " PT: DCACHE: first_stage latch: valid %b", ff_first_stage.notEmpty);
+          $display($time, " PT: DCACHE: second_stage latch: valid %b", ff_second_stage.notEmpty);
+        endrule
+
+        rule rl_debug_print02 (wr_debug_print == 1);
+          let req = ff_req_from_core.first;
+          $display($time, " PT: DCACHE: Core_req: origin %d robid %d addr %h", pack(req.origin), req.rob, req.addr);
+        endrule
+
+        rule rl_debug_print03 (wr_debug_print == 1);
+          let req = ff_first_stage.first;
+          $display($time, " PT: DCACHE: first_stage latch: origin %d robid %d addr %h", pack(req.origin), req.rob, req.addr);
+        endrule
+
+        rule rl_debug_print04 (wr_debug_print == 1);
+            let req = ff_second_stage.first;
+            $display($time, " PT: DCACHE: second_stage latch: origin %d addr %h", pack(req.origin), req.addr);
+        endrule
+
+        rule rl_debug_print05 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: previous_request: valid %b addr %h", tpl_1(rg_prev_req_info), tpl_2(rg_prev_req_info));
+        endrule
+
+        rule rl_debug_print06 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: load_drop: valid %b robid %d", wr_load_drop_valid, wr_load_drop_robid);
+        endrule
+
+        rule rl_debug_print07 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: rg_page_fault: valid %b # rg_leaf_page_response: valid %b", rg_page_fault, rg_leaf_page_response);
+        endrule
+
+        rule rl_debug_print08 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: FB: state %d addr %h can_release %d", pack(rg_fb_state), fill_buffer.line_addr, fill_buffer.can_release);
+        endrule
+
+        rule rl_debug_print09 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: first_stage store polling FB: valid %b", wr_ff_first_stage_store_req_to_curr_fb);
+        endrule
+
+        rule rl_debug_print10 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: second_stage polling FB: valid %b", wr_ff_second_stage_req_to_curr_fb);
+        endrule
+
+        rule rl_debug_print11 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: MSHR polling FB: valid %b", isValid(wr_mshr_req_to_fb));
+        endrule
+
+        rule rl_debug_print12 (wr_debug_print == 1);
+          if (wr_mshr_req_to_fb matches tagged Valid .req) begin
+            $display($time, " PT: DCACHE: MSHR request: origin %d addr %h", pack(req.origin), req.addr);
+          end
+        endrule
+
+        rule rl_debug_print13 (wr_debug_print == 1);
+          $display($time, " PT: DCACHE: MSHR state: empty %d entries_full %d one_fifo_full %d", !mshr.not_empty, mshr.entries_full, mshr.one_fifo_full);
+          mshr.debug_print();
+          $display($time, " PT: DCACHE: =================================================================");
+        endrule
+    `endif
+  `endif
+`endif // simulate
+
+
     interface subifc_req_from_core = interface Put
       method Action put(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index) core_req);
         `ifdef iclass // single pipeline latch between lsu and cache
-            `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
+            `logLevel( dcache, 1, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
             ff_req_from_core.enq(core_req);
         `else
           // TODO: change conditions here if bypass fifo is replaced with a wire
@@ -1758,14 +1844,14 @@ package nb_dcache;
                                  && should_flush(rg_flush.head, rg_flush.flush_rob, core_req.rob))
               || (wr_load_drop_valid && (wr_load_drop_robid == core_req.rob)) ) begin
             if (rg_flush.valid) begin
-              `logLevel( dcache, 2, $format("DCACHE : Core request dropped: in flush range ", fshow(core_req)))
+              `logLevel( dcache, 1, $format("DCACHE : Core request dropped: in flush range ", fshow(core_req)))
             end
             else begin
-              `logLevel( dcache, 2, $format("DCACHE : Core request dropped: load (early) with robid %d", core_req.rob))
+              `logLevel( dcache, 1, $format("DCACHE : Core request dropped: load (early) with robid %d", core_req.rob))
             end
           end // flush or drop
           else begin
-            `logLevel( dcache, 2, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
+            `logLevel( dcache, 1, $format("DCACHE : Core request with robid %d enqueued.", core_req.rob))
             ff_req_from_core.enq(core_req);
           end
         `endif
@@ -1777,7 +1863,7 @@ package nb_dcache;
       //       was: if(!rg_fence_wait_for_ff_first_stage_empty && (!rg_flush.valid || !((wr_resp_to_core.rob != '1) && should_flush(rg_flush.head, rg_flush.flush_rob, wr_resp_to_core.rob)) ));
       // If supervisor is supported, do not drop PTW responses
       method ActionValue#(Resp_to_core#(TMul#(wordsize,8), prf_index, rob_index)) get `ifndef supervisor if(!rg_fence_wait_for_ff_first_stage_empty) `endif ;
-        `logLevel( dcache, 2, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
+        `logLevel( dcache, 1, $format("DCACHE : Response to core: ", fshow(wr_resp_to_core)))
         return wr_resp_to_core;
       endmethod
     endinterface;
@@ -1807,7 +1893,7 @@ package nb_dcache;
     interface subifc_read_resp_from_mem= interface Put
       method Action put(Read_resp_from_mem#(buswidth, id_bits) resp);
         wr_read_resp_from_mem<= resp;
-        `logLevel( dcache, 2, $format("DCACHE : Read response from mem: ", fshow(resp)))
+        `logLevel( dcache, 1, $format("DCACHE : Read response from mem: ", fshow(resp)))
         let mem_req_offset= mshr.mem_req_offset(truncate(resp.id));
         fill_buffer.data_from_mem(resp.data, resp.last, mem_req_offset);
       endmethod
@@ -1848,13 +1934,13 @@ package nb_dcache;
                                     head: head,
                                     flush_rob: flush_rob };
       rg_flush<= flush_signal;
-      `logLevel( dcache, 2, $format("DCACHE : Flush generated: ", fshow(flush_signal)))
+      `logLevel( dcache, 1, $format("DCACHE : Flush generated: ", fshow(flush_signal)))
     endmethod
 
     method Action load_drop(Bit#(rob_index) load_rob);
       wr_load_drop_valid <= True;
       wr_load_drop_robid <= load_rob;
-      `logLevel( dcache, 2, $format("DCACHE : Load (early) drop received for rob_id %d", load_rob))
+      `logLevel( dcache, 1, $format("DCACHE : Load (early) drop received for rob_id %d", load_rob))
     endmethod
 
 `ifdef supervisor
@@ -1885,11 +1971,20 @@ package nb_dcache;
     endmethod
 `endif
 
+`ifdef simulate
+  `ifdef fesvr_sim
+    `ifndef baremetal_sim
+        method Action debug_print();
+          //wr_debug_print <= 1;
+        endmethod
+    `endif
+  `endif
+`endif // simulate
+
   endmodule
 
   (*synthesize*)
   module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `ifdef split_prf TAdd#(1,TLog#(`num_prfs_max)) `else TLog#(`num_prfs) `endif , `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TLog#(`rob_size), TLog#(`L_buf_size)));
-  //module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `Prf_index, `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, `Rob_index));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
