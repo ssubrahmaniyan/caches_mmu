@@ -346,6 +346,7 @@ package nb_dcache;
 `ifdef simulate
   `ifdef fesvr_sim
     `ifndef baremetal_sim
+        Wire#(Bit#(1)) rg_debug_print <- mkReg(0);
         Wire#(Bit#(1)) wr_debug_print <- mkDWire(0);
     `endif
   `endif
@@ -1766,6 +1767,10 @@ package nb_dcache;
 `ifdef simulate
   `ifdef fesvr_sim
     `ifndef baremetal_sim
+        rule rl_debug_print00;
+          wr_debug_print <= rg_debug_print;
+        endrule
+
         rule rl_debug_print01 (wr_debug_print == 1);
           $display($time, " PT: DCACHE: ========================== No progress ==========================");
 
@@ -1975,7 +1980,7 @@ package nb_dcache;
   `ifdef fesvr_sim
     `ifndef baremetal_sim
         method Action debug_print();
-          //wr_debug_print <= 1;
+          rg_debug_print <= 1;
         endmethod
     `endif
   `endif
