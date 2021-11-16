@@ -1325,6 +1325,17 @@ package nb_dcache;
       wr_tag_ram_write_index <= set_index;
       `logLevel( dcache, 1, $format("DCACHE : Updating way_num: %d and set_index: %d with data: %h and tag: %h", waynum, set_index, fb_data, lv_dirty_valid_tag))
 
+      `ifdef simulate
+        for(Integer i = 0; i<ways_val; i = i+1) begin
+          if (waynum != fromInteger(i)) begin // check other ways
+            if ((valid[i] == 1) && (tag[i] == lv_tag)) begin
+              $display($time, " PT: DCACHE: Error! Updating the same physical line with set_index %h tag %h in two different ways!", set_index, lv_tag);
+              $display($time, " PT: DCACHE: Error! Update: old way %h new way %h # old dirty %b new dirty %b # old data %h new data %h", i, waynum, dirty[i], fb_dirty, dataline[i], fb_data);
+            end
+          end
+        end
+      `endif
+
       //Eviction buffer should be written only when there is something to evict, else skip the eviction buffer cycle
       if(valid[waynum]==1 && dirty[waynum]==1) begin
         Bit#(lineoffset) some_zeros= 0;
