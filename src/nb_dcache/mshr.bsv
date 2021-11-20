@@ -135,31 +135,31 @@ package mshr;
 
 		rule rl_update_mshr_valid;
 			if(wr_allocate_id matches tagged Valid .allocate_id) begin
-				`logLevel( dcache, 1, $format("MSHR: setting mshr[%d] valid", allocate_id))
+				`logTimeLevel( dcache, 1, $format("MSHR: setting mshr[%d] valid", allocate_id))
 				rg_mshr_valid[allocate_id]<= True;
 			end
 
 			if(rg_curr_fb_id matches tagged Valid .curr_fb_id &&&  !ff_mshr[curr_fb_id].notEmpty) begin
 				if(wr_allocate_id matches tagged Valid .allocate_id &&& allocate_id== curr_fb_id) begin
-					`logLevel( dcache, 1, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle. fb_released %d ", curr_fb_id, rg_fb_released))
+					`logTimeLevel( dcache, 1, $format("MSHR: ff_mshr[%d] is empty, but new allocation to the same MSHR in this cycle. fb_released %d ", curr_fb_id, rg_fb_released))
 				end
         else if(rg_fb_released) begin //if(rg_fb_released) begin
-					`logLevel( dcache, 1, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
+					`logTimeLevel( dcache, 1, $format("MSHR: rg_mshr_valid[%d] is assigned False", curr_fb_id))
 					rg_mshr_valid[curr_fb_id]<= False;
 				end
         else begin
-					`logLevel( dcache, 1, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
+					`logTimeLevel( dcache, 1, $format("MSHR: MSHR[%d] is empty, but not yet released. Waiting for FB to release.", curr_fb_id))
         end
 			end
       //else begin
-			//	`logLevel( dcache, 1, $format("MSHR: rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
+			//	`logTimeLevel( dcache, 1, $format("MSHR: rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
       //end
 		endrule
 
 		rule rl_deq_ff(wr_deq_ff_id matches tagged Valid .deq_ff_id);
 			let id= deq_ff_id;
 			let lv_req_prf= ff_mshr[id].first.payload;
-			`logLevel( dcache, 1, $format("MSHR[%d]: Flushed request for prf_index: %d being dequeued from FIFOs", id, lv_req_prf))
+			`logTimeLevel( dcache, 1, $format("MSHR[%d]: Flushed request for prf_index: %d being dequeued from FIFOs", id, lv_req_prf))
 			ff_mshr[id].deq;
 			cff_rob[id].deq;
 			cff_valid[id].deq;
@@ -183,9 +183,9 @@ package mshr;
 			Bit#(TLog#(mshrsize)) mshr_allocated_id= 0;
 			Bit#(TLog#(mshrsize)) mshr_unallocated_id= 0;
 			Bit#(addr_in_mshr) req_line_addr= req.addr[paddr_val-1:linewidthbits_val];
-			`logLevel( dcache, 1, $format("MSHR : New req for line_addr: %h req_addr: %h", req_line_addr, req.addr))
+			`logTimeLevel( dcache, 1, $format("MSHR : New req for line_addr: %h req_addr: %h", req_line_addr, req.addr))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
-				`logLevel( dcache, 1, $format("MSHR[%d]: Valid: %b line_addr: %h", i, rg_mshr_valid[i], rg_mshr_line_addr[i]))
+				`logTimeLevel( dcache, 1, $format("MSHR[%d]: Valid: %b line_addr: %h", i, rg_mshr_valid[i], rg_mshr_line_addr[i]))
 				if(rg_mshr_valid[i] && (req_line_addr == rg_mshr_line_addr[i])) begin
 					mshr_allocated= True;
 					mshr_allocated_id= fromInteger(i);
@@ -221,25 +221,25 @@ package mshr;
           Bool can_flush= (req.origin!=Store_commit && req.origin!=PTW);
 				  cff_rob[mshr_unallocated_id].enq(tuple2(req.rob, can_flush));
 				  cff_valid[mshr_unallocated_id].enq(1'b1);
-				  `logLevel( dcache, 1, $format("MSHR : New Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
+				  `logTimeLevel( dcache, 1, $format("MSHR : New Allocated MSHR id: %d for addr: %h", mshr_unallocated_id, req.addr))
 				  return tuple2(Not_allocated, mshr_unallocated_id);
         `ifdef prefetch_throttle
           end
           else begin
             // drop prefetch request when MSHR is almost full
-	    `logLevel( dcache, 1, $format("MSHR : Prefetch request dropped (MSHR almost full)."))
+	    `logTimeLevel( dcache, 1, $format("MSHR : Prefetch request dropped (MSHR almost full)."))
 	    return tuple2(Dropped, 0);
           end // prefetch req
         `endif
         end // !mshr_full
         else begin
-	  `logLevel( dcache, 1, $format("MSHR : New MSHR not allocated as MSHRs are full. ", mshr_allocated_id))
+	  `logTimeLevel( dcache, 1, $format("MSHR : New MSHR not allocated as MSHRs are full. ", mshr_allocated_id))
           `ifndef prefetch_throttle
               return tuple2(Busy, ?);
           `else
             // drop prefetch request when MSHR is full
             if (req.origin == Store_buffer) begin
-	      `logLevel( dcache, 1, $format("MSHR : Prefetch request dropped (MSHR full)."))
+	      `logTimeLevel( dcache, 1, $format("MSHR : Prefetch request dropped (MSHR full)."))
               return tuple2(Dropped, 0);
             end
             else begin
@@ -270,26 +270,26 @@ package mshr;
         Bool can_flush= (req.origin!=Store_commit && req.origin!=PTW);
 				cff_rob[mshr_allocated_id].enq(tuple2(req.rob, can_flush));
 				cff_valid[mshr_allocated_id].enq(1'b1);
-				`logLevel( dcache, 1, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_allocated_id, req.addr))
+				`logTimeLevel( dcache, 1, $format("MSHR : Allocated MSHR id: %d for addr: %h", mshr_allocated_id, req.addr))
 				return tuple2(Allocated, ?);
       `ifdef prefetch_throttle
         end
         else begin
           // drop prefetch request if it is a secondary miss (fifo not full)
-	  `logLevel( dcache, 1, $format("MSHR : Prefetch request dropped (secondary miss, fifo not full)."))
+	  `logTimeLevel( dcache, 1, $format("MSHR : Prefetch request dropped (secondary miss, fifo not full)."))
           return tuple2(Dropped, 0);
         end // prefetch req
       `endif
       end // fifo not full
 
       else begin
-	`logLevel( dcache, 1, $format("MSHR : Already allocated index %d but ff_mshr is full. ", mshr_allocated_id))
+	`logTimeLevel( dcache, 1, $format("MSHR : Already allocated index %d but ff_mshr is full. ", mshr_allocated_id))
         `ifndef prefetch_throttle
             return tuple2(Busy, ?);
         `else
           // drop prefetch request if it is a secondary miss (fifo full)
           if (req.origin == Store_buffer) begin
-	    `logLevel( dcache, 1, $format("MSHR : Prefetch request dropped (secondary miss, fifo full)."))
+	    `logTimeLevel( dcache, 1, $format("MSHR : Prefetch request dropped (secondary miss, fifo full)."))
             return tuple2(Dropped, 0);
           end
           else begin
@@ -305,8 +305,8 @@ package mshr;
 		method ActionValue#(Maybe#(MSHR_Req#(paddr, data, prf_index, rob_index))) req_to_fb(Maybe#(Bit#(TLog#(mshrsize))) v_req_rid);
 			Maybe#(MSHR_Req#(paddr, data, prf_index, rob_index)) req= tagged Invalid;
       Bit#(addr_in_mshr) lv_fb_addr= 'd0;
-			`logLevel( dcache, 1, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
-			`logLevel( dcache, 1, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
+			`logTimeLevel( dcache, 1, $format("MSHR : rg_curr_fb_id: ", fshow(rg_curr_fb_id)))
+			`logTimeLevel( dcache, 1, $format("MSHR : v_req_rid: ", fshow(v_req_rid)))
 			if(rg_curr_fb_id matches tagged Invalid &&& v_req_rid matches tagged Valid .req_rid) begin
 				if(rg_mshr_valid[req_rid]) begin
 					rg_curr_fb_id<= tagged Valid req_rid;
@@ -331,7 +331,7 @@ package mshr;
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info) 
                                           `endif };
-						`logLevel( dcache, 1, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
+						`logTimeLevel( dcache, 1, $format("MSHR : Miss req to FB when rg_curr_fb_id is Invalid: ", fshow(req)))
 					end
 					else begin
             if(ff_mshr[req_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
@@ -352,7 +352,7 @@ package mshr;
 				end
 				//Else no pending req of current MSHR are pending, hence wait for the fill buffer to get filled
 				else begin
-					`logLevel( dcache, 1, $format("MSHR : Waiting for fill buffer to get filled for id: ", fshow(v_req_rid)))
+					`logTimeLevel( dcache, 1, $format("MSHR : Waiting for fill buffer to get filled for id: ", fshow(v_req_rid)))
 				end
 			end
 			else if(rg_curr_fb_id matches tagged Valid .curr_rid) begin		//The current MSHR's (that is being serviced) id
@@ -362,7 +362,7 @@ package mshr;
           //`ifdef ASSERT
           //  dynamicAssert(!ff_mshr[curr_rid].notEmpty,"ff_mshr[curr_rid] is not Empty when FB is being released");
           //`endif
-					`logLevel( dcache, 1, $format("MSHR : No more pending requests of id: %d", curr_rid))
+					`logTimeLevel( dcache, 1, $format("MSHR : No more pending requests of id: %d", curr_rid))
 				end
 				if(ff_mshr[curr_rid].notEmpty) begin
 					let fifo_top= ff_mshr[curr_rid].first;
@@ -383,7 +383,7 @@ package mshr;
                                           , is_atomic: fifo_top.is_atomic
                                           , atomic_fn: tpl_1(rg_atomic_info)
                                           `endif };
-						`logLevel( dcache, 1, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
+						`logTimeLevel( dcache, 1, $format("MSHR : Miss req from MSHR[%d] to FB: ", curr_rid, fshow(req)))
 					end
 					else begin
             if(ff_mshr[curr_rid].notEmpty) begin //If a flushed req exists, change origin to Store_buffer so that FB doesn't get released, and no response is sent to the core
@@ -406,7 +406,7 @@ package mshr;
 				//is to curr_id or not. If so, then rg_curr_fb_id should remain unchanged, else, Invalidate it
 				//so that in the next cycle it will be assigned the value
 				else if(wr_allocate_id matches tagged Valid .curr_req_rid &&& curr_req_rid==curr_rid) begin //implicit && !ff_mshr[curr_rid].notEmpty
-					`logLevel( dcache, 1, $format("MSHR : New req from ff_second_stage to existing MSHR of id: %d", curr_rid))
+					`logTimeLevel( dcache, 1, $format("MSHR : New req from ff_second_stage to existing MSHR of id: %d", curr_rid))
 				end
 
 			end
@@ -424,7 +424,7 @@ package mshr;
 
 		method Action ack_from_fb if(mshr_not_empty && !isValid(wr_deq_ff_id));
 			if(rg_curr_fb_id matches tagged Valid .fb_id &&& ff_mshr[fb_id].notEmpty) begin
-      	`logLevel( dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
+      	`logTimeLevel( dcache, 1, $format("MSHR : ack from fb for id: %d", fb_id))
 				ff_mshr[fb_id].deq;
 				cff_rob[fb_id].deq;
 				cff_valid[fb_id].deq;
@@ -441,20 +441,20 @@ package mshr;
       if (`VERBOSITY > 1) begin
         $display("MSHR : Fluss ", fshow(bundle));
       end
-      `logLevel( dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
+      `logTimeLevel( dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
 			for(Integer i=0; i<mshrsize_val; i=i+1) begin
 				Vector#(mshrfifo_depth,Bit#(1)) valid= cff_valid[i].contents;
 				Vector#(mshrfifo_depth,Tuple2#(Bit#(rob_index), Bool)) cff_rob_id= cff_rob[i].contents;
 
 				for(Integer j=0; j<mshrfifo_depth_val; j=j+1) begin
-      		`logLevel( dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
-      		`logLevel( dcache, 1, $format("MSHR : Flush: Initial Meta[%d][%d]= ", i,j, fshow(cff_rob_id[j])))
+      		`logTimeLevel( dcache, 1, $format("MSHR : Flush: Initial V[%d][%d]= %b", i,j, valid[j]))
+      		`logTimeLevel( dcache, 1, $format("MSHR : Flush: Initial Meta[%d][%d]= ", i,j, fshow(cff_rob_id[j])))
 					if(should_flush(bundle.head, bundle.flush_rob, tpl_1(cff_rob_id[j])) && tpl_2(cff_rob_id[j])) begin
 						valid[j]=0;
-      			`logLevel( dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
+      			`logTimeLevel( dcache, 1, $format("MSHR : Flush: Invalidating (%d,%d)", i, j))
 					end
 				end
-      	`logLevel( dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
+      	`logTimeLevel( dcache, 1, $format("MSHR : Flush: Setting V[%d]= %b\n", i, valid))
 				cff_valid[i].initialize(valid);
 			end
 		endmethod

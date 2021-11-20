@@ -146,7 +146,7 @@ package fa_dtlb;
     endrule
 
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
-      `logLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
+      `logTimeLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
 
       Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
 
@@ -253,8 +253,8 @@ package fa_dtlb;
             end
           end
           else begin
-            `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-            `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
 `ifdef supervisor
             exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
 `endif
@@ -404,7 +404,7 @@ package fa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          `logLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
+          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
           rg_replace <= rg_replace + 1;
         end

@@ -92,8 +92,8 @@ package icache_mhb;
         rule rl_display_mhb_array;
             for(Integer i=0;i<`mhb_size;i=i+1) begin
                 Bit#(`paddr) lv_paddr = zeroExtend(rg_fb_block_address[i]) << `v_offsetbits;
-                `logLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b all_served %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_all_served[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
-                `logLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
+                `logTimeLevel( icache, 1, $format("ICACHE: MHB: LFB[%2d]: Status: valid %b flushed %b issued %b all_served %b serve_next %d paddr %h filled %b word_next %d data[3] %h data[2] %h data[1] %h data[0] %h", i, rg_fb_valid[i], rg_fb_flushed[i], rg_fb_issued[i], rg_mshr_all_served[i], rg_mshr_req_to_be_served[i], lv_paddr, rg_fb_filled[i], rg_fb_word_to_be_filled[i], rg_fb_data[i][3], rg_fb_data[i][2], rg_fb_data[i][1], rg_fb_data[i][0]))
+                `logTimeLevel( icache, 1, $format("\tICACHE: MHB: MSHR[%2d]: Status: val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d # val %b req %d ofs %d", i, rg_mshr_valid[i][0], rg_mshr_req_id[i][0], rg_mshr_offset[i][0], rg_mshr_valid[i][1], rg_mshr_req_id[i][1], rg_mshr_offset[i][1], rg_mshr_valid[i][2], rg_mshr_req_id[i][2], rg_mshr_offset[i][2], rg_mshr_valid[i][3], rg_mshr_req_id[i][3], rg_mshr_offset[i][3]))
             end
         endrule
         //
@@ -103,8 +103,8 @@ package icache_mhb;
             lv_offset = zeroExtend(rg_fb_word_to_be_filled[rg_fill_request_entry_ptr]) << `v_byteoffset;
             lv_paddr = {rg_fb_block_address[rg_fill_request_entry_ptr],lv_offset};
 
-            `logLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
-            `logLevel( icache, 1, $format("ICACHE: MHB: fill_req laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
+            `logTimeLevel( icache, 1, $format("ICACHE: MHB: rg_mhb_free_entry_ptr %d rg_serve_mshr_entry_ptr %d rg_fill_request_entry_ptr %d rg_fb_release_ptr %d", rg_mhb_free_entry_ptr, rg_serve_mshr_entry_ptr, rg_fill_request_entry_ptr, rg_fb_release_ptr))
+            `logTimeLevel( icache, 1, $format("ICACHE: MHB: fill_req laddr %h offset %d paddr %h", rg_fb_block_address[rg_fill_request_entry_ptr], lv_offset, lv_paddr))
         endrule
         //
         rule rl_handle_flush;
@@ -123,7 +123,7 @@ package icache_mhb;
                       rg_fb_flushed[i] <= True;
                   end
               end
-              `logLevel( icache, 1, $format("ICACHE: MHB: Flush received."))
+              `logTimeLevel( icache, 1, $format("ICACHE: MHB: Flush received."))
           end
         endrule
         //
@@ -183,11 +183,11 @@ package icache_mhb;
                 // New allocation takes precedence over request satisfied (as wr_req_satisfied is true when all secondary entries are invalid but a new secondary entry can be allocated this cycle)
                 if (wr_allocate_entry && (wr_allocate_entry_primary_idx == fromInteger(i)) && (wr_allocate_entry_secondary_idx == fromInteger(j))) begin
                   rg_mshr_valid[wr_allocate_entry_primary_idx][wr_allocate_entry_secondary_idx] <= True;
-                  `logLevel( icache, 1, $format("ICACHE: MHB: allocate (set valid): mhb_index %d sec_index %d", wr_allocate_entry_primary_idx, wr_allocate_entry_secondary_idx))
+                  `logTimeLevel( icache, 1, $format("ICACHE: MHB: allocate (set valid): mhb_index %d sec_index %d", wr_allocate_entry_primary_idx, wr_allocate_entry_secondary_idx))
                 end
                 else if(wr_req_satisfied && (wr_satisfied_req_primary_idx == fromInteger(i)) && (wr_satisfied_req_secondary_idx == fromInteger(j))) begin
                   rg_mshr_valid[wr_satisfied_req_primary_idx][wr_satisfied_req_secondary_idx] <= False;
-                  `logLevel( icache, 1, $format("ICACHE: MHB: read_response (set invalid): mhb_index %d sec_index %d", wr_satisfied_req_primary_idx, wr_satisfied_req_secondary_idx))
+                  `logTimeLevel( icache, 1, $format("ICACHE: MHB: read_response (set invalid): mhb_index %d sec_index %d", wr_satisfied_req_primary_idx, wr_satisfied_req_secondary_idx))
                 end
               end
             end
@@ -196,7 +196,7 @@ package icache_mhb;
         rule rl_set_valid_lfb_release;
             if(wr_releasing) begin
                 rg_fb_valid[wr_releasing_primary_index] <= False;
-                `logLevel( icache, 1, $format("ICACHE: MHB: LFB %d released.", wr_releasing_primary_index))
+                `logTimeLevel( icache, 1, $format("ICACHE: MHB: LFB %d released.", wr_releasing_primary_index))
             end
         endrule
         //
@@ -272,7 +272,7 @@ package icache_mhb;
                 //
                 rg_mshr_req_to_be_served[lv_mhb_index] <= (wr_req_satisfied)?lv_mshr_req_to_be_served+1:lv_mshr_req_to_be_served;  // rg_serve_mshr pointer (miss response pointer) can increment further with enhancements
             end
-            `logLevel( icache, 1, $format("ICACHE: MHB: rl_check_all_served: mhb_index %h serve_next %d pending %d serve_conflict %b req_sat %b # all_served %b", lv_mhb_index, lv_mshr_req_to_be_served, lv_mshr_pending_count, wr_new_entry_serve_conflict, wr_req_satisfied, lv_all_served))
+            `logTimeLevel( icache, 1, $format("ICACHE: MHB: rl_check_all_served: mhb_index %h serve_next %d pending %d serve_conflict %b req_sat %b # all_served %b", lv_mhb_index, lv_mshr_req_to_be_served, lv_mshr_pending_count, wr_new_entry_serve_conflict, wr_req_satisfied, lv_all_served))
         endrule
         //
         method Bool mv_mshr_empty();
@@ -374,7 +374,7 @@ package icache_mhb;
 
                     wr_allocate_entry_primary_idx <= lv_primary_index;
                     wr_allocate_entry_secondary_idx <= lv_secondary_index;
-                    `logLevel( icache, 1, $format("ICACHE: MHB: allocate (hit): mhb_index %d sec_index %d", lv_primary_index, lv_secondary_index))
+                    `logTimeLevel( icache, 1, $format("ICACHE: MHB: allocate (hit): mhb_index %d sec_index %d", lv_primary_index, lv_secondary_index))
                 end
 
                 else begin  // Allocate a new MSHR entry
@@ -401,7 +401,7 @@ package icache_mhb;
                     wr_allocate_entry_secondary_idx <= 0;
                     //
                     wr_increment_free_entry_ptr <= True;
-                    `logLevel( icache, 1, $format("ICACHE: MHB: allocate (miss): mhb_index %d sec_index 0", wr_mhb_free_entry_ptr))
+                    `logTimeLevel( icache, 1, $format("ICACHE: MHB: allocate (miss): mhb_index %d sec_index 0", wr_mhb_free_entry_ptr))
                 end
             end
         endmethod

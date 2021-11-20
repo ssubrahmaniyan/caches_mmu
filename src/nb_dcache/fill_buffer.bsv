@@ -137,7 +137,7 @@ package fill_buffer;
 		rule rl_set_rg_first_resp(rg_first_resp && !all_valid && !tpl_2(wr_data_from_mem));
 			rg_fb_addr<= wr_addr_from_MSHR_to_fb;
 			rg_first_resp<= False;
-			`logLevel( dcache, 1, $format("FB : Assigning rg_fb_addr: %h", wr_addr_from_MSHR_to_fb))
+			`logTimeLevel( dcache, 1, $format("FB : Assigning rg_fb_addr: %h", wr_addr_from_MSHR_to_fb))
     endrule
 
     rule rl_reset_rg_first_resp(!rg_first_resp && tpl_2(wr_data_from_mem));
@@ -148,7 +148,7 @@ package fill_buffer;
 		//is an implicit confition as wr_data_from_mem is a mkWire, whose value is read in this rule)
 		rule rl_operation(!all_valid);
 			let req= wr_req;
-			`logLevel( dcache, 1, $format("FB : rl_operation firing. data_from_mem: %h rg_first_resp: %b req_from_mshr: ", tpl_1(wr_data_from_mem), rg_first_resp, fshow(req)))
+			`logTimeLevel( dcache, 1, $format("FB : rl_operation firing. data_from_mem: %h rg_first_resp: %b req_from_mshr: ", tpl_1(wr_data_from_mem), rg_first_resp, fshow(req)))
 			Bit#(TLog#(num_chunks)) lv_index;
 			//For the first response from memory, since the critical data arrives first, the index to be written
 			//in the FB is computed. In the first cycle, the MSHR will definitely send a request with the
@@ -159,7 +159,7 @@ package fill_buffer;
 				Bit#(TLog#(num_chunks)) valid_index= tpl_3(wr_data_from_mem); //req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
 				rg_index<= valid_index+1;
 				lv_index= valid_index;
-				`logLevel( dcache, 1, $format("FB : First response from Mem. Valid index in FB: %d for req: ", valid_index, fshow(req)))
+				`logTimeLevel( dcache, 1, $format("FB : First response from Mem. Valid index in FB: %d for req: ", valid_index, fshow(req)))
 			end
 			else begin
 				rg_index<= rg_index + 1;
@@ -182,7 +182,7 @@ package fill_buffer;
 				rg_dirty<= 1;
         Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
 				write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
-			  `logLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
+			  `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
 			end
 			//When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
@@ -194,7 +194,7 @@ package fill_buffer;
 		endrule
 
 		rule rl_disp;
-			`logLevel( dcache, 1, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+			`logTimeLevel( dcache, 1, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
 		endrule
 
 		rule rl_serve_remaining_mshr_requests(all_valid);
@@ -206,13 +206,13 @@ package fill_buffer;
 				  let data_extracted= fn_extract_data(rg_fill_buffer, truncate(req.addr), req.access_size);
           store_data= fn_atomic_op(req.atomic_fn, req.payload, data_extracted);
           //$display("cache_data: %h", data_extracted);
-			    `logLevel( dcache, 1, $format("FB : Performing atomic op: %b cache_data: rs2: %h result: %h", req.atomic_fn, req.payload, store_data))
+			    `logTimeLevel( dcache, 1, $format("FB : Performing atomic op: %b cache_data: rs2: %h result: %h", req.atomic_fn, req.payload, store_data))
         end
         `endif
 
         Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
 				Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
-			  `logLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
+			  `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
 				rg_fill_buffer<= write_linedata;
 				rg_dirty<= 1;
 			end
@@ -228,7 +228,7 @@ package fill_buffer;
 		method ActionValue#(Maybe#(Bit#(linewidth))) request(MSHR_Req#(paddr, data, prf_index, rob_index) req);
 			Bit#(TLog#(num_chunks)) valid_index= req.addr[lineoffset_val -1 : busoffset_val];
 			Bit#(TSub#(paddr, lineoffset)) lv_req_addr= req.addr[paddr_val-1:lineoffset_val];
-			`logLevel( dcache, 1, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d valid_bits: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid ))
+			`logTimeLevel( dcache, 1, $format("FB : MSHR_req_addr: %h MSHR_req_line_addr: %h rg_fb_addr: %h fb_index: %d valid_bits: %b", req.addr, lv_req_addr, rg_fb_addr, valid_index, rg_valid ))
 			wr_req<= req;
 			if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:lineoffset_val]==rg_fb_addr) begin
 				wr_can_perform_store<= True;
