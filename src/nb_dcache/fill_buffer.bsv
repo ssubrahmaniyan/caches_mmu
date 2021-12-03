@@ -267,10 +267,10 @@ package fill_buffer;
 
 	endmodule
 
-  (*synthesize*)
-	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 6, 8, 6, 6));
-    let ifc();
-    mkfill_buffer _temp(ifc);
-    return (ifc);
-  endmodule
+//  (*synthesize*)
+//	module mkfill_buffer_instance(Ifc_fill_buffer#(32, 64, 128, 512, 6, 8, 6, 6));
+//    let ifc();
+//    mkfill_buffer _temp(ifc);
+//    return (ifc);
+//  endmodule
 endpackage

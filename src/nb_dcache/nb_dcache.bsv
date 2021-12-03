@@ -881,7 +881,7 @@ package nb_dcache;
       end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
-        `logTimeLevel( dcache, 1, $format("DCACHE : Tag miss, checking FB for Stage2 req ", fshow(req)))
+        `logTimeLevel( dcache, 1, $format("DCACHE : RAM miss, checking FB for Stage2 req ", fshow(req)))
       end
     endrule
 
