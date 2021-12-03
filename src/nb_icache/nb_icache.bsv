@@ -473,10 +473,10 @@ package nb_icache;
                             end
                             else if(wr_tlb_response.hit && !wr_preread_stage1_flushed && !lv_is_io && !lv_set_conflict) begin  
                                 wr_from_stage1_valid <= True; // Stage2 request data will be received through wr_stage2_data in next cycle
-                              `logTimeLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
+                                `logTimeLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for req_id %d, sending to Stage2.", lv_core_req.req_id))
                             end
                             else if(wr_tlb_response.hit && wr_preread_stage1_flushed) begin
-                              `logTimeLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for flushed req_id %d, dropping.", lv_core_req.req_id))
+                                `logTimeLevel( icache, 1, $format("ICACHE: Stage1: TLB hit for flushed req_id %d, dropping.", lv_core_req.req_id))
                             end
                             else if(wr_tlb_response.hit && lv_is_io) begin
                                 rg_io_request_valid <= True; 
@@ -715,7 +715,7 @@ package nb_icache;
                     if((lv_mhb_resp.hit_mhb && lv_mhb_resp.free_secondary) || (!lv_mhb_resp.hit_mhb && !ifc_mhb.mv_mshr_full())) begin
                         //
                         ifc_mhb.ma_allocate_entry(True,lv_mhb_resp.hit_mhb,lv_mhb_resp.mhb_index,
-                                                stage2_data.paddr,stage2_data.req_id,stage2_data.replacement_way);
+                                                  stage2_data.paddr,stage2_data.req_id,stage2_data.replacement_way);
                         wr_stage2_valid <= False;
                         lv_stage2_next_cycle_stall = False;
                         `logTimeLevel( icache, 1, $format("ICACHE: Stage2: Miss for req_id %d, allocating MHB entry: paddr %h hit %b index %h repl_way %d ", stage2_data.req_id, stage2_data.paddr, lv_mhb_resp.hit_mhb, lv_mhb_resp.mhb_index, stage2_data.replacement_way))
@@ -825,7 +825,7 @@ package nb_icache;
             Bit#(`setbits) set_index = truncate(block_addr);
             if(valid) begin
                 rg_icache_valid[set_index][way] <= 1'b1;
-                // TODO update replacement
+                // TODO update replacement (for fill-time alternative)
                 ifc_tag.ma_write_request(True,lv_paddr,way);
                 ifc_data.ma_write_request(True,lv_paddr,block_data,way);
                 `logTimeLevel( icache, 1, $format("ICACHE: LFB: Fill (release) set %d way %d data %h", set_index, way, block_data))

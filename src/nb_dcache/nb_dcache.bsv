@@ -317,7 +317,7 @@ package nb_dcache;
     Wire#(Bool) wr_stage1_fb_deq_enq <- mkDWire(False);
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_enq <- mkWire;
     Wire#(Cache_req#(paddr, datawidth, rob_index, prf_index)) wr_stage2_fb_enq <- mkWire;
-    Wire#(Bool) wr_ff_first_stage_store_req_to_curr_fb <- mkDWire(False);
+    Wire#(Bool) wr_ff_first_stage_req_to_curr_fb <- mkDWire(False);
     Wire#(Bool) wr_ff_second_stage_req_to_curr_fb <- mkDWire(False);
     Wire#(Bool) wr_stall_fb_release <- mkDWire(False);
     Wire#(Bit#(1)) wr_tag_ram_write_valid <- mkDWire(0);
@@ -802,21 +802,21 @@ package nb_dcache;
           wr_stage1_deq<= True;
         end
 
-
-        `ifdef perfmonitors
-          if (req.origin == Load_buffer) begin
-            wr_load_hit_cache <= 1;
-          end
-          else if (req.origin == Store_commit) begin
-            wr_store_hit_cache <= 1;
-          end
-          else if (req.origin == PTW) begin
-            wr_ptw_hit_cache <= 1;
-          end
-        `endif
-
         //If MSHR req is not sending response, then this stage can send a response for hit.
         if(send_resp && !wr_is_mshr_resp_to_core `ifdef atomic && !req.is_atomic `endif ) begin
+
+          // TODO: check counters
+          `ifdef perfmonitors
+            if (req.origin == Load_buffer) begin
+              wr_load_hit_cache <= 1;
+            end
+            else if (req.origin == Store_commit) begin
+              wr_store_hit_cache <= 1;
+            end
+            else if (req.origin == PTW) begin
+              wr_ptw_hit_cache <= 1;
+            end
+          `endif
 
           `ifdef store_early_ack
             if ((req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
@@ -849,7 +849,7 @@ package nb_dcache;
             wr_tag_ram_write_index <= set_index;
             `logTimeLevel( dcache, 1, $format("DCACHE : Hit for store. Writing: %h", write_data))
           end
-        end
+        end // send_resp and mshr not sending
         `ifdef atomic
         else if(req.is_atomic) begin
           //let data= perform_atomic_op(data_to_core, req.data, req.atomic_fn);
@@ -881,7 +881,7 @@ package nb_dcache;
       end
       else begin  //Line miss; send req to FB since MSHR is not sending
         wr_stage2_req_to_fb<= True;
-        //`logTimeLevel( dcache, 1, $format("DCACHE : #### ", fshow(req)))
+        `logTimeLevel( dcache, 1, $format("DCACHE : Tag miss, checking FB for Stage2 req ", fshow(req)))
       end
     endrule
 
@@ -917,6 +917,12 @@ package nb_dcache;
                                                                             ,  atomic_result: atomic_result
                                                                             `endif `endif
                                                                           `endif };
+
+      // TODO: check counters
+      `ifdef perfmonitors
+        wr_store_hit_cache <= 1;
+      `endif
+
       `logTimeLevel( dcache, 1, $format("DCACHE : Stage 2 atomics hit req: ", fshow(req)))
       `logTimeLevel( dcache, 1, $format("DCACHE : Stage 2 atomics hit resp: ", fshow(resp)))
       wr_sram_resp_to_core<= resp;
@@ -988,20 +994,19 @@ package nb_dcache;
                                                        ,  atomic_result: 0
                                                        `endif `endif
                                                      `endif };
-        end
 
-
-        `ifdef perfmonitors
-          if (req.origin == Load_buffer) begin
-            wr_load_hit_lfb <= 1;
-          end
-          else if (req.origin == Store_commit) begin
-            wr_store_hit_lfb <= 1;
-          end
-          else if (req.origin == PTW) begin
-            wr_ptw_hit_lfb <= 1;
-          end
-        `endif
+          `ifdef perfmonitors
+            if (req.origin == Load_buffer) begin
+              wr_load_hit_lfb <= 1;
+            end
+            else if (req.origin == Store_commit) begin
+              wr_store_hit_lfb <= 1;
+            end
+            else if (req.origin == PTW) begin
+              wr_ptw_hit_lfb <= 1;
+            end
+          `endif
+        end // send_resp
         //else do nothing
       end
       else if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
@@ -1251,10 +1256,12 @@ package nb_dcache;
     endrule
    
     //----------------------------- Fill buffer release ---------------------------------//
-    rule rl_check_ff_first_stage_store_to_fb_addr;
+    rule rl_check_ff_first_stage_req_to_fb_addr;
       let req= ff_first_stage.first;
-      if(fill_buffer.line_addr == get_line_addr(req.addr) && req.origin==Store_commit) begin  //Req to same line that is being filled in the FB
-        wr_ff_first_stage_store_req_to_curr_fb<= True;
+      // TODO: check for prefetch request and drop
+      if((fill_buffer.line_addr == get_line_addr(req.addr)) && (req.origin == Store_commit)) begin  //Req to same line that is being filled in the FB
+      //if(fill_buffer.line_addr == get_line_addr(req.addr)) begin  //Req to same line that is being filled in the FB
+        wr_ff_first_stage_req_to_curr_fb<= True;
         `logTimeLevel( dcache, 1, $format("DCACHE : ff_first_stage req to curr FB. Req: ", fshow(req)))
       end
     endrule
@@ -1279,7 +1286,7 @@ package nb_dcache;
     //         pending store req in ff_second_stage, stall the FB release by one cycle.
     rule rl_release_fb_cycle1(fill_buffer.can_release && !isValid(wr_mshr_req_to_fb) &&
     rg_fb_state==Read_SRAMs && ff_write_req_to_mem.notFull && !rg_fence && !rg_fence_wait_for_ff_first_stage_empty
-    && !wr_ff_first_stage_store_req_to_curr_fb && !wr_ff_second_stage_req_to_curr_fb && !wr_stall_fb_release);
+    && !wr_ff_first_stage_req_to_curr_fb && !wr_ff_second_stage_req_to_curr_fb && !wr_stall_fb_release);
       Bit#(setbits) set_index= fill_buffer.line_addr[setbits_val-1:0];
       `logTimeLevel( dcache, 1, $format("DCACHE : Initiating release of FB to line address: %h", fill_buffer.line_addr))
       for(Integer i = 0;i<ways_val;i = i+1) begin
@@ -1331,6 +1338,8 @@ package nb_dcache;
             if ((valid[i] == 1) && (tag[i] == lv_tag)) begin
               $display($time, " PT: DCACHE: Error! Updating the same physical line with set_index %h tag %h in two different ways!", set_index, lv_tag);
               $display($time, " PT: DCACHE: Error! Update: old way %h new way %h # old dirty %b new dirty %b # old data %h new data %h", i, waynum, dirty[i], fb_dirty, dataline[i], fb_data);
+              $finish(0);
+              $finish(0);
             end
           end
         end
@@ -1822,7 +1831,7 @@ package nb_dcache;
         endrule
 
         rule rl_debug_print09 (wr_debug_print == 1);
-          $display($time, " PT: DCACHE: first_stage store polling FB: valid %b", wr_ff_first_stage_store_req_to_curr_fb);
+          $display($time, " PT: DCACHE: first_stage polling FB: valid %b", wr_ff_first_stage_req_to_curr_fb);
         endrule
 
         rule rl_debug_print10 (wr_debug_print == 1);

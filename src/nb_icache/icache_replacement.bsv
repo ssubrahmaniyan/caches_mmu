@@ -65,7 +65,7 @@ module mkicache_replacement(Ifc_icache_replacement);
       end
 
     // round robin
-    `elsif
+    `elsif irepl_rrobin
       for (Integer i=0; i<`numsets; i=i+1) begin
         wr_replace[i] <= rg_replace[i];
       end
@@ -157,7 +157,7 @@ module mkicache_replacement(Ifc_icache_replacement);
     // plru
     `else
       for (Integer i=0; i<`numsets; i=i+1) begin
-        rg_replace[i] <= truncate(7'b1010101);
+        rg_replace[i] <= truncate(16'h5555);
       end
     `endif // plru
 
@@ -203,6 +203,10 @@ module mkicache_replacement(Ifc_icache_replacement);
     else begin
       `logLevel( icache, 2, $format("ICACHE: REPL: Replace way (invalid) for set %d: %d", set, lv_way))
     end
+
+    `ifdef irepl_plru
+      lv_way = 0;
+    `endif
 
     // save for next cycle
     rg_prev_valid <= 1;
