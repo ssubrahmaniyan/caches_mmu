@@ -40,8 +40,8 @@ module mkicache_replacement(Ifc_icache_replacement);
 
   // plru
   `else // Pseudo-LRU
-    Vector#(`numsets, Reg#(Bit#(TSub#(`numways, 1)))) rg_replace <- replicateM(mkReg(0)); // TODO
-    Vector#(`numsets, Wire#(Bit#(TSub#(`numways, 1)))) wr_replace <- replicateM(mkDWire(0)); // TODO
+    Vector#(`numsets, Reg#(Bit#(TSub#(`numways, 1)))) rg_replace <- replicateM(mkReg(truncate(16'haaaa)));
+    Vector#(`numsets, Wire#(Bit#(TSub#(`numways, 1)))) wr_replace <- replicateM(mkDWire(0));
   `endif // plru
 
   Reg#(Bit#(1)) rg_prev_valid <- mkDReg(0);
@@ -103,15 +103,49 @@ module mkicache_replacement(Ifc_icache_replacement);
         `elsif irepl_rrobin
           // Note: current impl.: strict round robin with no update on hit
           //rg_replace[wr_update_set] <= wr_replace[wr_update_set] + 1;
-          `logLevel( icache, 2, $format("ICACHE: REPL: Update on hit: set %d way %d # current_repl_way %d", wr_update_set, wr_update_way, wr_replace[wr_update_set]))
+          `logLevel( icache, 2, $format("ICACHE: REPL: No Update on hit: set %d way %d # current_repl_way %d", wr_update_set, wr_update_way, wr_replace[wr_update_set]))
 
         // plru
         `else
-          // TODO
+          Bit#(TSub#(`numways, 1)) lv_repl = wr_replace[wr_update_set];
+          Bit#(7) lv_erepl = zeroExtend(lv_repl); // max. 8 ways
+          Bit#(7) lv_erepl_new = '0; // max. 8 ways
+          Bit#(3) lv_update_way = zeroExtend(wr_update_way);
+
+          // points to the other way
+          // 0
+          if (valueOf(`numways) == 2) begin
+            lv_erepl_new = zeroExtend(~lv_update_way);
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          // change pointers for every node on the path
+          //    0
+          //  1   2
+          else if (valueOf(`numways) == 4) begin
+            lv_erepl_new = zeroExtend((lv_update_way[1:0] == 2'b00) ? {lv_erepl[2], 1'b1, 1'b1}
+                                        : ((lv_update_way[1:0] == 2'b01) ? {lv_erepl[2], 1'b0, 1'b1}
+                                          : ((lv_update_way[1:0] == 2'b10) ? {1'b1, lv_erepl[1], 1'b0} : {1'b0, lv_erepl[1], 1'b0})));
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          // change pointers for every node on the path
+          //       0
+          //   1       2
+          // 3   4   5   6
+          else if (valueOf(`numways) == 8) begin
+            lv_erepl_new = zeroExtend((lv_update_way[2:1] == 2'b00) ? {lv_erepl[6], lv_erepl[5], lv_erepl[4], ~lv_update_way[0], lv_erepl[2], 1'b1, 1'b1}
+                                        : ((lv_update_way[2:1] == 2'b01) ? {lv_erepl[6], lv_erepl[5], ~lv_update_way[0], lv_erepl[3], lv_erepl[2], 1'b1, 1'b1}
+                                          : ((lv_update_way[2:1] == 2'b10) ? {lv_erepl[6], ~lv_update_way[0], lv_erepl[4], lv_erepl[3], 1'b1, lv_erepl[1], 1'b0}
+                                             : {~lv_update_way[0], lv_erepl[5], lv_erepl[4], lv_erepl[3], 1'b1, lv_erepl[1], 1'b0})));
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          else begin
+            // TODO
+          end
+          `logLevel( icache, 2, $format("ICACHE: REPL: Update on hit: set %d way %d", wr_update_set, wr_update_way))
         `endif // plru
       end // hit
 
-      // miss
+      // miss (TODO: when replace_way picked is invalid)
       else if (rg_prev_valid == 1) begin // check valid == 0
         // lru
         `ifdef irepl_lru
@@ -132,7 +166,41 @@ module mkicache_replacement(Ifc_icache_replacement);
 
         // plru
         `else
-          // TODO
+          Bit#(TSub#(`numways, 1)) lv_repl = wr_replace[wr_update_set];
+          Bit#(7) lv_erepl = zeroExtend(lv_repl); // max. 8 ways
+          Bit#(7) lv_erepl_new = '0; // max. 8 ways
+          Bit#(3) lv_update_way = zeroExtend(rg_prev_replace_way);
+
+          // points to the other way
+          // 0
+          if (valueOf(`numways) == 2) begin
+            lv_erepl_new = zeroExtend(~lv_update_way);
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          // change pointers for every node on the path
+          //    0
+          //  1   2
+          else if (valueOf(`numways) == 4) begin
+            lv_erepl_new = zeroExtend((lv_update_way[1:0] == 2'b00) ? {lv_erepl[2], 1'b1, 1'b1}
+                                        : ((lv_update_way[1:0] == 2'b01) ? {lv_erepl[2], 1'b0, 1'b1}
+                                          : ((lv_update_way[1:0] == 2'b10) ? {1'b1, lv_erepl[1], 1'b0} : {1'b0, lv_erepl[1], 1'b0})));
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          // change pointers for every node on the path
+          //       0
+          //   1       2
+          // 3   4   5   6
+          else if (valueOf(`numways) == 8) begin
+            lv_erepl_new = zeroExtend((lv_update_way[2:1] == 2'b00) ? {lv_erepl[6], lv_erepl[5], lv_erepl[4], ~lv_update_way[0], lv_erepl[2], 1'b1, 1'b1}
+                                        : ((lv_update_way[2:1] == 2'b01) ? {lv_erepl[6], lv_erepl[5], ~lv_update_way[0], lv_erepl[3], lv_erepl[2], 1'b1, 1'b1}
+                                          : ((lv_update_way[2:1] == 2'b10) ? {lv_erepl[6], ~lv_update_way[0], lv_erepl[4], lv_erepl[3], 1'b1, lv_erepl[1], 1'b0}
+                                             : {~lv_update_way[0], lv_erepl[5], lv_erepl[4], lv_erepl[3], 1'b1, lv_erepl[1], 1'b0})));
+            rg_replace[wr_update_set] <= truncate(lv_erepl_new);
+          end
+          else begin
+            // TODO
+          end
+          `logLevel( icache, 2, $format("ICACHE: REPL: Update on miss: set %d way %d", wr_update_set, rg_prev_replace_way))
         `endif // plru
       end // miss
     end // update
@@ -157,7 +225,7 @@ module mkicache_replacement(Ifc_icache_replacement);
     // plru
     `else
       for (Integer i=0; i<`numsets; i=i+1) begin
-        rg_replace[i] <= truncate(16'h5555);
+        rg_replace[i] <= truncate(16'haaaa);
       end
     `endif // plru
 
@@ -169,7 +237,8 @@ module mkicache_replacement(Ifc_icache_replacement);
     Bit#(1) lv_picked = 0;
     Bit#(TLog#(`numways)) lv_way = 0;
 
-    // TODO: 1. fix back-to-back same set lookup (check prev set)
+    // TODO: rare: 1. fix back-to-back same set lookup (check prev set)
+    //             2. for lookup-time selection, mark selected way if invalid way selected (will affect next selection to same set until fill marks valid)
 
     for (Integer i=0; i<`numways; i=i+1) begin
       if (way_valid[i] == 0) begin
@@ -194,8 +263,30 @@ module mkicache_replacement(Ifc_icache_replacement);
 
       // plru
       `else
-        // TODO
-        lv_way = 0;
+        Bit#(3) lv_eway = 0; // max. 8 ways
+        Bit#(TSub#(`numways, 1)) lv_repl = wr_replace[set];
+
+        if (valueOf(`numways) == 2) begin
+          lv_eway = zeroExtend(lv_repl[0]);
+        end
+        else if (valueOf(`numways) == 4) begin
+          lv_eway = zeroExtend( (lv_repl[1:0] == 2'b00) ? 2'b00
+                    : ((lv_repl[1:0] == 2'b10) ? 2'b01
+                      : (({lv_repl[2],lv_repl[0]} == 2'b01) ? 2'b10 : 2'b11)));
+        end
+        else if (valueOf(`numways) == 8) begin
+          lv_eway = zeroExtend( ({lv_repl[3],lv_repl[1],lv_repl[0]} == 3'b000) ? 3'b000
+                    : (({lv_repl[3],lv_repl[1],lv_repl[0]} == 3'b100) ? 3'b001
+                      : (({lv_repl[4],lv_repl[1],lv_repl[0]} == 3'b010) ? 3'b010
+                        : (({lv_repl[4],lv_repl[1],lv_repl[0]} == 3'b110) ? 3'b011
+                          : (({lv_repl[5],lv_repl[2],lv_repl[0]} == 3'b001) ? 3'b100
+                            : (({lv_repl[5],lv_repl[2],lv_repl[0]} == 3'b101) ? 3'b101
+                              : (({lv_repl[6],lv_repl[2],lv_repl[0]} == 3'b011) ? 3'b110 : 3'b111)))))) );
+        end
+        else begin
+          lv_eway = '0;
+        end
+        lv_way = truncate (lv_eway);
       `endif // plru
       `logLevel( icache, 2, $format("ICACHE: REPL: Replace way (all valid) for set %d: %d", set, lv_way))
     end // pick replacement way
@@ -203,10 +294,6 @@ module mkicache_replacement(Ifc_icache_replacement);
     else begin
       `logLevel( icache, 2, $format("ICACHE: REPL: Replace way (invalid) for set %d: %d", set, lv_way))
     end
-
-    `ifdef irepl_plru
-      lv_way = 0;
-    `endif
 
     // save for next cycle
     rg_prev_valid <= 1;

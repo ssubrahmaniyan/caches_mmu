@@ -310,7 +310,7 @@ package icache_mhb;
                 end
             end
             // check if more entries can be accepted for the same block address
-            for(Integer j=1;j<`imshr_depth;j=j+1) begin
+            for(Integer j=0;j<`imshr_depth;j=j+1) begin
                 if(!wr_mshr_valid[primary_index][j]) begin 
                     resp.free_secondary = valid;
                     secondary_index = fromInteger(j);
