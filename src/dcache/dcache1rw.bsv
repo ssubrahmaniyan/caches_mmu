@@ -205,7 +205,8 @@ package dcache1rw;
     method Bool mv_cache_available;
 
     // commits to be indicated by the pipeline
-    method Action ma_commit_store(Bit#(`desize) currepoch);
+    //method Action ma_commit_store(Bit#(`desize) currepoch);
+    method Action ma_commit_store(Tuple2#(Bit#(`desize), Bit#(TLog#(`dsbsize))) storecommit);
     method Action ma_commit_io(Bit#(`desize) currepoch);
   `ifdef supervisor
     interface Get#(DMem_core_response#(TMul#(`dwords,8),`desize)) get_ptw_resp;
@@ -594,6 +595,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
         `logLevel( dcache, 0, $format("DCACHE[%2d]: Ending Fence op",id))
         ff_core_response.enq(DMem_core_response{word:?, trap: False, is_io: False,
                               cause: ?, epochs: ff_core_request.first.epochs,
+                              sb_id: ?,
                               entry_alloc: False});
       end
       else begin
@@ -814,6 +816,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       lv_responses[1] = wr_ram_response;
 
       lv_response = select(lv_responses,unpack(onehot_hit));
+      lv_response.sb_id = m_storebuffer.mv_sb_curr_tail;
 
       if(wr_ram_state == Hit && !wr_fault) begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Response Hit from SRAM",id))
@@ -1122,7 +1125,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     rule rl_commit_stores(m_storebuffer.mv_sb_head_commit && m_storebuffer.mv_sb_head_valid 
                                                                           && !sb_busy && !sb_empty);
       let sb_entry = m_storebuffer.mv_sb_head;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Committing store to Available line",id))
+      `logLevel( dcache, 6, $format("[%2d]DCACHE: Committing store to Available line",id))
       m_fillbuffer.ma_from_storebuffer(sb_entry.mask, sb_entry.data, sb_entry.fbindex, sb_entry.addr);
       rg_globaldirty <= True;
       m_storebuffer.ma_increment_head();
@@ -1250,14 +1253,15 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
         wr_takingrequest <= True;
       endmethod
     endinterface;
-    method Action ma_commit_store(Bit#(`desize) currepoch);
+    method Action ma_commit_store(Tuple2#(Bit#(`desize), Bit#(TLog#(`dsbsize))) storecommit);
+      let {currepoch, sbid} = storecommit;
     `ifdef ASSERT
       dynamicAssert(m_storebuffer.mv_sb_head_valid,"SB Commit to invalid Entry");
     `endif
       let sb_entry = m_storebuffer.mv_sb_head;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
+      `logLevel( dcache, 6, $format("[%2d]DCACHE: Commit Store entry:",id,fshow(sb_entry)))
       if(sb_entry.epoch == currepoch) begin
-        m_storebuffer.ma_commit_store();
+        m_storebuffer.ma_commit_store(sbid);
       end
       else begin
         `logLevel( dcache, 0, $format("[%2d]DCACHE: Store is being dropped- epoch mismatch",id))
@@ -1270,7 +1274,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       dynamicAssert(!m_iobuffer.mv_io_head_valid,"IO Head is already ready to commit.");
     `endif
       let io_entry = m_iobuffer.mv_io_head;
-      `logLevel( dcache, 0, $format("[%2d]DCACHE: Commit IO entry:",id,fshow(io_entry)))
+      `logLevel( dcache, 6, $format("[%2d]DCACHE: Commit IO entry:",id,fshow(io_entry)))
       if(io_entry.epoch == currepoch) begin
         m_iobuffer.ma_commit_io();
       end

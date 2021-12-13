@@ -21,8 +21,10 @@ package dmem;
   import io_func::*;
   `include "dcache.defines"
 `ifdef dcache
-  `ifdef dcache_dualport
+  `ifdef dcache_2rw
     import dcache2rw :: *;
+  `elsif dcache_1r1w
+    import dcache1r1w :: *;
   `else
     import dcache1rw :: *;
   `endif
@@ -57,7 +59,8 @@ package dmem;
     interface Get#(DCache_mem_readreq#(`paddr)) send_mem_rd_req;
     interface Put#(DCache_mem_readresp#(`dbuswidth)) receive_mem_rd_resp;
 
-    method Action ma_commit_store(Bit#(`desize ) currepoch);
+    //method Action ma_commit_store(Bit#(`desize ) currepoch);
+    method Action ma_commit_store(Tuple2#(Bit#(`desize), Bit#(TLog#(`dsbsize))) storecommit);
     method Action ma_cache_enable(Bool c);
     (*always_ready*)
     method Bool mv_storebuffer_empty;

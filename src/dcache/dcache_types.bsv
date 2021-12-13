@@ -191,6 +191,7 @@ package dcache_types;
     Bit#(esize)       epochs;
     Bool              is_io;
     Bool              entry_alloc;
+    Bit#(TLog#(`dsbsize)) sb_id;
   } DMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq);
 
   instance FShow#(DMem_core_response#(data,esize));
