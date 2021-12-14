@@ -7,7 +7,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package fa_dtlb;
+package fa_dtlb_hypervisor;
   `include "Logger.bsv"
   `include "common_tlb.defines"
   import FIFO :: * ;
@@ -24,6 +24,7 @@ package fa_dtlb;
     Bit#(`asidwidth) asid;
     Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
+    Bit#(1) vs_bit;	//Adding V bit to Stage1 TLB which will help to differentiate between HS/U-mode and VS/VU-mode translation 
   } VPNTag deriving(Bits, FShow, Eq);
 
   typedef struct{
@@ -52,19 +53,23 @@ package fa_dtlb;
 
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(`vaddr) m);
-
+    
+  `ifdef hypervisor
+   	method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
+   	method Action ma_vs_mode (Bit#(1) v);			//Virt. mode, to enable 2-stage address translation
+   	method Action ma_vsstatus_from_csr (Bit#(`vaddr) vsstatus);
+  `endif
     /*doc:method: */
     method Bool mv_tlb_available;
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
-  endinterface
+  endinterface:Ifc_fa_dtlb
 
   /*doc:module: */
   (*synthesize*)
   (*conflict_free="put_response_frm_ptw_put, put_core_request_put"*)
-  module mkfa_dtlb#(parameter Bit#(32) hartid) (Ifc_fa_dtlb);
-
+    module mkfa_dtlb#(parameter Bit#(32) hartid) (Ifc_fa_dtlb);
     Vector#( `dtlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
@@ -75,7 +80,13 @@ package fa_dtlb;
     Wire#(Bit#(2)) wr_priv <- mkWire();
     /*doc:wire: wire holding the current values of mstatus fields*/
     Wire#(Bit#(`vaddr)) wr_mstatus <- mkWire();
-
+    //Wires for V-mode
+    Wire#(Bit#(1)) wr_vs_mode <- mkWire();
+    Wire#(Bit#(`vaddr)) wr_vsatp <- mkWire();
+    Wire#(Bit#(`vaddr)) wr_vsstatus <- mkWire();
+    
+    Wire#(Bit#(`vaddr)) wr_satp_new = (wr_vs_mode==1) ? wr_vsatp : wr_satp;
+    Wire#(Bit#(`vaddr)) wr_status_new = (wr_vs_mode==1) ? wr_vsstatus : wr_mstatus;   //As per QEMU-H extension 
     /*doc:reg: */
     Reg#(Bit#(`vaddr)) rg_miss_queue <- mkReg(0);
     FIFOF#(PTWalk_tlb_request#(`vaddr)) ff_request_to_ptw <- mkSizedFIFOF(2);
@@ -83,15 +94,15 @@ package fa_dtlb;
     FIFOF#(DTLB_core_response#(`paddr)) ff_core_response <- mkBypassFIFOF();
 
     // global variables based on the above wires
-    Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
-    Bit#(`asidwidth) satp_asid = wr_satp[`asidwidth - 1 + `ppnsize : `ppnsize ];
+    Bit#(`ppnsize) satp_ppn = truncate(wr_satp_new);
+    Bit#(`asidwidth) satp_asid = wr_satp_new[`asidwidth - 1 + `ppnsize : `ppnsize ];
   `ifdef sv32
-    Bit#(1) satp_mode = truncateLSB(wr_satp);
+    Bit#(1) satp_mode = truncateLSB(wr_satp_new);
   `else
-    Bit#(4) satp_mode = truncateLSB(wr_satp);
+    Bit#(4) satp_mode = truncateLSB(wr_satp_new);
   `endif
-    Bit#(1) mxr = wr_mstatus[19];
-    Bit#(1) sum = wr_mstatus[18];
+    Bit#(1) mxr = wr_status_new[19];	//As per QEMU-H extension 
+    Bit#(1) sum = wr_status_new[18];	//As per QEMU-H extension 
     Bit#(2) mpp = wr_mstatus[12 : 11];
     Bit#(1) mprv = wr_mstatus[17];
 
@@ -100,40 +111,73 @@ package fa_dtlb;
 
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkReg(False);
-
+    
+    `ifdef hypervisor
+     /*register to indicate the tlb is undergoing an hfence*/
+    Reg#(Bool) rg_hfence <- mkReg(False);   
+     `endif
+     
   `ifdef perfmonitors
     /*doc:wire: */
     Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
   `endif
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
-     all the tlb entries*/
-    rule rl_fence(rg_sfence && !rg_tlb_miss && !ff_lookup_result.notEmpty);
+     all the tlb entries, (even those with vs_bit=1?)*/
+    rule rl_fence( (rg_sfence `ifdef hypervisor || rg_hfence `endif ) && !rg_tlb_miss && !ff_lookup_result.notEmpty);
       for (Integer i = 0; i < `dtlbsize; i = i + 1) begin
         v_vpn_tag[i] <= unpack(0);
       end
-      rg_sfence <= False;
       rg_replace <= 0;
-      `logLevel( dtlb, 1, $format("[%2d]DTLB: SFencing Now",hartid))
-    endrule
-
+      if (rg_sfence) begin
+        `logLevel( dtlb, 1, $format("[%2d]DTLB: SFencing Now",hartid))
+        rg_sfence <= False;
+      end
+    `ifdef hypervisor
+      if (rg_hfence) begin
+        `logLevel( dtlb, 1, $format("[%2d]DTLB: HFencing Now",hartid))
+        rg_hfence <= False;
+      end
+    `endif
+    endrule:rl_fence
+    
+    /*`ifdef hypervisor
+	    [>For Hypervisor: This rule is fired when the core requests a hfence. This rule will simply invalidate
+	     all the stage1 tlb entries having vs_bit=1 in TLB tag<]
+	    rule rl_hfence(rg_hfence && !rg_tlb_miss && !ff_lookup_result.notEmpty);
+	      for (Integer i = 0; i < `dtlbsize; i = i + 1) begin
+ 	      	if(v_vpn_tag[i].vs_bit==1)
+		        v_vpn_tag[i] <= unpack(0);
+	      end
+	      rg_hfence <= False;
+	      rg_replace <= 0;  //Which to replace ???
+	      `logLevel( dtlb, 1, $format("[%2d]DTLB: HFencing Now",hartid))
+	    endrule
+     `endif*/
+	    
     /*doc:rule: */
-    rule rl_send_response(!rg_sfence);
+    rule rl_send_response(!rg_sfence `ifdef hypervisor && !rg_hfence `endif );
       let lookup = ff_lookup_result.first;
       ff_lookup_result.deq;
       Bit#(12) page_offset = lookup.va[11 : 0];
       Bit#(`vpnsize) fullvpn = truncate(lookup.va >> 12);
-      Bit#(2) priv = mprv == 0?wr_priv : mpp;
+      Bit#(2) priv = mprv == 0?wr_priv : mpp;		
       `logLevel( dtlb, 1, $format("[%2d]DTLB: LookupResult: ",hartid,fshow(lookup)))
       if(lookup.translation_done)begin
         ff_core_response.enq(DTLB_core_response{address: truncate(lookup.va),
                                              trap: lookup.trap,
                                              cause: lookup.cause,
                                              tlbmiss: False});
+        `logLevel( dtlb, 0, $format("[%2d]DTLB: Transparent Translation done",hartid))
       end
       else begin
-        Bool page_fault = False;
-        Bit#(`causesize) cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
+        Bool page_fault = False; 
+        Bit#(`causesize) cause;  /*condition wr_vs_mode or lookup.pte.vs_bit==1??*/
+       // if(wr_vs_mode==1)	 
+        if(lookup.pte.vs_bit==0)	 //If V mode, guest page fault exceptions need to be raised	
+        	cause = lookup.access == 0 ?`Load_guest_pagefault : `Store_guest_pagefault;
+        else
+        	cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
         let pte = lookup.pte  ;
         Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = lookup.va[`vaddr - 1 : `maxvaddr];
         let permissions = pte.permissions;
@@ -153,7 +197,7 @@ package fa_dtlb;
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_vpn:%h",hartid,lower_vpn))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_pa:%h",hartid,lower_pa))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: highest_ppn:%h",hartid,highest_ppn))
-
+	`logLevel( dtlb, 2, $format("[%2d]DTLB: vs_bit:%h",hartid,pte.vs_bit))	//Vs bit in TLB
         // check for permission faults
       `ifndef sv32
         if(unused_va != signExtend(lookup.va[`maxvaddr-1]))begin
@@ -181,6 +225,7 @@ package fa_dtlb;
         if(lookup.tlbmiss)begin
           rg_miss_queue <= lookup.va;
           ff_request_to_ptw.enq(PTWalk_tlb_request{address : lookup.va, access : lookup.access });
+          `logLevel( dtlb, 0, $format("[%2d]DTLB: Sending req to PTW", hartid))
           ff_core_response.enq(DTLB_core_response{address  : ?,
                                                  trap     : False,
                                                  cause    : ?,
@@ -198,7 +243,7 @@ package fa_dtlb;
     endrule
 
     interface put_core_request = interface Put
-      method Action put (DTLB_core_request#(`vaddr) req) if(!rg_sfence);
+      method Action put (DTLB_core_request#(`vaddr) req) if(!rg_sfence `ifdef hypervisor && !rg_hfence `endif );
 
         `logLevel( dtlb, 0, $format("[%2d]DTLB: received req: ",hartid,fshow(req)))
 
@@ -229,13 +274,18 @@ package fa_dtlb;
         if(req.sfence && !req.ptwalk_req)begin
           rg_sfence <= True;
         end
+      `ifdef hypervisor
+    		else if(req.hfence && !req.ptwalk_req)begin
+    		  rg_hfence <= True;
+    		end
+      `endif
         else begin
           ff_lookup_result.enq(LookUpResult{va: va, trap: trap, cause: cause,
                                             translation_done: translation_done,
                                             tlbmiss: tlbmiss, pte: pte, access: req.access});
         end
 
-        if(req.sfence)
+        if(req.sfence `ifdef hypervisor || req.hfence `endif )
           rg_tlb_miss <= False;
         else if(rg_tlb_miss && req.ptwalk_trap)
           rg_tlb_miss <= False;
@@ -250,9 +300,11 @@ package fa_dtlb;
     endinterface;
 
     interface put_response_frm_ptw = interface Put
-      method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
+      method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence `ifdef hypervisor 				&& !rg_hfence `endif );
         let core_req = rg_miss_queue ;
         Bit#(12) page_offset = core_req[11 : 0];
+
+        `logLevel( dtlb, 0, $format("[%2d]DTLB: Response from PTW:",hartid, fshow(resp)))
 
         Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
         Bit#(`ppnsize) fullppn = truncate(resp.pte >> 10);
@@ -273,7 +325,9 @@ package fa_dtlb;
                           vpn: {'1,mask} & fullvpn,
                           asid: satp_asid,
                           pagemask: mask,
-                          ppn: fullppn };
+                          ppn: fullppn, 
+                          vs_bit: wr_vs_mode	//Added Vs_bit in VPNTag struct.
+                          };
         if(!resp.trap) begin
           `logLevel( dtlb, 0, $format("[%2d]DTLB: Allocating index:%d for Tag:",hartid, rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
@@ -306,8 +360,21 @@ package fa_dtlb;
   `ifdef perfmonitors
     method mv_perf_counters = wr_count_misses;
   `endif
-
-  endmodule
+   
+  `ifdef hypervisor
+	  method Action ma_vs_mode (Bit#(1) v);	
+	    wr_vs_mode <= v;
+	  endmethod:ma_vs_mode
+	    
+	  method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);
+	    wr_vsatp <= vsatp;
+	  endmethod:ma_vsatp_from_csr
+	    
+	  method Action ma_vsstatus_from_csr (Bit#(`vaddr) vsstatus);
+      wr_vsstatus <= vsstatus;
+  	endmethod:ma_vsstatus_from_csr
+  `endif
+  endmodule:mkfa_dtlb
 
 endpackage
 

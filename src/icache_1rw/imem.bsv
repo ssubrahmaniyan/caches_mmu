@@ -25,7 +25,11 @@ package imem;
 `else
   import null_icache :: *;
 `endif
-`ifdef supervisor
+`ifdef hypervisor
+  `include "common_tlb.defines"
+  import fa_itlb_hypervisor :: * ;
+  import common_tlb_types :: * ;
+`elsif supervisor
   `include "common_tlb.defines"
   import fa_itlb :: * ;
   import common_tlb_types :: * ;
@@ -68,6 +72,10 @@ package imem;
     method Action ma_ram_request(IRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
   `endif
+  `ifdef hypervisor
+    method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
+	  method Action ma_vs_mode (Bit#(1) v);			//Virt. mode, to enable 2-stage address translation
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -82,6 +90,9 @@ package imem;
                                     (IMem_core_request#(`vaddr, `iesize) req);
           return ITLB_core_request{   address   : req.address,
                                       sfence    : req.sfence
+                                    `ifdef hypervisor
+                                      , hfence    : req.hfence
+                                    `endif
                                       };
   endfunction
 `endif
@@ -100,7 +111,7 @@ package imem;
     interface put_core_req = interface Put
       method Action put (IMem_core_request#(`vaddr, `iesize ) r);
       `ifdef supervisor
-        if(!r.sfence)
+        if(!r.sfence `ifdef hypervisor && !r.hfence `endif )
             icache.put_core_req.put(get_cache_packet(r));
         if(!r.fence)
             itlb.put_core_request.put(get_tlb_packet(r));
@@ -142,6 +153,10 @@ package imem;
     method mv_sed_tag = icache.mv_sed_tag;
     method ma_ram_request = icache.ma_ram_request;
     method mv_ram_response = icache.mv_ram_response;
+  `endif
+  `ifdef hypervisor
+    method ma_vsatp_from_csr = itlb.ma_vsatp_from_csr;
+	  method ma_vs_mode = itlb.ma_vs_mode;
   `endif
   endmodule
 endpackage

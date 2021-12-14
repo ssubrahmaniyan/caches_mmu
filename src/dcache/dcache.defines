@@ -46,4 +46,6 @@
 `define Inst_pagefault        12
 `define Load_pagefault        13
 `define Store_pagefault       15
-
+`define Inst_guest_pagefault  20
+`define Load_guest_pagefault  21
+`define Store_guest_pagefault 23

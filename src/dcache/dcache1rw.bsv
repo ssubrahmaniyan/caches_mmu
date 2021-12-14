@@ -843,13 +843,13 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
    
       Bool skip_allocation = False;
     `ifdef atomic
-      if (req.access == 2 && req.atomic_op=='b0101) begin// LR op
+      if (req.access == 2 && req.atomic_op[3:0]=='b0101) begin// LR op
         rg_reservation_address <= tagged Valid (req.address & `reservation_mask);
         req.access = 0;
         lv_response.entry_alloc = lv_response.is_io;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: LR reservation for : %h",id,req.address))
       end
-      else if (req.access == 2 && req.atomic_op == 'b0111) begin // SC op
+      else if (req.access == 2 && req.atomic_op[3:0] == 'b0111) begin // SC op
         rg_reservation_address <= tagged Invalid;
         if (rg_reservation_address matches tagged Valid .resaddr &&& 
                                                 resaddr  == (req.address & `reservation_mask))begin

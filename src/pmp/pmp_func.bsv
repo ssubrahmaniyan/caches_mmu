@@ -77,7 +77,7 @@ package pmp_func;
       'd1 : `Store_access_fault;
       default : `Inst_access_fault; 
     endcase;
-    Bit#(TSub#(`paddr,`pmp_grainbits)) reqbase = truncateLSB(req.address);
+    Bit#(TSub#(`paddr,TAdd#(`pmp_grain,2))) reqbase = truncateLSB(req.address);
 
     /*doc:func: 
     function to perform a single pmp check. This function is mapped to all entries of the pmp. This
@@ -97,9 +97,9 @@ package pmp_func;
         fn_single_lookup( PMPCfg cfg, Bit#(`paddr) top, Bit#(`paddr) bottom);
                               
 
-      Bit#(TSub#(`paddr,`pmp_grainbits)) start_address = cfg.access == TOR ? truncateLSB(bottom) : 
+      Bit#(TSub#(`paddr,TAdd#(`pmp_grain,2))) start_address = cfg.access == TOR ? truncateLSB(bottom) : 
           truncateLSB(top);
-      Bit#(TSub#(`paddr,`pmp_grainbits)) mask = truncateLSB(top) << 1 | zeroExtend(~pack(cfg.access == NA4));
+      Bit#(TSub#(`paddr,TAdd#(`pmp_grain, 2))) mask = truncateLSB(top) << 1 | zeroExtend(~pack(cfg.access == NA4));
       mask = cfg.access != NAPOT ? '1 : ~(mask & ~(mask + 1));
 
       Bool lv_match_low  = reqbase >= (start_address & mask);
@@ -145,7 +145,7 @@ package pmp_func;
       PMPReq req = PMPReq{address: 'hDB4, access_type:0};
       PMP_Priv_mode mode = Supervisor;
       Vector#(`pmpentries, Bit#(8)) v_pmpcfg  = replicate(0);
-      Vector#(`pmpentries, Bit#(TSub#(`paddr,`pmp_grainbits))) v_pmpaddr = replicate(0);
+      Vector#(`pmpentries, Bit#(TSub#(`paddr,`pmp_grain))) v_pmpaddr = replicate(0);
 
       v_pmpcfg[1] = zeroExtend(pack(PMPCfg{read:False, 
                                            write:True, 
