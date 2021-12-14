@@ -184,7 +184,7 @@ package ptwalk_merged;
 
       	
       Bool fault = False;
-      Bit#(6) cause = 0;
+      Bit#(`causesize) cause = 0;
       Bool trap = False;
 	
       // capture the permissions of the hit entry from the TLBs
