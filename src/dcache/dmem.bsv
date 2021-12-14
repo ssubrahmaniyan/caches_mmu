@@ -20,6 +20,7 @@ package dmem;
   import dcache_types::*;
   import io_func::*;
   `include "dcache.defines"
+  `include "Logger.bsv"
 `ifdef dcache
   `ifdef dcache_2rw
     import dcache2rw :: *;
@@ -31,7 +32,10 @@ package dmem;
 `else
   import null_dcache :: *;
 `endif
-`ifdef supervisor
+`ifdef hypervisor
+  import fa_dtlb_hypervisor :: * ;
+  import common_tlb_types :: * ;
+`elsif supervisor
   import fa_dtlb :: * ;
   import common_tlb_types :: * ;
 `endif
@@ -93,7 +97,12 @@ package dmem;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
     method Action ma_ram_request(DRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
-`endif
+  `endif
+  `ifdef hypervisor
+   	method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
+   	method Action ma_vs_mode (Bit#(1) v);			//Virt. mode, to enable 2-stage address translation
+   	method Action ma_vsstatus_from_csr (Bit#(`vaddr) vsstatus);
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -121,6 +130,9 @@ package dmem;
                                       ptwalk_trap: req.ptwalk_trap,
                                       ptwalk_req: req.ptwalk_req,
                                       sfence    : req.sfence
+                                    `ifdef hypervisor
+                                      , hfence    : req.hfence
+                                    `endif
                                       };
   endfunction
 `endif
@@ -139,8 +151,9 @@ package dmem;
   `endif
     interface receive_core_req = interface Put
       method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
+        `logLevel( dmem, 0, $format("DMEM: Req from Core:",fshow(r)))
       `ifdef supervisor
-        if(r.ptwalk_req || !r.sfence)
+        if(r.ptwalk_req || (!r.sfence `ifdef hypervisor && !r.hfence `endif ))
             dcache.receive_core_req.put(get_cache_packet(r));
         if(!r.fence)
             dtlb.put_core_request.put(get_tlb_packet(r));
@@ -194,7 +207,12 @@ package dmem;
     method mv_sed_tag = dcache.mv_sed_tag;
     method ma_ram_request = dcache.ma_ram_request;
     method mv_ram_response = dcache.mv_ram_response;
-`endif
+  `endif
+  `ifdef hypervisor
+   	method ma_vsatp_from_csr = dtlb.ma_vsatp_from_csr;
+   	method ma_vs_mode = dtlb.ma_vs_mode;
+   	method ma_vsstatus_from_csr = dtlb.ma_vsstatus_from_csr;
+  `endif
   endmodule
 endpackage
 

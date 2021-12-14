@@ -41,6 +41,9 @@ package common_tlb_types;
   typedef struct{
     Bit#(addr)        address;
     Bool              sfence;
+  `ifdef hypervisor
+    Bool              hfence;
+  `endif
   }ITLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
@@ -67,6 +70,9 @@ package common_tlb_types;
     Bool              ptwalk_trap;
     Bool              ptwalk_req;
     Bool              sfence;
+  `ifdef hypervisor
+    Bool              hfence;
+  `endif
   }DTLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{

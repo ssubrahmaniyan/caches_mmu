@@ -42,6 +42,8 @@ package dcache_types;
       'b1110:return "AMOMAXU"+postfix;
       'b1000:return "AMOMIN"+postfix;
       'b1010:return "AMOMAX"+postfix;
+      'b0101:return "LR"+postfix;
+      'b0111:return "SC"+postfix;
       default:return "UNKNOWN OP";
     endcase
   endfunction
@@ -89,7 +91,7 @@ package dcache_types;
         result = result + $format(" is a %s%s op", access2str(value.access), size2str(value.size));
     `ifdef atomic
       else if (value.access == 2 `ifdef supervisor && !value.ptwalk_req `endif )
-        result = result + $format(" is a %s op",amo2str(value.atomic_op));
+        result = result + $format(" is a %s op :%b",amo2str(value.atomic_op), value.atomic_op);
     `endif
       
       if (value.access != 0)
@@ -174,6 +176,9 @@ package dcache_types;
     Bit#(data)    writedata;
   `ifdef atomic
     Bit#(5)       atomic_op;
+  `endif
+  `ifdef hypervisor
+    Bool          hfence;
   `endif
   `ifdef supervisor
     Bool          sfence;

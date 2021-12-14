@@ -39,6 +39,9 @@ package icache_types;
   `ifdef supervisor
     Bool          sfence;
   `endif
+  `ifdef hypervisor
+    Bool          hfence;
+  `endif
   } IMem_core_request#(numeric type addr,
                   numeric type esize ) deriving(Bits, Eq, FShow);
 

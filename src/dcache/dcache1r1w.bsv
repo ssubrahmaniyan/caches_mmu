@@ -1,4 +1,4 @@
-// Copyright (c) 2020 InCore Semiconductors Pvt. Ltd. see LICENSE.incore for more details on licensing terms
+// see LICENSE.iitm for licensing details
 /*
 Author: Neel Gala, neelgala@incoresemi.com
 Created on: Friday 23 July 2021 11:58:53 AM
@@ -469,12 +469,12 @@ package dcache1r1w;
       Bool skip_op = False;
       Bool sc_pass = False;
     `ifdef atomic
-      if (req.access == 2 && req.atomic_op=='b0101) begin// LR op
+      if (req.access == 2 && req.atomic_op[3:0]=='b0101) begin// LR op
         rg_reservation_address <= tagged Valid (req.address & `reservation_mask);
         req.access = 0;
         `logLevel( dcache, 0, $format("[%2d]DCACHE: LR reservation for : %h",id,req.address))
       end
-      else if (req.access == 2 && req.atomic_op == 'b0111) begin // SC op
+      else if (req.access == 2 && req.atomic_op[3:0] == 'b0111) begin // SC op
         rg_reservation_address <= tagged Invalid;
         if (rg_reservation_address matches tagged Valid .resaddr &&& 
                                                 resaddr  == (req.address & `reservation_mask))begin

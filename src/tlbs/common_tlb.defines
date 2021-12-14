@@ -7,7 +7,14 @@
 `define Inst_pagefault        12
 `define Load_pagefault        13
 `define Store_pagefault       15
+`define Inst_guest_pagefault  20
+`define Load_guest_pagefault  21
+`define Store_guest_pagefault 23 
+`define Virt_inst             22			//Virtual instruction exception for hypervisor
 // set virtual page size based on the sv mode selected.
+
+`define pagesize 12
+
 `ifdef sv32
   `define vpnsize 20
   `define ppnsize 22
@@ -15,6 +22,8 @@
   `define subvpn 10
   `define lastppnsize 12
   `define maxvaddr 32
+  `define modesz 1
+  `define maxpaddr 34
 `elsif sv39
   `define vpnsize 27
   `define ppnsize 44
@@ -22,6 +31,8 @@
   `define subvpn 9
   `define lastppnsize 26
   `define maxvaddr 39
+  `define modesz 4
+  `define maxpaddr 56
 `else
   `define vpnsize 36
   `define ppnsize 44
@@ -29,6 +40,8 @@
   `define subvpn 9
   `define lastppnsize 17
   `define maxvaddr 48
+  `define modesz 4
+  `define maxpaddr 56
 `endif
 
 
