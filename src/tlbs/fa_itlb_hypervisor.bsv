@@ -227,7 +227,13 @@ package fa_itlb_hypervisor;
             wr_count_misses <= 1;
           `endif
             rg_miss_queue <= req.address;
-            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3 });
+            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, 
+                                                     access : 3, 
+                                                     prv : wr_priv
+                                                  `ifdef hypervisor
+                                                     ,virt: wr_vs_mode
+                                                     ,hlvx: 0
+                                                  `endif });
           end
         end
       endmethod
@@ -262,7 +268,7 @@ package fa_itlb_hypervisor;
                           asid: satp_asid,
                           pagemask: mask,
                           ppn: fullppn,
-                          vs_bit: wr_vs_mode	//Added Vs_bit in VPNTag struct.
+                          vs_bit: resp.virt	//Added Vs_bit in VPNTag struct.
                           };
         if(!resp.trap) begin
           `logLevel( itlb, 0, $format("[%2d]ITLB: Allocating index:%d for Tag:", hartid,rg_replace, fshow(tag)))
