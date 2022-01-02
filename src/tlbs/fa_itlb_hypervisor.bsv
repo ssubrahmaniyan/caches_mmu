@@ -206,14 +206,16 @@ package fa_itlb_hypervisor;
             else if(!permissions.a)
               page_fault = True;
             // pte.u == 0 for user mode
-            else if(!permissions.u && wr_priv == 0)
+            else if(pte.vs_bit == 0 && !permissions.u && wr_priv == 0)
+              page_fault = True;
+            else if(pte.vs_bit == 1 && !permissions.u)
               page_fault = True;
             // pte.u = 1 for supervisor
-            else if(permissions.u && wr_priv == 1)
+            else if(permissions.u && wr_priv == 1 && pte.vs_bit == 0)
               page_fault = True;
               
             //Guest page fault exceptions need to be raised if vs_bit is 1
-            Bit#(`causesize) cause1 = (pte.vs_bit==1) ? `Inst_guest_pagefault :`Inst_pagefault; 
+            Bit#(`causesize) cause1 = (pte.vs_bit==0) ? `Inst_guest_pagefault :`Inst_pagefault; 
             `logLevel( itlb, 0, $format("[%2d]ITLB: Sending PA:%h Trap:%b", hartid,physicaladdress, page_fault))
             ff_core_respone.enq(ITLB_core_response{address  : truncate(physicaladdress),
                                                    trap     : page_fault,
