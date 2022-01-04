@@ -192,32 +192,40 @@ package fa_dtlb_hypervisor;
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_vpn:%h",hartid,lower_vpn))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_pa:%h",hartid,lower_pa))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: highest_ppn:%h",hartid,highest_ppn))
-	`logLevel( dtlb, 2, $format("[%2d]DTLB: vs_bit:%h",hartid,pte.vs_bit))	//Vs bit in TLB
+	      `logLevel( dtlb, 2, $format("[%2d]DTLB: vs_bit:%h sum:%b mxr:%b",hartid,pte.vs_bit, sum, mxr))	//Vs bit in TLB
         // check for permission faults
       `ifndef sv32
         if(unused_va != signExtend(lookup.va[`maxvaddr-1]))begin
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault1",hartid))
         end
       `endif
-        if (lookup.hlvx == 1 && !permissions.x)
+        if (lookup.hlvx == 1 && !permissions.x)begin
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault2",hartid))
+        end
         // pte.a == 0 || pte.d == 0 and access != Load
         if(!permissions.a || (!permissions.d && lookup.access != 0))begin
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault3",hartid))
         end
         if(lookup.access == 0 && lookup.hlvx == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault4",hartid))
         end
-        if(lookup.prv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+        if(lookup.prv == 1 && permissions.u && sum == 0 && pte.vs_bit == 0)begin // supervisor accessing user
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault5",hartid))
         end
-        if(!permissions.u && lookup.prv == 0)begin
+        if(!permissions.u && (lookup.prv == 0 || pte.vs_bit == 1))begin
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault6",hartid))
         end
 
         // for Store access
         if(lookup.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
           page_fault = True;
+          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault7",hartid))
         end
         if(lookup.tlbmiss)begin
           rg_miss_queue <= lookup.va;
