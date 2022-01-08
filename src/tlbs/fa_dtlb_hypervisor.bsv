@@ -169,7 +169,7 @@ package fa_dtlb_hypervisor;
       else begin
         Bool page_fault = False; 
         Bit#(`causesize) cause;  /*condition wr_vs_mode or lookup.pte.vs_bit==1??*/
-        if(lookup.pte.vs_bit==0)	 //If V mode, guest page fault exceptions need to be raised	
+        if(lookup.pte.vs_bit==1)	 //If V mode, guest page fault exceptions need to be raised	
         	cause = lookup.access == 0 ?`Load_guest_pagefault : `Store_guest_pagefault;
         else
         	cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;

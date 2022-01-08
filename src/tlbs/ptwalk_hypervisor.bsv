@@ -393,7 +393,7 @@ module mkptwalk(Ifc_ptwalk);
 	                                trap    : False,
 	                                cause   : ?
 	                              `ifdef hypervisor 
-	                                , virt: request.virt
+  	                              , virt: pack(rg_stage2) & request.virt
 	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
@@ -430,7 +430,7 @@ module mkptwalk(Ifc_ptwalk);
                                       trap    : trap,
                                       cause   : cause
 	                              `ifdef hypervisor 
-	                                , virt: request.virt
+  	                              , virt: pack(rg_stage2) & request.virt
 	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
@@ -475,7 +475,7 @@ module mkptwalk(Ifc_ptwalk);
 	                                            trap    : False,
 	                                            cause   : ?
 	                                          `ifdef hypervisor 
-	                                            , virt: request.virt
+  	                                          , virt: pack(rg_stage2) & request.virt
 	                                          `endif };
 	        ff_response.enq(tlb_resp);
 	        `logLevel( ptwalk, 0, $format("PTW: Sending response to from Stage1 TLB:",temp1))
@@ -509,7 +509,7 @@ module mkptwalk(Ifc_ptwalk);
 	                                trap    : trap,
 	                                cause   : cause
 	                              `ifdef hypervisor 
-	                                , virt: request.virt
+  	                              , virt: pack(rg_stage2) & request.virt
 	                              `endif });
       	`logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
 	                              lv_levels))

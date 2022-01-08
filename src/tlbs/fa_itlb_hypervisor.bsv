@@ -215,7 +215,7 @@ package fa_itlb_hypervisor;
               page_fault = True;
               
             //Guest page fault exceptions need to be raised if vs_bit is 1
-            Bit#(`causesize) cause1 = (pte.vs_bit==0) ? `Inst_guest_pagefault :`Inst_pagefault; 
+            Bit#(`causesize) cause1 = (pte.vs_bit==1) ? `Inst_guest_pagefault :`Inst_pagefault; 
             `logLevel( itlb, 0, $format("[%2d]ITLB: Sending PA:%h Trap:%b", hartid,physicaladdress, page_fault))
             ff_core_respone.enq(ITLB_core_response{address  : truncate(physicaladdress),
                                                    trap     : page_fault,
