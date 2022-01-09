@@ -100,7 +100,6 @@ package dmem;
   `endif
   `ifdef hypervisor
    	method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
-   	method Action ma_vs_mode (Bit#(1) v);			//Virt. mode, to enable 2-stage address translation
    	method Action ma_vsstatus_from_csr (Bit#(`vaddr) vsstatus);
   `endif
       // ---------------------------------------------------------//
@@ -129,9 +128,12 @@ package dmem;
                                       cause     : truncate(req.writedata),
                                       ptwalk_trap: req.ptwalk_trap,
                                       ptwalk_req: req.ptwalk_req,
-                                      sfence    : req.sfence
+                                      sfence    : req.sfence,
+                                      prv       : req.prv
                                     `ifdef hypervisor
                                       , hfence    : req.hfence
+                                      , virt      : req.virt
+                                      , hlvx      : req.hlvx
                                     `endif
                                       };
   endfunction
@@ -179,9 +181,6 @@ package dmem;
     method mv_dmem_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
     method Action ma_curr_priv (Bit#(2) c);
-    `ifdef supervisor
-      dtlb.ma_curr_priv(c);
-    `endif
       dcache.ma_curr_priv(c);
     endmethod
   `ifdef supervisor
@@ -210,7 +209,6 @@ package dmem;
   `endif
   `ifdef hypervisor
    	method ma_vsatp_from_csr = dtlb.ma_vsatp_from_csr;
-   	method ma_vs_mode = dtlb.ma_vs_mode;
    	method ma_vsstatus_from_csr = dtlb.ma_vsstatus_from_csr;
   `endif
   endmodule

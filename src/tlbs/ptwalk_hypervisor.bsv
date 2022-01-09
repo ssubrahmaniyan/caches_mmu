@@ -42,16 +42,12 @@ interface Ifc_ptwalk;
   method Action ma_satp_from_csr (Bit#(`xlen) _satp);
   (*always_enabled, always_ready*)
   method Action ma_mstatus_from_csr (Bit#(`xlen) mstatus);
-  (*always_enabled, always_ready*)
-  method Action ma_curr_priv (Bit#(2) priv);
   
 `ifdef hypervisor
   (*always_enabled, always_ready*)
 	method Action ma_hgatp_from_csr (Bit#(`xlen) _hgatp);	//similar to satp, for hypervisor
   (*always_enabled, always_ready*)
 	method Action ma_hstatus_from_csr (Bit#(`xlen) hstatus); //Hypervisor status reg
-  (*always_enabled, always_ready*)
-	method Action ma_vs_mode (Bit#(1) v);	//Virt. mode, to enable 2-stage address translation
   (*always_enabled, always_ready*)
 	method Action ma_vsatp_from_csr (Bit#(`xlen) vsatp);	 //For VS-stage translation (if v = 1)
   (*always_enabled, always_ready*)
@@ -144,12 +140,10 @@ module mkptwalk(Ifc_ptwalk);
   // wire which hold the inputs from csr
   Wire#(Bit#(`xlen)) wr_satp <- mkWire();
   Wire#(Bit#(`xlen)) wr_mstatus <- mkWire();
-  Wire#(Bit#(2)) wr_priv <- mkWire();
  
   //wires for hypervisor
   Wire#(Bit#(`xlen)) wr_hgatp <- mkWire();
   Wire#(Bit#(`xlen)) wr_hstatus <- mkWire();
-  Wire#(Bit#(1)) wr_vs_mode <- mkWire();
   Wire#(Bit#(`xlen)) wr_vsatp <- mkWire();
   Wire#(Bit#(`xlen)) wr_vsstatus <- mkWire();
 
@@ -170,30 +164,6 @@ module mkptwalk(Ifc_ptwalk);
   Reg#(State) rg_state<- mkReg(GeneratePTE);
 
   Wire#(Bool) wr_deq_holding_ff <- mkWire();
-  
- 
-  // mux for new satp that needs to be used
-  Bit#(`xlen) satp = (wr_vs_mode==1) ? wr_vsatp : wr_satp;
-  Bit#(`xlen) status = (wr_vs_mode==1) ? wr_vsstatus : wr_mstatus; 
-  
-  Bit#(`ppnsize) satp_ppn = truncate(satp);	//Phy. page no. of root page table
-
-  Bit#(`asidwidth) satp_asid = satp[`asidwidth-1 + `ppnsize : `ppnsize];
-  Bit#(`modesz) satp_mode = truncateLSB(satp);
-
-`ifdef hypervisor 
-  Bit#(`ppnsize) hgatp_ppn = truncate(wr_hgatp);   //Phy. page no. of root page table
-  Bit#(TSub#(`asidwidth,2)) hgatp_vmid = wr_hgatp[`asidwidth-3 + `ppnsize : `ppnsize];  //vmid = asid-2
-  Bit#(`modesz) hgatp_mode = truncateLSB(wr_hgatp); 	   //1-sv32x4
-`endif
-  /*The vsstatus field MXR, which makes execute-only pages readable, only overrides VS-stage page
-    protection. Setting MXR at VS-level does not override guest-physical page protections. Setting
-    MXR at HS-level, however, overrides both VS-stage and G-stage execute-only permissions. */
-  Bit#(1) mxr = rg_stage2?wr_mstatus[19]: (wr_mstatus | (wr_vs_mode==1?wr_vsstatus:0))[19];  //As per QEMU-H extension 
-  Bit#(1) sum = status[18];  //As per QEMU-H extension 
-  Bit#(2) mpp = wr_mstatus[12:11];
-  Bit#(1) mprv = wr_mstatus[17];
-  Bool s_mode = wr_priv == 1;
 //HSTATUS?//
 
   function DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) gen_dcache_packet (PTWalk_tlb_request#(`vaddr) req, 
@@ -204,11 +174,14 @@ module mkptwalk(Ifc_ptwalk);
                         access      : 0,
                         fence       : False,
                         writedata   : zeroExtend(cause),
+                        prv         : req.prv,
                       `ifdef atomic
                         atomic_op   : ?,
                       `endif
                       `ifdef hypervisor
                         hfence      : False,
+                        virt        : req.virt,
+                        hlvx        : req.hlvx,
                       `endif
                         sfence      : False,
                         ptwalk_req  : reqtype,
@@ -227,11 +200,14 @@ module mkptwalk(Ifc_ptwalk);
                                    fence      : False,
                                    access     : hold_req.access,
                                    writedata  : hold_req.data,
+                                   prv        : request.prv,
                                 `ifdef atomic
                                    atomic_op  : hold_req.atomic_op,
                                 `endif
                                 `ifdef hypervisor
                                    hfence     : False,
+                                   virt       : request.virt,
+                                   hlvx       : request.hlvx,
                                 `endif
                                    sfence     : False,
                                    ptwalk_req : False,
@@ -248,9 +224,13 @@ module mkptwalk(Ifc_ptwalk);
   rule generate_pte(rg_state==GeneratePTE);
     
     let request = ff_req_queue.first;
+    // mux for new satp that needs to be used
+    Bit#(`xlen) satp = (request.virt==1) ? wr_vsatp : wr_satp;
+    Bit#(`xlen) status = (request.virt==1) ? wr_vsstatus : wr_mstatus; 
+    Bit#(`modesz) hgatp_mode = truncateLSB(wr_hgatp);
     `logLevel( ptwalk, 2, $format("PTW : Processing Core Request: ",fshow(ff_req_queue.first)))
     `logLevel( pt, 0, $format("PTW: satp:%h hgatp:%h vs_mode:%b vs_trans:%b status:%h rg_levels:%d",satp,
-                            wr_hgatp,wr_vs_mode,rg_stage2,status,rg_levels))
+                            wr_hgatp,request.virt,rg_stage2,status,rg_levels))
     
     Bit#(TAdd#(`subvpn,2)) gpa[`varpages];		//extend by 2 bits
     //V mode and 1st (VS) stage over (i.e rg_vs_trans = TRUE), now G stage
@@ -264,29 +244,51 @@ module mkptwalk(Ifc_ptwalk);
     Bit#(`subvpn) vpn[`varpages];
     for(int k=0; k<`varpages ; k=k+1)
       vpn[k] = request.address[pagesize + (k+1)*`subvpn - 1 : pagesize + (k)*`subvpn];
-
-    let vminfo = fn_decode_vminfo(rg_stage2, wr_priv, satp, wr_hgatp);
+    Bit#(2) prv = rg_stage2?0:request.prv;
+    let vminfo = fn_decode_vminfo(rg_stage2, prv, satp, wr_hgatp);
     `logLevel( ptwalk, 0, $format("PTW: VMINFO:",fshow(vminfo)))
   
     Bit#(`maxpaddr) a = (rg_levels == vminfo.levels)?{vminfo.ptbase,12'b0} : rg_a;
     Bit#(`maxpaddr) pte_address = a + (rg_stage2?(zeroExtend(gpa[rg_levels])<<vminfo.ptesize):
                                       (zeroExtend(vpn[rg_levels])<<vminfo.ptesize));
-    request.address = signExtend(pte_address);
-    `logLevel( ptwalk, 2, $format("PTW : Sending PTE - Address to DMEM:%h",pte_address))
-    ff_memory_req.enq(gen_dcache_packet(request, True, False,?));
-    rg_state<=WaitForMemory;
+    if (vminfo.levels == 0 && !rg_stage2) begin
+      rg_gpa <= truncate(request.address);
+    `ifdef RV32
+      rg_levels <= 1;
+    `elsif RV64
+      rg_levels <= hgatp_mode == 8?2 : 3;
+    `endif
+      rg_stage2 <= True;
+      `logLevel( ptwalk, 0, $format("PTW: SKipping first level"))
+    end
+    else begin
+      request.address = signExtend(pte_address);
+      `logLevel( ptwalk, 2, $format("PTW : Sending PTE - Address to DMEM:%h",pte_address))
+      ff_memory_req.enq(gen_dcache_packet(request, True, False,?));
+      rg_state<=WaitForMemory;
+    end
   endrule:generate_pte
 
   rule check_pte(rg_state==WaitForMemory);
     let request = ff_req_queue.first;
-    Bit#(TAdd#(`subvpn,2)) gpa[`varpages];		//extend by 2 bits
-    //V mode and 1st (VS) stage over (i.e rg_vs_trans = TRUE), now G stage
-    for (Integer i = 0; i<`varpages; i = i + 1) begin
-      if (i== (`varpages-1))
-        gpa[i] = rg_gpa[pagesize + (i+1)*`subvpn + 1: pagesize + i*`subvpn];
-      else
-        gpa[i] = {2'b0, rg_gpa[pagesize + (i+1)*`subvpn - 1: pagesize + i*`subvpn]};
-    end
+  
+    // mux for new satp that needs to be used
+    Bit#(`xlen) satp = (request.virt==1) ? wr_vsatp : wr_satp;
+    Bit#(`xlen) status = (request.virt==1) ? wr_vsstatus : wr_mstatus; 
+    
+    Bit#(`ppnsize) satp_ppn = truncate(satp);	//Phy. page no. of root page table
+
+    Bit#(`asidwidth) satp_asid = satp[`asidwidth-1 + `ppnsize : `ppnsize];
+    Bit#(`modesz) satp_mode = truncateLSB(satp);
+
+    Bit#(`ppnsize) hgatp_ppn = truncate(wr_hgatp);   //Phy. page no. of root page table
+    Bit#(TSub#(`asidwidth,2)) hgatp_vmid = wr_hgatp[`asidwidth-3 + `ppnsize : `ppnsize];  //vmid = asid-2
+    Bit#(`modesz) hgatp_mode = truncateLSB(wr_hgatp); 	   //1-sv32x4
+    /*The vsstatus field MXR, which makes execute-only pages readable, only overrides VS-stage page
+      protection. Setting MXR at VS-level does not override guest-physical page protections. Setting
+      MXR at HS-level, however, overrides both VS-stage and G-stage execute-only permissions. */
+    Bit#(1) mxr = rg_stage2?wr_mstatus[19]: (wr_mstatus | (request.virt==1?wr_vsstatus:0))[19];  //As per QEMU-H extension 
+    Bit#(1) sum = status[18];  //As per QEMU-H extension 
 
     Bit#(`subvpn) vpn[`varpages];
     for(int k=0; k<`varpages ; k=k+1)
@@ -309,7 +311,9 @@ module mkptwalk(Ifc_ptwalk);
     Bit#(`subvpn) ppn2 = response.word[10 + 3*`subvpn - 1 : 10 + 2*`subvpn];
     Bit#(`subvpn) ppn3 = response.word[10 + 4*`subvpn - 1 : 10 + 3*`subvpn];
 
-    let vminfo = fn_decode_vminfo(rg_stage2, wr_priv, satp, wr_hgatp);
+    Bit#(2) prv = rg_stage2?0:request.prv;
+
+    let vminfo = fn_decode_vminfo(rg_stage2, prv, satp, wr_hgatp);
     `logLevel( ptwalk, 0, $format("PTW: VMINFO:",fshow(vminfo)))
     	
     Bool fault = False;
@@ -322,8 +326,6 @@ module mkptwalk(Ifc_ptwalk);
     // 7 6 5 4 3 2 1 0
     // D A G U X W R V
     TLB_permissions permissions=bits_to_permission(truncate(pte));
-
-    Bit#(2) priv = rg_stage2?0 : mprv == 0?wr_priv: mpp;
 
     `logLevel( ptwalk, 2, $format("PTW : Permissions", fshow(permissions)))
 
@@ -345,19 +347,21 @@ module mkptwalk(Ifc_ptwalk);
         fault=True;
 
       // for execute access
-      if(request.access == 3  && !permissions.x)
+      if((request.access == 3 || request.hlvx==1) && !permissions.x)
         fault=True;
-      if(request.access == 3  && permissions.x && permissions.u && wr_priv==1)
+      if(!rg_stage2 && request.access == 3  && permissions.x && permissions.u && prv==1)
         fault=True;
-      if(request.access == 3  && permissions.x && !permissions.u && wr_priv == 0)
+      if (rg_stage2 && !permissions.u)
+        fault = True;
+      if(request.access == 3  && permissions.x && !permissions.u && prv== 0)
         fault=True;
 
       // for load access
-      if(request.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) // if not readable and not mxr  executable
+      if(request.access == 0 && request.hlvx == 0 && !permissions.r && (!permissions.x || mxr == 0)) // if not readable and not mxr  executable
         fault=True;
-      if(request.access != 3 && priv == 1 && permissions.u && sum == 0) // supervisor accessing user
+      if(request.access != 3 && prv == 1 && permissions.u && sum == 0) // supervisor accessing user
         fault=True;
-      if(request.access != 3 && !permissions.u && priv == 0)
+      if(request.access != 3 && !permissions.u && prv == 0)
         fault=True;
       
       // for Store access
@@ -383,11 +387,14 @@ module mkptwalk(Ifc_ptwalk);
     end
 
 
-    if (vminfo.levels == 0 || (rg_stage2 && wr_vs_mode==0)) begin
+    if (vminfo.levels == 0 || (rg_stage2 && request.virt ==0)) begin
    	  ff_response.enq(PTWalk_tlb_response{pte     : truncate(rg_gpa),
 	                                levels  : lv_levels,
 	                                trap    : False,
-	                                cause   : ?});
+	                                cause   : ?
+	                              `ifdef hypervisor 
+  	                              , virt: pack(rg_stage2) & request.virt
+	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
       rg_stage2 <= False;
@@ -396,6 +403,7 @@ module mkptwalk(Ifc_ptwalk);
     `elsif RV64
       lv_levels = satp_mode == 8?2 : 3;
       `logLevel( ptwalk, 0, $format("PTW: Sending response to TLB"))
+    `endif
     end
     else if(fault || response.trap) begin  
       trap=True;
@@ -420,7 +428,10 @@ module mkptwalk(Ifc_ptwalk);
       ff_response.enq(PTWalk_tlb_response{pte : truncate(response.word),
                                       levels  : lv_levels,
                                       trap    : trap,
-                                      cause   : cause});
+                                      cause   : cause
+	                              `ifdef hypervisor 
+  	                              , virt: pack(rg_stage2) & request.virt
+	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
       rg_stage2 <= False;
@@ -443,15 +454,29 @@ module mkptwalk(Ifc_ptwalk);
     If vs_mode, now need to perform G-stage using this response (stored in rg_gpa). 
     For this set rg_vs_trans to true, now hgatp reg is used for address translation and rg_levels_vs for levels
     */
-    	if((wr_vs_mode==1) &&(rg_stage2==False)) begin	//Hyp.
-        let vminfo2 = fn_decode_vminfo(True, wr_priv, satp, wr_hgatp);
-        `logLevel( ptwalk, 0, $format("PTW: VMINFO2:",fshow(vminfo)))
-    	  Bit#(TAdd#(`ppnsize , 12)) temp1 = {response.word[10 + `ppnsize - 1:10],12'b0}; //temp1 of size same as rg_a
+    	if((request.virt==1) &&(rg_stage2==False)) begin	//Hyp.
+        let vminfo2 = fn_decode_vminfo(True, request.prv, satp, wr_hgatp);
+        `logLevel( ptwalk, 0, $format("PTW: VMINFO2:",fshow(vminfo2)))
+        Bit#(`vpnsize) fullvpn = truncate(request.address >> 12);
+        Bit#(`ppnsize) fullppn = truncate(pte >> 10);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
+        Bit#(TLog#(TMul#(TSub#(`varpages,1),`subvpn))) shiftamt = `subvpn * zeroExtend(lv_levels);
+        mask = mask << shiftamt;
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(fullppn);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(request.address >> 12);
+        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+        Bit#(`lastppnsize) highest_ppn = truncateLSB(fullppn);
+        Bit#(12) page_offset = request.address[11 : 0];
+
+      	Bit#(TAdd#(`ppnsize , 12)) temp1 = {highest_ppn, lower_pa, page_offset}; //temp1 of size same as rg_a
         if (vminfo2.levels == 0) begin
    	      let tlb_resp = PTWalk_tlb_response{pte     : truncate(response.word),
 	                                            levels  : lv_levels,
 	                                            trap    : False,
-	                                            cause   : ?};
+	                                            cause   : ?
+	                                          `ifdef hypervisor 
+  	                                          , virt: pack(rg_stage2) & request.virt
+	                                          `endif };
 	        ff_response.enq(tlb_resp);
 	        `logLevel( ptwalk, 0, $format("PTW: Sending response to from Stage1 TLB:",temp1))
       	  if(request.access != 3)
@@ -460,24 +485,32 @@ module mkptwalk(Ifc_ptwalk);
       	    rg_state<=GeneratePTE;
       	    ff_req_queue.deq;
       	  end
+        `ifdef RV32
+          lv_levels=1;
+        `elsif RV64
+          lv_levels = satp_mode == 8?2 : 3;
+        `endif
 	      end
 	      else begin
+        `ifdef RV32
+          lv_levels=1;
+        `elsif RV64
+          lv_levels = hgatp_mode == 8?2 : 3;
+        `endif
     	    rg_stage2<= True;
           rg_gpa<=temp1; 	//rg_gpa ,for next stage 
           rg_state<=GeneratePTE;
           `logLevel( ptwalk, 2, $format("PTW : (Second Stage) Pointer to NextLevel:%h Levels:%d", temp1, lv_levels))
         end
-      `ifdef RV32
-        lv_levels=1;
-      `elsif RV64
-        lv_levels = satp_mode == 8?2 : 3;
-      `endif
     	end
     	else begin	//No hyp.
     	  ff_response.enq(PTWalk_tlb_response{pte     : truncate(response.word),
 	                                levels  : lv_levels,
 	                                trap    : trap,
-	                                cause   : cause});
+	                                cause   : cause
+	                              `ifdef hypervisor 
+  	                              , virt: pack(rg_stage2) & request.virt
+	                              `endif });
       	`logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
 	                              lv_levels))
       	if(request.access != 3)
@@ -495,7 +528,6 @@ module mkptwalk(Ifc_ptwalk);
       end
     end
     rg_levels<=lv_levels;
-//    if(wr_vs_mode==1 && rg_vs_trans)  rg_levels_vs <= lv_levels;	
   endrule
 
   interface from_tlb            = toPut(ff_req_queue);
@@ -517,10 +549,6 @@ module mkptwalk(Ifc_ptwalk);
     wr_satp <= _satp;
   endmethod
 
-  method Action ma_curr_priv (Bit#(2) priv);
-    wr_priv <= priv;
-  endmethod
-
   method Action ma_mstatus_from_csr (Bit#(`vaddr) mstatus);
     wr_mstatus <= mstatus;
   endmethod
@@ -532,10 +560,6 @@ module mkptwalk(Ifc_ptwalk);
     
     method Action ma_hstatus_from_csr (Bit#(`vaddr) hstatus);
       wr_hstatus <= hstatus;
-    endmethod
-    
-    method Action ma_vs_mode (Bit#(1) v);	//To enable 2-stage translation
-      wr_vs_mode <= v;
     endmethod
     
     method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);

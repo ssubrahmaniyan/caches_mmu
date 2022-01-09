@@ -206,10 +206,12 @@ package fa_itlb_hypervisor;
             else if(!permissions.a)
               page_fault = True;
             // pte.u == 0 for user mode
-            else if(!permissions.u && wr_priv == 0)
+            else if(pte.vs_bit == 0 && !permissions.u && wr_priv == 0)
+              page_fault = True;
+            else if(pte.vs_bit == 1 && !permissions.u)
               page_fault = True;
             // pte.u = 1 for supervisor
-            else if(permissions.u && wr_priv == 1)
+            else if(permissions.u && wr_priv == 1 && pte.vs_bit == 0)
               page_fault = True;
               
             //Guest page fault exceptions need to be raised if vs_bit is 1
@@ -227,7 +229,13 @@ package fa_itlb_hypervisor;
             wr_count_misses <= 1;
           `endif
             rg_miss_queue <= req.address;
-            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3 });
+            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, 
+                                                     access : 3, 
+                                                     prv : wr_priv
+                                                  `ifdef hypervisor
+                                                     ,virt: wr_vs_mode
+                                                     ,hlvx: 0
+                                                  `endif });
           end
         end
       endmethod
@@ -262,7 +270,7 @@ package fa_itlb_hypervisor;
                           asid: satp_asid,
                           pagemask: mask,
                           ppn: fullppn,
-                          vs_bit: wr_vs_mode	//Added Vs_bit in VPNTag struct.
+                          vs_bit: resp.virt	//Added Vs_bit in VPNTag struct.
                           };
         if(!resp.trap) begin
           `logLevel( itlb, 0, $format("[%2d]ITLB: Allocating index:%d for Tag:", hartid,rg_replace, fshow(tag)))

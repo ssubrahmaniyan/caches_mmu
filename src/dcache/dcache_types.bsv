@@ -174,11 +174,14 @@ package dcache_types;
     Bool          fence;
     Bit#(2)       access;
     Bit#(data)    writedata;
+    Bit#(2)       prv;
   `ifdef atomic
     Bit#(5)       atomic_op;
   `endif
   `ifdef hypervisor
     Bool          hfence;
+    Bit#(1)       virt;
+    Bit#(1)       hlvx;       
   `endif
   `ifdef supervisor
     Bool          sfence;

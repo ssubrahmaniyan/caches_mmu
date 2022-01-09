@@ -70,8 +70,11 @@ package common_tlb_types;
     Bool              ptwalk_trap;
     Bool              ptwalk_req;
     Bool              sfence;
+    Bit#(2)           prv;
   `ifdef hypervisor
     Bool              hfence;
+    Bit#(1)           virt;
+    Bit#(1)           hlvx;
   `endif
   }DTLB_core_request# (numeric type addr) deriving(Bits, Eq, FShow);
 
@@ -99,9 +102,17 @@ package common_tlb_types;
   typedef struct{
     Bit#(addr)        address;
     Bit#(2)           access;
+    Bit#(2)           prv;
+  `ifdef hypervisor
+    Bit#(1)           virt;
+    Bit#(1)           hlvx;
+  `endif
   }PTWalk_tlb_request#(numeric type addr) deriving(Bits, Eq, FShow);
 
   typedef struct{
+  `ifdef hypervisor
+    Bit#(1)               virt;
+  `endif
     Bit#(addr)            pte;
     Bit#(TLog#(level))    levels;
     Bool                  trap;
