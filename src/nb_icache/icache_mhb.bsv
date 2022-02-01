@@ -227,22 +227,36 @@ package icache_mhb;
         //
         rule rl_increment_mhb_free_entry_ptr;
             Bit#(TLog#(`mhb_size)) lv_free_index = rg_mhb_free_entry_ptr;
-            Bool lv_available = False;
 
-            // NOTE: The free ptr has to move ahead if either a new entry has been allocated or if there's a release in that cycle
-            //       The pointer is wrong when the mhb is full (allocation disabled on full) and needs to point to the next available entry as soon as it is available
+            // NOTE: The free ptr has to move ahead if 1) a new entry has been allocated 2) MHB is full but there's a release 3) MHB is full on a flush cycle
+            //       The pointer is wrong when the mhb is full. Alternative: pointer valid/invalid flag
+            // TODO: optimize
+
+            // Case 1: on new primary entry allocation
             if (wr_increment_free_entry_ptr) begin
               for(Integer i=0;i<`mhb_size;i=i+1) begin
-                  if(!wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
-                      lv_free_index = fromInteger(i);
-                      lv_available = True;
-                  end
+                if(!wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
+                  lv_free_index = fromInteger(i);
+                end
               end
             end
-            //if (wr_releasing && !lv_available) begin
-            if (wr_releasing && wr_mshr_full) begin
-              lv_free_index = wr_releasing_primary_index;
+
+            // Case 2: on mhb full (allocation disabled on full): point to the next available entry *as soon as* it is available
+            // If mhb is full (current cycle's full computation, includes fb entries to be invalidated) and releasing, point to the releasing entry
+            if (wr_mshr_full && wr_releasing) begin
+                lv_free_index = wr_releasing_primary_index;
             end
+
+            // Case 3: on flush, an entry may be available: point to the invalidated entry (not issued yet)
+            // Optionally, add check for registered mhb_full here (currently, ptr may move on flush even if pointing to a free entry)
+            if (wr_flush) begin
+              for(Integer i=0;i<`mhb_size;i=i+1) begin
+                if(!wr_fb_valid[i] || (wr_fb_valid[i] && !wr_fb_issued[i])) begin
+                  lv_free_index = fromInteger(i);
+                end
+              end
+            end
+
             rg_mhb_free_entry_ptr <= lv_free_index;
         endrule
         //
