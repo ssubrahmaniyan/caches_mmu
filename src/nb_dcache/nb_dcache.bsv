@@ -336,6 +336,7 @@ package nb_dcache;
       Wire#(Bool) wr_fill_request_valid <- mkDWire(False);
       Wire#(Bit#(TLog#(mshrsize))) wr_fill_request_id <- mkDWire(0);
     `endif
+    Wire#(Bool) wr_ff_first_stage_not_empty <- mkDWire(False);
 
     Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
     Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
@@ -528,6 +529,10 @@ package nb_dcache;
       `logTimeLevel( dcache, 1, $format("DCACHE : Stalling req from core as write is being performed to same set. Core_req: ", fshow(core_req)))
     endrule
 
+    rule rl_check_ff_first_stage;
+      wr_ff_first_stage_not_empty <= ff_first_stage.notEmpty;
+    endrule
+
 `ifdef supervisor
     // cache busy only for lsu/prefetcher
     Bool lv_cache_busy = (core_req.origin == PTW) ? False : rg_cache_busy;
@@ -537,7 +542,7 @@ package nb_dcache;
     Bool stall_atomic_mshr_not_empty = core_req.is_atomic && mshr.not_empty;
     `endif
     `ifdef iclass
-    Bool stall_for_fence = core_req.sfence && mshr.not_empty; // conservative fence; first stage empty is taken care of in rg_fence_wait_for_ff_first_stage_empty below
+    Bool stall_for_fence = core_req.sfence && (wr_ff_first_stage_not_empty || mshr.not_empty); // conservative fence (no fence fb): first stage and MSHR should be empty
     `endif
     rule rl_handle_req_from_core(!lv_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail && !stall_atomic_mshr_not_empty `endif
                                  && !rg_fence_wait_for_ff_first_stage_empty `ifdef iclass && !stall_for_fence `endif );
