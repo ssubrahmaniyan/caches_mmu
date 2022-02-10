@@ -122,7 +122,9 @@ package fill_buffer;
 		Wire#(Tuple3#(Bit#(buswidth), Bool, Bit#(num_chunksbits))) wr_data_from_mem <- mkWire;
     Wire#(Bit#(TSub#(paddr, lineoffset))) wr_addr_from_MSHR_to_fb <-mkWire;
 		Wire#(Bool) wr_can_perform_store <- mkDWire(False);
-    Wire#(Bool) wr_can_release_fb <- mkDWire(False);
+              `ifndef iclass
+		Wire#(Bool) wr_can_release_fb <- mkDWire(False);
+              `endif
 
 		let all_valid= (rg_valid=='1);
 		let all_invalid= (rg_valid=='0);
@@ -217,7 +219,9 @@ package fill_buffer;
 				rg_dirty<= 1;
 			end
       else begin
+        `ifndef iclass
         wr_can_release_fb<= True;
+        `endif
       end
 		endrule
 	
@@ -247,7 +251,11 @@ package fill_buffer;
       wr_addr_from_MSHR_to_fb<= addr_to_fb;
 		endmethod
 
+              `ifdef iclass
+		method Action release_fb if(all_valid);
+              `else
 		method Action release_fb if(wr_can_release_fb && all_valid);
+              `endif
 			rg_valid<= 'd0;
 			rg_dirty<= 0;
 			rg_fb_addr<= 0;
