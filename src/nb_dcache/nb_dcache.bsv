@@ -247,7 +247,11 @@ package nb_dcache;
     Wire#(Req_from_core#(vaddr, datawidth, rob_index, prf_index, lsq_index)) wr_req_to_ptw <- mkWire;
     FIFOF#(Read_req_to_mem#(paddr, id_bits)) ff_read_req_to_mem <- mkSizedFIFOF(4);
     Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
-    FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
+    `ifdef iclass
+      FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkPipelineFIFOF; // conservative and simple eviction check; TODO: multi-entry queue
+    `else
+      FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
+    `endif
     Wire#(Bool) wr_write_resp_from_mem <- mkDWire(False);
 
     FIFO#(IO_Req#(paddr, datawidth)) ff_io_req <- mkSizedFIFO(1);
@@ -299,8 +303,13 @@ package nb_dcache;
     Reg#(Bool) rg_fence_fb_release <- mkDReg(False);
     // Not used currently
     //Reg#(Bit#(TSub#(paddr,lineoffset))) rg_prev_second_stage_line_addr <- mkReg(0);
+`ifdef iclass
+    Wire#(Bit#(TSub#(paddr, lineoffset))) wr_eviction_addr <- mkDWire(0);
+    Wire#(Bit#(1)) wr_eviction_addr_valid <- mkDWire(0);
+`else
     Reg#(Bool) rg_evict_lineaddr_valid[2] <- mkCReg(2,False);
     Reg#(Bit#(TSub#(paddr,lineoffset))) rg_evict_lineaddr <- mkReg(?);
+`endif
 
   `ifdef atomic
     Reg#(Maybe#(Tuple2#(Bit#(TLog#(ways)), Bit#(datawidth)))) rg_atomic_hit_info <- mkReg(tagged Invalid);
@@ -778,7 +787,23 @@ package nb_dcache;
       end
     endrule
 
+`ifdef iclass
+    rule rl_read_eviction_buffer;
+      wr_eviction_addr <= get_line_addr(ff_write_req_to_mem.first.addr);
+      wr_eviction_addr_valid <= 1;
+    endrule
+
+    // Check for registered eviction address match at the start of stage 2. An eviction happening 
+    // in the current cycle (fb release cycle 2) would not conflict as 
+    //    1) the request in stage 2 has to be a request that has been here for over a cycle (request can't arrive this cycle due to stage1/fb read/read conflict)
+    //    2) if the request in stage 2 is a hit but response isn't sent yet due to mshr response's higher priority, it will be sent the cycle the fb decides to release
+    //       => eviction line matching hit line is fine
+    //    3) the request in stage 2 is a miss => miss line address can't match eviction line address
+    // TODO: multiple entry FIFO
+    Bool stall_due_to_eviction_buf_release = (wr_eviction_addr_valid == 1) && (get_line_addr(ff_first_stage.first.addr) == wr_eviction_addr);
+`else
     Bool stall_due_to_eviction_buf_release= rg_evict_lineaddr_valid[0] && (get_line_addr(ff_first_stage.first.addr) == rg_evict_lineaddr);
+`endif
     //This rule matches the tag and checks if it was a hit in the cache; and if it is, sends a response
     //to the core (in case no request from MSHR is sending a response to the core). If it's a miss in the
     //cache, then the request is sent to the fill buffer.
@@ -1442,8 +1467,10 @@ package nb_dcache;
       if(valid[waynum]==1 && dirty[waynum]==1) begin
         Bit#(lineoffset) some_zeros= 0;
         Bit#(paddr) evict_lineaddr= {tag[waynum], set_index, some_zeros};
-        rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
-        rg_evict_lineaddr_valid[1]<= True;
+        `ifndef iclass
+          rg_evict_lineaddr<= truncateLSB(evict_lineaddr);
+          rg_evict_lineaddr_valid[1]<= True;
+        `endif
         ff_write_req_to_mem.enq(Write_req_to_mem {addr: evict_lineaddr,
                                                   data: dataline[waynum],
                                                   is_burst: True });
@@ -1700,10 +1727,21 @@ package nb_dcache;
     //TODO can optimize this to stall in second stage so that cache can still respond to hits.
     //Since the write resp from memory will never cause a fault, this is fine.
     //This will not work once you change eviction buffer to a multi-entry buffer.
-    // NOTE: invalidation moved to write request cycle (for aggressive dequeue, sync dequeue and invalidate) - 240121
-//    rule rl_invalidate_evict_lineaddr(!ff_write_req_to_mem.notEmpty && wr_write_resp_from_mem);
-//      rg_evict_lineaddr_valid[0]<= False;
-//    endrule
+    //  Moving back to conserative dequeue => no invalidation needed
+    //  Invalidation check is on fifo empty and write response but the enqueue rules do not 
+    //  check for line address valid => wrong, because another enqueue can happen in the fifo before write response arrives
+    //  and the register data only stores one line address (and valid) at a time => eviction addr match check is incomplete!
+`ifndef iclass
+    rule rl_invalidate_evict_lineaddr(!ff_write_req_to_mem.notEmpty && wr_write_resp_from_mem);
+      rg_evict_lineaddr_valid[0]<= False;
+    endrule
+`endif
+
+`ifdef iclass
+    rule rl_dequeue_eviction_buffer(wr_write_resp_from_mem);
+        ff_write_req_to_mem.deq;
+    endrule
+`endif
 
     //TODO To reduce one cycle per dirty set, implement this function to check if exactly one dirty way exists
     function Bool check_only_one_evict(Bit#(ways) evict);
@@ -2138,13 +2176,11 @@ package nb_dcache;
     endinterface;
 
     //interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
-    // NOTE: changed from invalidating eviction buffer on response from mem to invalidating on request sent (240121)
-    // TODO: multi-entry eviction fifo/conservative
+    // NOTE: conservative dequeue (on write response) of eviction fifo to track conflicting addresses cleanly
+    // TODO: multi-entry eviction fifo
     interface subifc_write_req_to_mem = interface Get
       method ActionValue#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) get();
         let lv_req = ff_write_req_to_mem.first;
-        ff_write_req_to_mem.deq;
-        rg_evict_lineaddr_valid[0] <= False;
         return lv_req;
       endmethod
     endinterface;
@@ -2152,6 +2188,9 @@ package nb_dcache;
     interface subifc_write_resp_from_mem= interface Put
       method Action put(Bool resp);
         wr_write_resp_from_mem<= resp;
+`ifndef iclass
+        rg_evict_lineaddr_valid[0] <= False;
+`endif
         // TODO: retry/nack for failed response
         `ifdef ASSERT
           dynamicAssert(resp, "Write request to memory failed (error response).");
