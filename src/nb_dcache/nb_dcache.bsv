@@ -249,10 +249,12 @@ package nb_dcache;
     Wire#(Read_resp_from_mem#(buswidth, id_bits)) wr_read_resp_from_mem <- mkDWire(defaultValue);
     `ifdef iclass
       FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkPipelineFIFOF; // conservative and simple eviction check; TODO: multi-entry queue
+      Reg#(Bool) rg_wait_for_write_response <- mkReg(False);
+      Reg#(Bool) rg_write_resp_from_mem <- mkDReg(False);
     `else
       FIFOF#(Write_req_to_mem#(paddr, linewidth)) ff_write_req_to_mem <- mkBypassFIFOF;
+      Wire#(Bool) wr_write_resp_from_mem <- mkDWire(False);
     `endif
-    Wire#(Bool) wr_write_resp_from_mem <- mkDWire(False);
 
     FIFO#(IO_Req#(paddr, datawidth)) ff_io_req <- mkSizedFIFO(1);
     FIFO#(IO_Resp#(datawidth)) ff_io_resp <- mkSizedFIFO(1);
@@ -1738,8 +1740,16 @@ package nb_dcache;
 `endif
 
 `ifdef iclass
-    rule rl_dequeue_eviction_buffer(wr_write_resp_from_mem);
+    rule rl_print_rg_wait;
+        `logTimeLevel( dcache, 1, $format("DCACHE : Status: rg_write_resp_from_mem %b rg_wait_for_write_response %b", rg_write_resp_from_mem, rg_wait_for_write_response))
+    endrule
+
+    // Conservative timing: only in the next cycle, the fifo is available and we are not waiting for response
+    // TODO: optimize for multi-entry eviction buffer/back-to-back writes
+    rule rl_dequeue_eviction_buffer(rg_write_resp_from_mem);
         ff_write_req_to_mem.deq;
+        rg_wait_for_write_response <= False;
+        `logTimeLevel( dcache, 1, $format("DCACHE : Dequeueing eviction buffer, setting rg_wait to false"))
     endrule
 `endif
 
@@ -2177,18 +2187,24 @@ package nb_dcache;
 
     //interface subifc_write_req_to_mem= toGet(ff_write_req_to_mem);
     // NOTE: conservative dequeue (on write response) of eviction fifo to track conflicting addresses cleanly
+    //       method is conditional on not waiting for response (as fifo still holds the request) 
     // TODO: multi-entry eviction fifo
     interface subifc_write_req_to_mem = interface Get
-      method ActionValue#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) get();
+      method ActionValue#(Write_req_to_mem#(paddr, TMul#(TMul#(wordsize,8), linesize))) get() if (!rg_wait_for_write_response);
         let lv_req = ff_write_req_to_mem.first;
+        `logTimeLevel( dcache, 1, $format("DCACHE : Sending write request to mem: ", fshow(lv_req)))
+        rg_wait_for_write_response <= True;
         return lv_req;
       endmethod
     endinterface;
 
     interface subifc_write_resp_from_mem= interface Put
       method Action put(Bool resp);
+`ifdef iclass
+        rg_write_resp_from_mem<= resp;
+        `logTimeLevel( dcache, 1, $format("DCACHE : Receiving write response from mem: %b", resp))
+`else
         wr_write_resp_from_mem<= resp;
-`ifndef iclass
         rg_evict_lineaddr_valid[0] <= False;
 `endif
         // TODO: retry/nack for failed response
