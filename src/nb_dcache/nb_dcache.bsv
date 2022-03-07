@@ -2013,7 +2013,7 @@ package nb_dcache;
     rule rl_send_io_request(!rg_io_req_sent && !rg_fence); //TODO should this rule have !rg_fence?
       let req= ff_io_info.first;
       ff_io_req.enq(IO_Req { addr: req.addr,
-                             size: req.access_size,
+                             size: {1'b0, req.access_size[1:0]},
                              is_store: (req.origin==Store_commit),
                              data: req.data });
       rg_io_req_sent<= True;
@@ -2034,6 +2034,22 @@ package nb_dcache;
         rg_cache_busy<= False;
       end
       rg_io_req_sent<= False;
+
+      // on a correct response, format load data as required by core
+      if ((req.origin == Load_buffer) && (resp.exception==defaultValue)) begin
+        if (req.access_size[1:0] == 2'b00) begin
+          resp.data = (req.access_size[2] == 0) ? signExtend(resp.data[7:0]) : zeroExtend(resp.data[7:0]);
+        end
+        else if (req.access_size[1:0] == 2'b01) begin
+          resp.data = (req.access_size[2] == 0) ? signExtend(resp.data[15:0]) : zeroExtend(resp.data[15:0]);
+        end
+        else if (req.access_size[1:0] == 2'b10) begin
+          resp.data = (req.access_size[2] == 0) ? signExtend(resp.data[31:0]) : zeroExtend(resp.data[31:0]);
+        end
+        else if (req.access_size[1:0] == 2'b11) begin
+          // ld/sd do nothing
+        end
+      end // load and !exception
       wr_resp_to_core<= Resp_to_core { data: resp.exception==defaultValue ? resp.data: zeroExtend(tpl_4(rg_access_fault_response)),
                                        prf_index: ff_io_info.first.prf_index,
                                        rob: ff_io_info.first.rob,
