@@ -114,6 +114,7 @@ package common_tlb_types;
     Bit#(1)               virt;
   `endif
     Bit#(addr)            pte;
+    Bit#(addr)            s1_pte;
     Bit#(TLog#(level))    levels;
     Bool                  trap;
     Bit#(`causesize)      cause;

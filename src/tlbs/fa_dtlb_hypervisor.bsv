@@ -20,6 +20,7 @@ package fa_dtlb_hypervisor;
   // structure of the virtual tag for fully-associative look-up
   typedef struct{
     TLB_permissions permissions;
+    TLB_permissions s1_permissions;
     Bit#(`vpnsize) vpn;
     Bit#(`asidwidth) asid;
     Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
@@ -140,6 +141,41 @@ package fa_dtlb_hypervisor;
      `endif*/
 	    
     /*doc:rule: */
+
+		function ActionValue#(Bool) check_access(TLB_permissions permissions, LookUpResult lookup, Bit#(1) mxr, Bit#(1) sum, Bit#(1) stage)= actionvalue
+			Bool page_fault= False;
+      if (lookup.hlvx == 1 && !permissions.x)begin
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault2",hartid, stage))
+      end
+      // pte.a == 0 || pte.d == 0 and access != Load
+      if(!permissions.a || (!permissions.d && lookup.access != 0))begin
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault3",hartid, stage))
+      end
+      if(lookup.access == 0 && lookup.hlvx == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault4",hartid, stage))
+      end
+      //if(lookup.prv == 1 && permissions.u && sum == 0 && pte.vs_bit==0)begin // supervisor accessing user
+      //if(lookup.prv == 1 && permissions.u && sum == 0 && (lookup.virt == 0 || lookup.hvm_ldst))begin // supervisor accessing user
+			if(permissions.u && lookup.prv==1 && sum==0) begin
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault5",hartid, stage))
+      end
+      if(!permissions.u && lookup.prv == 0) begin
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault6",hartid, stage))
+      end
+
+      // for Store access
+      if(lookup.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+        page_fault = True;
+        `logLevel( dtlb, 0, $format("[%2d]DTLB S%d -Fault7",hartid, stage))
+      end
+			return page_fault;
+		endactionvalue;
+
     rule rl_send_response(!rg_sfence `ifdef hypervisor && !rg_hfence `endif );
       let lookup = ff_lookup_result.first;
       ff_lookup_result.deq;
@@ -153,8 +189,6 @@ package fa_dtlb_hypervisor;
     `else
       Bit#(4) satp_mode = truncateLSB(satp_new);
     `endif
-      Bit#(1) mxr = status_new[19];	//As per QEMU-H extension 
-      Bit#(1) sum = status_new[18];	//As per QEMU-H extension 
 
       Bit#(12) page_offset = lookup.va[11 : 0];
       Bit#(`vpnsize) fullvpn = truncate(lookup.va >> 12);
@@ -169,13 +203,12 @@ package fa_dtlb_hypervisor;
       else begin
         Bool page_fault = False; 
         Bit#(`causesize) cause;  /*condition wr_vs_mode or lookup.pte.vs_bit==1??*/
-        if(lookup.pte.vs_bit==1)	 //If V mode, guest page fault exceptions need to be raised	
-        	cause = lookup.access == 0 ?`Load_guest_pagefault : `Store_guest_pagefault;
-        else
-        	cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
+        //if(lookup.pte.vs_bit==1)	 //If V mode, guest page fault exceptions need to be raised	
+        //	cause = lookup.access == 0 ?`Load_guest_pagefault : `Store_guest_pagefault;
+        //else
+        //	cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
         let pte = lookup.pte  ;
         Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = lookup.va[`vaddr - 1 : `maxvaddr];
-        let permissions = pte.permissions;
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte.pagemask);
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte.ppn);
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
@@ -187,12 +220,9 @@ package fa_dtlb_hypervisor;
         Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
       `endif
 
-        `logLevel( dtlb, 2, $format("[%2d]DTLB: mask:%h",hartid,mask))
-        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_ppn:%h",hartid,lower_ppn))
-        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_vpn:%h",hartid,lower_vpn))
-        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_pa:%h",hartid,lower_pa))
-        `logLevel( dtlb, 2, $format("[%2d]DTLB: highest_ppn:%h",hartid,highest_ppn))
-	      `logLevel( dtlb, 2, $format("[%2d]DTLB: vs_bit:%h sum:%b mxr:%b",hartid,pte.vs_bit, sum, mxr))	//Vs bit in TLB
+      	Bit#(1) mxr =  (wr_mstatus[19] | (pte.vs_bit==1?wr_vsstatus[19]:0));	//As per QEMU-H extension 
+      	Bit#(1) sum = status_new[18] ;//& wr_mstatus[18];	//As per QEMU-H extension 
+        cause = lookup.access == 0 ?`Load_pagefault : `Store_pagefault;
         // check for permission faults
       `ifndef sv32
         if(unused_va != signExtend(lookup.va[`maxvaddr-1]))begin
@@ -200,33 +230,27 @@ package fa_dtlb_hypervisor;
           `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault1",hartid))
         end
       `endif
-        if (lookup.hlvx == 1 && !permissions.x)begin
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault2",hartid))
-        end
-        // pte.a == 0 || pte.d == 0 and access != Load
-        if(!permissions.a || (!permissions.d && lookup.access != 0))begin
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault3",hartid))
-        end
-        if(lookup.access == 0 && lookup.hlvx == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault4",hartid))
-        end
-        if(lookup.prv == 1 && permissions.u && sum == 0 && pte.vs_bit == 0)begin // supervisor accessing user
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault5",hartid))
-        end
-        if(!permissions.u && (lookup.prv == 0 || pte.vs_bit == 1))begin
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault6",hartid))
-        end
+				if(pte.vs_bit==1) begin
+					page_fault<- check_access(lookup.pte.s1_permissions, lookup, mxr, sum, 0);
+					let lookup_s2= lookup;
+					lookup_s2.prv=0;
+					let permissions_s2= lookup.pte.permissions;
+					if(!page_fault) begin
+    				mxr = wr_mstatus[19];  //As per QEMU-H extension 
+						page_fault<- check_access(permissions_s2, lookup_s2, mxr, 1, 1);
+	        	cause = lookup.access == 0 ?`Load_guest_pagefault : `Store_guest_pagefault ;
+					end
+				end
+				else begin
+					page_fault<- check_access(lookup.pte.permissions, lookup, mxr, sum, 1);
+				end
+        `logLevel( dtlb, 2, $format("[%2d]DTLB: mask:%h",hartid,mask))
+        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_ppn:%h",hartid,lower_ppn))
+        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_vpn:%h",hartid,lower_vpn))
+        `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_pa:%h",hartid,lower_pa))
+        `logLevel( dtlb, 2, $format("[%2d]DTLB: highest_ppn:%h",hartid,highest_ppn))
+	      `logLevel( dtlb, 2, $format("[%2d]DTLB: pte_vs:%h lookup_vs: %b sum:%b mxr:%b",hartid,pte.vs_bit, lookup.virt, sum, mxr))	//Vs bit in TLB
 
-        // for Store access
-        if(lookup.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
-          page_fault = True;
-          `logLevel( dtlb, 0, $format("[%2d]DTLB-Fault7",hartid))
-        end
         if(lookup.tlbmiss)begin
           rg_miss_queue <= lookup.va;
           ff_request_to_ptw.enq(PTWalk_tlb_request{address : lookup.va, 
@@ -287,7 +311,10 @@ package fa_dtlb_hypervisor;
         translation_done = (satp_mode == 0 || req.prv == 3 || req.ptwalk_req || req.ptwalk_trap);
         if(!trap && translation_done)begin
            trap = |upper_bits == 1;
-           cause = req.access == 0? `Load_access_fault: `Store_access_fault;
+					 if(req.virt==1)
+           	 cause = req.access == 0? `Load_guest_pagefault: `Store_guest_pagefault;
+					 else
+           	 cause = req.access == 0? `Load_access_fault: `Store_access_fault;
         end
 
         if(req.sfence && !req.ptwalk_req)begin
@@ -303,7 +330,7 @@ package fa_dtlb_hypervisor;
                                             translation_done: translation_done, prv: req.prv,
                                             tlbmiss: tlbmiss, pte: pte, access: req.access
                                         `ifdef hypervisor 
-                                            , hlvx: req.hlvx, virt: req.virt
+                                            , hlvx: req.hlvx, virt: req.virt 
                                         `endif });
         end
 
@@ -349,12 +376,13 @@ package fa_dtlb_hypervisor;
         Bit#(`asidwidth) satp_asid = satp_new[`asidwidth - 1 + `ppnsize : `ppnsize ];
 
         let tag = VPNTag{ permissions: unpack(truncate(resp.pte)),
+													s1_permissions: unpack(truncate(resp.s1_pte)),
                           vpn: {'1,mask} & fullvpn,
                           asid: satp_asid,
                           pagemask: mask,
                           ppn: fullppn, 
                           vs_bit: resp.virt //Added Vs_bit in VPNTag struct.
-                          };
+                        };
         if(!resp.trap) begin
           `logLevel( dtlb, 0, $format("[%2d]DTLB: Allocating index:%d for Tag:",hartid, rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
