@@ -83,6 +83,7 @@ package common_tlb_types;
     Bool              trap;
     Bit#(`causesize)  cause;
     Bool              tlbmiss;
+		Bit#(`vaddr)		  mtval2;
   } DTLB_core_response# (numeric type addr) deriving(Bits, Eq);
 
   instance FShow#(DTLB_core_response#(addr));
@@ -115,6 +116,7 @@ package common_tlb_types;
   `endif
     Bit#(addr)            pte;
     Bit#(addr)            s1_pte;
+    Bit#(TAdd#(addr,2))   mtval2;
     Bit#(TLog#(level))    levels;
     Bool                  trap;
     Bit#(`causesize)      cause;

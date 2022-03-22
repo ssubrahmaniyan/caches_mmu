@@ -18,9 +18,10 @@ package fa_dtlb_hypervisor;
   import GetPut :: * ;
 
   // structure of the virtual tag for fully-associative look-up
-  typedef struct{
+  typedef struct {
     TLB_permissions permissions;
     TLB_permissions s1_permissions;
+		Bit#(TAdd#(`ppnsize , 12)) mtval2;
     Bit#(`vpnsize) vpn;
     Bit#(`asidwidth) asid;
     Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
@@ -40,6 +41,7 @@ package fa_dtlb_hypervisor;
   `ifdef hypervisor
     Bit#(1)           virt;
     Bit#(1)           hlvx;
+		Bit#(`vaddr)      mtval2;
   `endif
   } LookUpResult deriving(Bits, FShow, Eq);
 
@@ -249,7 +251,7 @@ package fa_dtlb_hypervisor;
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_vpn:%h",hartid,lower_vpn))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: lower_pa:%h",hartid,lower_pa))
         `logLevel( dtlb, 2, $format("[%2d]DTLB: highest_ppn:%h",hartid,highest_ppn))
-	      `logLevel( dtlb, 2, $format("[%2d]DTLB: pte_vs:%h lookup_vs: %b sum:%b mxr:%b",hartid,pte.vs_bit, lookup.virt, sum, mxr))	//Vs bit in TLB
+	      `logLevel( dtlb, 2, $format("[%2d]DTLB: mtval2:%h pte_vs:%h lookup_vs:%b sum:%b mxr:%b", lookup.mtval2, hartid,pte.vs_bit, lookup.virt, sum, mxr))	//Vs bit in TLB
 
         if(lookup.tlbmiss)begin
           rg_miss_queue <= lookup.va;
@@ -271,6 +273,7 @@ package fa_dtlb_hypervisor;
           `logLevel( dtlb, 0, $format("[%2d]DTLB: Hit in TLB:",hartid,fshow(pte)))
           ff_core_response.enq(DTLB_core_response{address  : truncate(physicaladdress),
                                                trap     : page_fault,
+																							 mtval2		: lookup.mtval2,
                                                cause    : cause,
                                                tlbmiss  : False});
         end
@@ -377,6 +380,7 @@ package fa_dtlb_hypervisor;
 
         let tag = VPNTag{ permissions: unpack(truncate(resp.pte)),
 													s1_permissions: unpack(truncate(resp.s1_pte)),
+													mtval2: resp.mtval2,
                           vpn: {'1,mask} & fullvpn,
                           asid: satp_asid,
                           pagemask: mask,
