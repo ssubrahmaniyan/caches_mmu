@@ -668,9 +668,9 @@ package nb_dcache;
                                                         rob: req.rob,
                                                         exception: No_exception
                                                         `ifdef atomic
-                                                        `ifdef simulate `ifdef new_spike
+                                                        `ifdef simulate
                                                            ,  atomic_result: 0
-                                                        `endif `endif
+                                                        `endif
                                                         `endif };
               end
             `endif // store_early_ack
@@ -736,9 +736,9 @@ package nb_dcache;
                                       prf_index: tpl_2(rg_access_fault_response),
                                       exception: tpl_1(rg_access_fault_response)
                                       `ifdef atomic
-                                        `ifdef simulate `ifdef new_spike
+                                        `ifdef simulate
                                         ,  atomic_result: 0
-                                        `endif `endif
+                                        `endif
                                       `endif };
       rg_cache_busy<= False;
       rg_access_fault_response<= tuple4(defaultValue, ?, ?, ?);
@@ -752,9 +752,9 @@ package nb_dcache;
                                       rob: tpl_3(rg_access_fault_response),
                                       exception: defaultValue
                                       `ifdef atomic
-                                        `ifdef simulate `ifdef new_spike
+                                        `ifdef simulate
                                         ,  atomic_result: 0
-                                        `endif `endif
+                                        `endif
                                       `endif };
       rg_sc_fail<= False;
       rg_cache_busy<= False;
@@ -881,9 +881,9 @@ package nb_dcache;
                                                   rob: req.rob,
                                                   exception: No_exception
                                                   `ifdef atomic
-                                                    `ifdef simulate `ifdef new_spike
+                                                    `ifdef simulate
                                                       ,  atomic_result: 0
-                                                    `endif `endif
+                                                    `endif
                                                   `endif };
           end
           repl.update_set(set_index, hit_way);  //Update the replacement bits on a hit
@@ -969,9 +969,9 @@ package nb_dcache;
                                                                           rob: req.rob,
                                                                           exception: No_exception
                                                                           `ifdef atomic
-                                                                            `ifdef simulate `ifdef new_spike
+                                                                            `ifdef simulate
                                                                             ,  atomic_result: atomic_result
-                                                                            `endif `endif
+                                                                            `endif
                                                                           `endif };
 
       // TODO: check counters
@@ -1046,9 +1046,9 @@ package nb_dcache;
                                                      rob: req.rob,
                                                      exception: No_exception
                                                      `ifdef atomic
-                                                       `ifdef simulate `ifdef new_spike
+                                                       `ifdef simulate
                                                        ,  atomic_result: 0
-                                                       `endif `endif
+                                                       `endif
                                                      `endif };
 
           `ifdef perfmonitors
@@ -1163,9 +1163,9 @@ package nb_dcache;
                                                              rob: req.rob,
                                                              exception: No_exception
                                                              `ifdef atomic
-                                                               `ifdef simulate `ifdef new_spike
+                                                               `ifdef simulate
                                                                ,  atomic_result: '0
-                                                               `endif `endif
+                                                               `endif
                                                              `endif };
               end // no mshr response
             end // store
@@ -1358,18 +1358,18 @@ package nb_dcache;
           if(req_from_mshr.is_atomic && (req_from_mshr.atomic_fn=='h7 || req_from_mshr.atomic_fn=='h17)) begin //SC
             data_to_core= 0;
           end
-          `ifdef simulate `ifdef new_spike
+          `ifdef simulate
             let lv_atomic_result = fn_atomic_op(req_from_mshr.atomic_fn, req_from_mshr.payload, data_to_core);
-          `endif `endif
+          `endif
         `endif
           wr_mshr_resp_to_core<= Resp_to_core { data: data_to_core,
                                                 prf_index: req_from_mshr.prf_index,
                                                 rob: req_from_mshr.rob,
                                                 exception: No_exception
                                                 `ifdef atomic
-                                                  `ifdef simulate `ifdef new_spike
+                                                  `ifdef simulate
                                                   ,  atomic_result: lv_atomic_result
-                                                  `endif `endif
+                                                  `endif
                                                 `endif };
           wr_is_mshr_resp_to_core<= True;
         end
@@ -2003,9 +2003,9 @@ package nb_dcache;
                                        rob: rg_fence_rob,
                                        exception: No_exception
                                        `ifdef atomic
-                                         `ifdef simulate `ifdef new_spike
+                                         `ifdef simulate
                                          ,  atomic_result: 0
-                                         `endif `endif
+                                         `endif
                                        `endif };
       `logTimeLevel( dcache, 1, $format("DCACHE : Fencing done. "))
     endrule
@@ -2055,9 +2055,9 @@ package nb_dcache;
                                        rob: ff_io_info.first.rob,
                                        exception: resp.exception
                                        `ifdef atomic
-                                         `ifdef simulate `ifdef new_spike
+                                         `ifdef simulate
                                          ,  atomic_result: 0
-                                         `endif `endif
+                                         `endif
                                        `endif };
     endrule
 

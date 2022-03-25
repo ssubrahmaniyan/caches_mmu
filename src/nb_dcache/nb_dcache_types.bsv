@@ -82,9 +82,9 @@ package nb_dcache_types;
 		Bit#(rob_index) rob;
 		DCache_exception exception;
 `ifdef atomic
-  `ifdef simulate `ifdef new_spike
+  `ifdef simulate
 		Bit#(data) atomic_result;
-  `endif `endif
+  `endif
 `endif
 	} Resp_to_core#(numeric type data, numeric type prf_index, numeric type rob_index) deriving (Bits, Eq, FShow);
 	instance DefaultValue#(Resp_to_core#(data, prf_index, rob_index));
@@ -93,9 +93,9 @@ package nb_dcache_types;
 																rob: 0,
 																exception: defaultValue
 															`ifdef atomic
-																`ifdef simulate `ifdef new_spike
+																`ifdef simulate
 																, atomic_result: 0
-																`endif `endif
+																`endif
 															`endif
 																 };
 	endinstance
