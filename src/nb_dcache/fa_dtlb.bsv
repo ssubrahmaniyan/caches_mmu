@@ -41,12 +41,6 @@ package fa_dtlb;
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(xlen) m);
 
-  `ifdef pmp
-    /*doc:method: */
-    method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
-    /*doc:method: */
-    method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(paddr)) pmpaddr);
-  `endif
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
@@ -117,11 +111,6 @@ package fa_dtlb;
 
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkConfigReg(False);
-
-  `ifdef pmp
-    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
-    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
-  `endif
 
   `ifdef perfmonitors
     /*doc:wire: */
@@ -428,17 +417,6 @@ package fa_dtlb;
       method Action ma_mstatus_from_csr (Bit#(xlen) m);
         wr_mstatus <= m;
       endmethod
-
-    `ifdef pmp
-      method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-          wr_pmp_cfg[i] <= pmpcfg[i];
-      endmethod
-      method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
-        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-          wr_pmp_addr[i] <= pmpadr[i];
-      endmethod
-    `endif
 
     `ifdef perfmonitors
       method mv_perf_counters = wr_count_misses;
