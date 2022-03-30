@@ -544,6 +544,9 @@ package nb_dcache;
       wr_ff_first_stage_not_empty <= ff_first_stage.notEmpty;
     endrule
 
+    `ifdef iclass
+    Bool stall_for_fence = core_req.sfence && (wr_ff_first_stage_not_empty || mshr.not_empty); // conservative fence (no fence fb): first stage and MSHR should be empty
+    `endif
 `ifdef supervisor
     // cache busy only for lsu/prefetcher
     Bool lv_cache_busy = (core_req.origin == PTW) ? False : rg_cache_busy;
@@ -551,9 +554,6 @@ package nb_dcache;
     // TODO: requests in 1st/2nd stage
     `ifdef atomic
     Bool stall_atomic_mshr_not_empty = core_req.is_atomic && mshr.not_empty;
-    `endif
-    `ifdef iclass
-    Bool stall_for_fence = core_req.sfence && (wr_ff_first_stage_not_empty || mshr.not_empty); // conservative fence (no fence fb): first stage and MSHR should be empty
     `endif
     rule rl_handle_req_from_core(!lv_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail && !stall_atomic_mshr_not_empty `endif
                                  && !rg_fence_wait_for_ff_first_stage_empty `ifdef iclass && !stall_for_fence `endif );
