@@ -40,7 +40,7 @@ package icache_mhb;
         Vector#(`mhb_size,Reg#(Bool)) rg_mshr_all_served <- replicateM(mkReg(False));
         
         // Pointers 
-        Reg#(Bit#(TLog#(`mhb_size))) rg_mhb_free_entry_ptr <- mkReg(0); //points to next free location
+        Reg#(Bit#(TLog#(`mhb_size))) rg_mhb_free_entry_ptr <- mkReg(0); // points to next free location
         Reg#(Bit#(TLog#(`mhb_size))) rg_serve_mshr_entry_ptr <- mkReg(0); // points to the request to be served to the CRQ
         Reg#(Bit#(TLog#(`mhb_size))) rg_fill_request_entry_ptr <- mkReg(0); // points to the entry that has to send fill request to Memory
         Reg#(Bit#(TLog#(`mhb_size))) rg_fb_release_ptr <- mkReg(0); // points to the entry to be released to Cache
@@ -234,7 +234,8 @@ package icache_mhb;
 
             // Case 1: on new primary entry allocation
             if (wr_increment_free_entry_ptr) begin
-              for(Integer i=0;i<`mhb_size;i=i+1) begin
+              //for(Integer i=0;i<`mhb_size;i=i+1) begin
+              for(Integer i=`mhb_size-1;i>=0;i=i-1) begin
                 if(!wr_fb_valid[i] && (rg_mhb_free_entry_ptr != fromInteger(i))) begin
                   lv_free_index = fromInteger(i);
                 end
@@ -250,7 +251,8 @@ package icache_mhb;
             // Case 3: on flush, an entry may be available: point to the invalidated entry (not issued yet)
             // Optionally, add check for registered mhb_full here (currently, ptr may move on flush even if pointing to a free entry)
             if (wr_flush) begin
-              for(Integer i=0;i<`mhb_size;i=i+1) begin
+              //for(Integer i=0;i<`mhb_size;i=i+1) begin
+              for(Integer i=`mhb_size-1;i>=0;i=i-1) begin
                 if(!wr_fb_valid[i] || (wr_fb_valid[i] && !wr_fb_issued[i])) begin
                   lv_free_index = fromInteger(i);
                 end
