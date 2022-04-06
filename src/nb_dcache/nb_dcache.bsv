@@ -1232,7 +1232,8 @@ package nb_dcache;
       `logTimeLevel( dcache, 1, $format("DCACHE : MSHR %d initiated a memory request for addr: %h", wr_fill_request_id, mem_addr))
       ff_read_req_to_mem.enq(Read_req_to_mem {addr: mem_addr,
                                               id: zeroExtend(wr_fill_request_id),
-                                              is_burst: True });
+                                              is_burst: True,
+                                              is_demand: (req.origin != Store_buffer) });
 
       `ifdef perfmonitors
         wr_fill_request <= 1;

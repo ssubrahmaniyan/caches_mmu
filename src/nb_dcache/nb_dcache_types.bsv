@@ -104,6 +104,7 @@ package nb_dcache_types;
 		Bit#(addr) addr;
 		Bit#(id_bits) id;
 		Bool is_burst;
+                Bool is_demand;
 	} Read_req_to_mem#(numeric type addr, numeric type id_bits) deriving (Bits, Eq, FShow);
 	
 	typedef struct {
