@@ -561,6 +561,8 @@ package nb_dcache;
     rule rl_handle_req_from_core(!rg_cache_busy && !rg_fence `ifdef atomic && !rg_sc_fail `endif
                                  && !rg_fence_wait_for_ff_first_stage_empty `ifdef iclass && !stall_for_fence `endif );
 `endif
+      DTLB_Cache_response#(paddr) resp_from_tlb = unpack(0);
+
       let core_req= ff_req_from_core.first;
       ff_req_from_core.deq;
       Bool is_actual_store= (core_req.origin == Store_commit);
@@ -583,7 +585,20 @@ package nb_dcache;
           data_arr[i].read(set_index);
           tag_arr[i].read(set_index);
         end
-        let resp_from_tlb<- dtlb.translate(convert_core_to_tlb_req(core_req));
+
+        `ifdef dcache_side_prefetch
+            if (core_req.origin != Store_buffer) begin
+              resp_from_tlb <- dtlb.translate(convert_core_to_tlb_req(core_req));
+            end
+            else begin  // prefetcher sends physical addr
+              resp_from_tlb = (DTLB_Cache_response{address: truncate(core_req.addr),
+                                                   trap: False,
+                                                   exception: No_exception,
+                                                   tlbmiss: False});
+            end
+        `else
+            resp_from_tlb <- dtlb.translate(convert_core_to_tlb_req(core_req));
+        `endif
         Req_from_core#(paddr, datawidth, rob_index, prf_index, lsq_index) req= Req_from_core{ addr: resp_from_tlb.address,
                                                                                               access_size: core_req.access_size,
                                                                                               data: core_req.data,
