@@ -33,6 +33,9 @@ package fill_buffer;
 		method Bool can_release;
 		method Tuple2#(Bit#(1), Bit#(linewidth)) data;
 		(*always_ready, always_enabled*) method Bit#(TSub#(paddr, lineoffset)) line_addr;
+                `ifdef pref
+                  method Bool first_response_from_mem();
+                `endif
 	endinterface
 
 	//(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
@@ -272,6 +275,12 @@ package fill_buffer;
 		method Bit#(TSub#(paddr, lineoffset)) line_addr;
 			return rg_fb_addr;
 		endmethod
+
+                `ifdef pref
+                  method Bool first_response_from_mem();
+                    return rg_first_resp;
+                  endmethod
+                `endif
 
 	endmodule
 

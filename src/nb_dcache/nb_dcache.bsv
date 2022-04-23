@@ -88,6 +88,9 @@ package nb_dcache;
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
 `endif
+`ifdef pref
+  method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
+`endif
 `ifdef perfmonitors
     method DCACHE_cntrs mv_dcache_perf_counters();
 `endif
@@ -351,6 +354,12 @@ package nb_dcache;
 
     Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
     Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
+
+  `ifdef pref
+    Reg#(Bit#(1)) rg_fill_response_valid <- mkDReg(0);
+    Reg#(Bit#(1)) rg_fill_response_demand <- mkReg(0);
+    Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fill_response_address <- mkReg(0);
+  `endif
 
   `ifdef perfmonitors
     Wire#(Bit#(1)) wr_request_total <- mkDWire(0);
@@ -2077,6 +2086,19 @@ package nb_dcache;
                                        `endif };
     endrule
 
+`ifdef pref
+    rule rl_fill_response_to_prefetch;
+      if (wr_read_resp_from_mem.id != '1) begin  // valid mem response
+        if (fill_buffer.first_response_from_mem()) begin // response for first chunk
+          Origin lv_origin = mshr.mshr_primary_request(truncate(wr_read_resp_from_mem.id));
+          rg_fill_response_valid <= 1;
+          rg_fill_response_demand <= pack(lv_origin != Store_buffer);
+          rg_fill_response_address <= mshr.addr_to_fb();
+        end
+      end
+    endrule
+`endif
+
 `ifdef simulate
   `ifdef fesvr_sim
     `ifndef baremetal_sim
@@ -2214,6 +2236,16 @@ package nb_dcache;
         `logTimeLevel( dcache, 1, $format("DCACHE : Read response from mem: ", fshow(resp)))
         let mem_req_offset= mshr.mem_req_offset(truncate(resp.id));
         fill_buffer.data_from_mem(resp.data, resp.last, mem_req_offset);
+/*
+        `ifdef pref
+          if (fill_buffer.first_response_from_mem()) begin
+            Origin lv_origin = mshr.mshr_primary_request(truncate(resp.id));
+            rg_fill_response_valid <= 1;
+            rg_fill_response_demand <= pack(lv_origin != Store_buffer);
+            rg_fill_response_address <= mshr.addr_to_fb();
+          end
+        `endif // prefetch
+*/
       endmethod
     endinterface;
 
@@ -2272,7 +2304,13 @@ package nb_dcache;
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       return dtlb.early_lookup(vaddr, is_store);
     endmethod
-`endif
+`endif // supervisor
+
+`ifdef pref
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info();
+      return tuple3(rg_fill_response_valid, rg_fill_response_demand, rg_fill_response_address);
+    endmethod
+`endif // prefetch
 
 `ifdef perfmonitors
     method DCACHE_cntrs mv_dcache_perf_counters();

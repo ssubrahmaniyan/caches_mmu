@@ -43,7 +43,9 @@ package mshr;
     (*always_ready*) method Bool entries_full;
     (*always_ready*) method Bool one_fifo_full;
     method Action fb_released;
-
+    `ifdef pref
+      method Origin mshr_primary_request(Bit#(TLog#(mshrsize)) rid);
+    `endif
           `ifdef simulate
             `ifdef fesvr_sim
               `ifndef baremetal_sim
@@ -85,6 +87,9 @@ package mshr;
       Reg#(Tuple2#(Bit#(5), Bit#(prf_index))) rg_atomic_info <- mkConfigReg(tuple2(0,0)); //TODO reset on fence and flush
     `endif
     Reg#(Bool) rg_mshr_valid [mshrsize_val];
+    `ifdef pref
+      Vector#(mshrsize, Reg#(Origin)) rg_mshr_primary_request <- replicateM(mkReg(unpack(0)));
+    `endif
     //TODO Does rg_curr_fb_id really need to be Maybe#. Is this correct?
     Reg#(Maybe#(Bit#(TLog#(mshrsize)))) rg_curr_fb_id <- mkConfigReg(tagged Invalid);
     Reg#(Bool) rg_fence <- mkConfigReg(False);
@@ -296,6 +301,13 @@ package mshr;
                                        `endif });
       cff_rob[mshr_id].enq(tuple2(req.rob, can_flush));
       cff_valid[mshr_id].enq(1'b1);
+
+      `ifdef pref
+        // mark original primary request type (need this separately as flushed requests are also marked as "prefetch")
+        if (status == Not_allocated) begin
+          rg_mshr_primary_request [mshr_id] <= req.origin;
+        end
+      `endif
     endmethod // allocate
 
 `else // !iclass
@@ -607,6 +619,12 @@ package mshr;
     method Bool one_fifo_full;
       return one_mshr_fifo_full;
     endmethod
+
+    `ifdef pref
+      method Origin mshr_primary_request(Bit#(TLog#(mshrsize)) rid);
+        return rg_mshr_primary_request[rid];
+      endmethod
+    `endif
 
   `ifdef iclass
     // mshr status needs to change in cycle2 of fb release
