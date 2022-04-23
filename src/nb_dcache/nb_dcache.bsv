@@ -2236,16 +2236,6 @@ package nb_dcache;
         `logTimeLevel( dcache, 1, $format("DCACHE : Read response from mem: ", fshow(resp)))
         let mem_req_offset= mshr.mem_req_offset(truncate(resp.id));
         fill_buffer.data_from_mem(resp.data, resp.last, mem_req_offset);
-/*
-        `ifdef pref
-          if (fill_buffer.first_response_from_mem()) begin
-            Origin lv_origin = mshr.mshr_primary_request(truncate(resp.id));
-            rg_fill_response_valid <= 1;
-            rg_fill_response_demand <= pack(lv_origin != Store_buffer);
-            rg_fill_response_address <= mshr.addr_to_fb();
-          end
-        `endif // prefetch
-*/
       endmethod
     endinterface;
 
