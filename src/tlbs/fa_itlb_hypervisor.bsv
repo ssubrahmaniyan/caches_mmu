@@ -144,9 +144,8 @@ package fa_itlb_hypervisor;
 
         /*doc:func: */
         function Bool fn_vtag_match (VPNTag t);
-					return False;
-          //return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
-          //                       && (t.asid == satp_asid || t.permissions.g);
+          return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
+                                 && (t.asid == satp_asid || t.permissions.g);
         endfunction
 
         Bit#(TLog#(`itlbsize)) tagmatch = 0;
