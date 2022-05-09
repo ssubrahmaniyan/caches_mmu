@@ -132,7 +132,7 @@ package pmp_func;
     let {addrmatch, accesstrap} = fromMaybe(tuple2(False, False), x);
 
     return (priv == Machine && !addrmatch) ? tuple2(False, cause): 
-                                            tuple2((!addrmatch || accesstrap), cause);
+                                            tuple2((addrmatch && accesstrap), cause);
 
   endfunction
 
