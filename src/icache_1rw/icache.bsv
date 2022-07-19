@@ -831,12 +831,15 @@ package icache;
     interface put_read_mem_resp = toPut(ff_read_mem_response);
     interface get_core_resp = toGet(ff_core_response);
   `ifdef supervisor
-    //interface put_pa_from_tlb = toPut(ff_from_tlb);
-    interface put_pa_from_tlb = interface Put
-      method Action put(ITLB_core_response#(`paddr) resp);
-        ff_from_tlb.enq(resp);
-      endmethod
-    endinterface;
+    `ifndef iclass
+      interface put_pa_from_tlb = toPut(ff_from_tlb);
+    `else
+      interface put_pa_from_tlb = interface Put
+        method Action put(ITLB_core_response#(`paddr) resp);
+          ff_from_tlb.enq(resp);
+        endmethod
+      endinterface;
+    `endif // iclass
   `endif
     `ifdef perfmonitors
       method mv_perf_counters = {wr_total_read_access, wr_total_io_reads ,wr_total_read_miss ,
