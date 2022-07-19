@@ -6,7 +6,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
-package fa_itlb;
+package fa_itlb_hypervisor;
   `include "Logger.bsv"
   `include "common_tlb.defines"
   import FIFO :: * ;
@@ -23,6 +23,7 @@ package fa_itlb;
     Bit#(`asidwidth) asid;
     Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
+    Bit#(1) vs_bit;	//Adding V bit to Stage1 TLB which will help to differentiate between HS/U-mode and VS/VU-mode translation 
   } VPNTag deriving(Bits, FShow, Eq);
 
   interface Ifc_fa_itlb;
@@ -38,7 +39,12 @@ package fa_itlb;
 
     /*doc:method: method to recieve the current privilege mode of operation*/
     method Action ma_curr_priv (Bit#(2) c);
-
+    
+  `ifdef hypervisor
+    method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
+	  method Action ma_vs_mode (Bit#(1) v);			//Virt. mode, to enable 2-stage address translation
+  `endif
+     
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
@@ -56,18 +62,24 @@ package fa_itlb;
     Wire#(Bit#(`vaddr)) wr_satp <- mkWire();
     /*doc:wire: wire holds the current privilege mode of the core*/
     Wire#(Bit#(2)) wr_priv <- mkWire();
+    //Wires for V mode
+    Wire#(Bit#(1)) wr_vs_mode <- mkWire();
+    Wire#(Bit#(`vaddr)) wr_vsatp <- mkWire();
+    
+    Wire#(Bit#(`vaddr)) wr_satp_new = (wr_vs_mode==1) ? wr_vsatp : wr_satp;	
 
+    
     Reg#(Bit#(`vaddr)) rg_miss_queue <- mkReg(0);
     FIFOF#(PTWalk_tlb_request#(`vaddr)) ff_request_to_ptw <- mkSizedFIFOF(2);
     FIFOF#(ITLB_core_response#(`paddr)) ff_core_respone <- mkSizedFIFOF(2);
 
     // global variables based on the above wires
-    Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
-    Bit#(`asidwidth) satp_asid = wr_satp[`asidwidth - 1 + `ppnsize : `ppnsize ];
+    Bit#(`ppnsize) satp_ppn = truncate(wr_satp_new);
+    Bit#(`asidwidth) satp_asid = wr_satp_new[`asidwidth - 1 + `ppnsize : `ppnsize ];
   `ifdef sv32
-    Bit#(1) satp_mode = truncateLSB(wr_satp);
+    Bit#(1) satp_mode = truncateLSB(wr_satp_new);
   `else
-    Bit#(4) satp_mode = truncateLSB(wr_satp);
+    Bit#(4) satp_mode = truncateLSB(wr_satp_new);
   `endif
 
     /*doc:reg: register to indicate that a tlb miss is in progress*/
@@ -75,7 +87,12 @@ package fa_itlb;
 
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkReg(False);
-
+    
+    `ifdef hypervisor
+     /*register to indicate the tlb is undergoing an hfence*/
+    Reg#(Bool) rg_hfence <- mkReg(False);   
+     `endif
+     
   `ifdef perfmonitors
     /*doc:wire: */
     Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
@@ -83,19 +100,44 @@ package fa_itlb;
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
      all the tlb entries*/
-    rule rl_fence(rg_sfence);
+    rule rl_fence(rg_sfence `ifdef hypervisor || rg_hfence `endif );
+    `ifdef hypervisor
+      rg_hfence <= False;
+    `endif
       for (Integer i = 0; i < `itlbsize; i = i + 1) begin
         v_vpn_tag[i] <= unpack(0);
       end
       rg_sfence <= False;
       rg_tlb_miss <= False;
       rg_replace <= 0;
+      if (rg_sfence) begin
+        `logLevel( dtlb, 1, $format("[%2d]ITLB: SFencing Now",hartid))
+      end
+    `ifdef hypervisor
+      else if (rg_hfence) begin
+        `logLevel( dtlb, 1, $format("[%2d]ITLB: HFencing Now",hartid))
+      end
+    `endif
     endrule
-
+    
+    /*`ifdef hypervisor
+	    [>For Hypervisor: This rule is fired when the core requests a hfence. This rule will simply invalidate
+	     all the stage1 tlb entries having vs_bit=1 in TLB tag<]
+	    rule rl_hfence(rg_hfence);
+	      for (Integer i = 0; i < `itlbsize; i = i + 1) begin
+ 	      	if(v_vpn_tag[i].vs_bit==1)
+		   v_vpn_tag[i] <= unpack(0);
+	      end
+	      rg_hfence <= False;
+	      rg_tlb_miss <= False;
+	      //rg_replace <= 0;  //Which to replace ???
+	    endrule
+     `endif*/
+     
     interface put_core_request = interface Put
-      method Action put (ITLB_core_request#(`vaddr) req) if(!rg_sfence && !rg_tlb_miss);
+      method Action put (ITLB_core_request#(`vaddr) req) if(!rg_sfence && !rg_tlb_miss `ifdef hypervisor && !rg_hfence `endif );
 
-        `logLevel( tlb, 0, $format("[%2d]ITLB: received req: ",hartid,fshow(req)))
+        `logLevel( itlb, 0, $format("[%2d]ITLB: received req: ",hartid,fshow(req)))
 
         Bit#(12) page_offset = req.address[11 : 0];
         Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
@@ -111,6 +153,12 @@ package fa_itlb;
           `logLevel( itlb, 0, $format("[%2d]ITLB: SFence received",hartid))
           rg_sfence <= True;
         end
+      `ifdef hypervisor
+        else if(req.hfence)begin
+    		  `logLevel( itlb, 0, $format("[%2d]ITLB: HFence received",hartid))
+ 	   	    rg_hfence <= True;
+    		end              
+      `endif
         else begin
           let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
           Bool page_fault = False;
@@ -139,12 +187,12 @@ package fa_itlb;
             Bit#(`vaddr) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
           `endif
 
-            `logLevel( itlb, 0, $format("[%2d]ITLB: mask:%h",hartid,mask))
-            `logLevel( itlb, 0, $format("[%2d]ITLB: lower_ppn:%h",hartid,lower_ppn))
-            `logLevel( itlb, 0, $format("[%2d]ITLB: lower_vpn:%h",hartid,lower_vpn))
-            `logLevel( itlb, 0, $format("[%2d]ITLB: lower_pa:%h",hartid,lower_pa))
-            `logLevel( itlb, 0, $format("[%2d]ITLB: highest_ppn:%h",hartid,highest_ppn))
-
+            `logLevel( itlb, 2, $format("[%2d]ITLB: mask:%h",hartid,mask))
+            `logLevel( itlb, 2, $format("[%2d]ITLB: lower_ppn:%h",hartid,lower_ppn))
+            `logLevel( itlb, 2, $format("[%2d]ITLB: lower_vpn:%h",hartid,lower_vpn))
+            `logLevel( itlb, 2, $format("[%2d]ITLB: lower_pa:%h",hartid,lower_pa))
+            `logLevel( itlb, 2, $format("[%2d]ITLB: highest_ppn:%h",hartid,highest_ppn))
+      	    `logLevel( itlb, 2, $format("[%2d]ITLB: vs_bit:%h",hartid,pte.vs_bit))	//Vs bit in ITLB
             // check for permission faults
           `ifndef sv32
             if(unused_va != signExtend(req.address[`maxvaddr-1]))begin
@@ -158,15 +206,20 @@ package fa_itlb;
             else if(!permissions.a)
               page_fault = True;
             // pte.u == 0 for user mode
-            else if(!permissions.u && wr_priv == 0)
+            else if(pte.vs_bit == 0 && !permissions.u && wr_priv == 0)
+              page_fault = True;
+            else if(pte.vs_bit == 1 && !permissions.u)
               page_fault = True;
             // pte.u = 1 for supervisor
-            else if(permissions.u && wr_priv == 1)
+            else if(permissions.u && wr_priv == 1 && pte.vs_bit == 0)
               page_fault = True;
+              
+            //Guest page fault exceptions need to be raised if vs_bit is 1
+            Bit#(`causesize) cause1 = (pte.vs_bit==1) ? `Inst_guest_pagefault :`Inst_pagefault; 
             `logLevel( itlb, 0, $format("[%2d]ITLB: Sending PA:%h Trap:%b", hartid,physicaladdress, page_fault))
             ff_core_respone.enq(ITLB_core_response{address  : truncate(physicaladdress),
                                                    trap     : page_fault,
-                                                   cause    : `Inst_pagefault });
+                                                   cause    : cause1 });   
           end
           else begin
             // Send virtual - address and indicate it is an instruction access to the PTW
@@ -176,14 +229,20 @@ package fa_itlb;
             wr_count_misses <= 1;
           `endif
             rg_miss_queue <= req.address;
-            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3 });
+            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, 
+                                                     access : 3, 
+                                                     prv : wr_priv
+                                                  `ifdef hypervisor
+                                                     ,virt: wr_vs_mode
+                                                     ,hlvx: 0
+                                                  `endif });
           end
         end
       endmethod
     endinterface;
 
     interface put_response_frm_ptw = interface Put
-      method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
+      method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence`ifdef hypervisor 				&& !rg_hfence `endif );
         let core_req = rg_miss_queue;
         Bit#(12) page_offset = core_req[11 : 0];
 
@@ -210,7 +269,9 @@ package fa_itlb;
                           vpn: {'1,mask} & fullvpn,
                           asid: satp_asid,
                           pagemask: mask,
-                          ppn: fullppn };
+                          ppn: fullppn,
+                          vs_bit: resp.virt	//Added Vs_bit in VPNTag struct.
+                          };
         if(!resp.trap) begin
           `logLevel( itlb, 0, $format("[%2d]ITLB: Allocating index:%d for Tag:", hartid,rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
@@ -238,6 +299,16 @@ package fa_itlb;
 
   `ifdef perfmonitors
     method mv_perf_counters = wr_count_misses;
+  `endif
+  
+  `ifdef hypervisor
+	  method Action ma_vs_mode (Bit#(1) v);	
+	    wr_vs_mode <= v;
+	  endmethod
+	   
+	  method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);
+	    wr_vsatp <= vsatp;
+	  endmethod 
   `endif
   endmodule
 

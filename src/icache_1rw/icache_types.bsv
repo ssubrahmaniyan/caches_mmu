@@ -33,9 +33,14 @@ package icache_types;
   typedef struct{
     Bit#(addr)    address;
     Bit#(esize)   epochs;
+  `ifdef ifence
     Bool          fence;
+  `endif
   `ifdef supervisor
     Bool          sfence;
+  `endif
+  `ifdef hypervisor
+    Bool          hfence;
   `endif
   } IMem_core_request#(numeric type addr,
                   numeric type esize ) deriving(Bits, Eq, FShow);

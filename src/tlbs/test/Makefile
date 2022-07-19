@@ -10,12 +10,6 @@ BSC_DIR:=$(shell which bsc)
 BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
 
 define_macros += -D Addr_space=25
-ifeq ($(OVLASSERT), enable)
-	override define_macros += -D ovl_assert
-endif
-ifeq ($(SVAASSERT), enable)
-	override define_macros += -D sva_assert
-endif
 ifeq ($(ECC_TEST), enable)
 	override define_macros += -D ecc_test
 endif
@@ -43,7 +37,7 @@ else
 endif
 
 ifneq ($(PMPSIZE) , 0)
-  override define_macros += -D pmp -D pmpentries=$(PMPSIZE)
+  override define_macros += -D pmp -D pmpsize=$(PMPSIZE)
 endif
 
 ifeq ($(TRACE), enable)
@@ -75,9 +69,8 @@ default: generate_verilog link_verilator simulate
 compile:
 	@echo Compiling $(TOP_MODULE)....
 	@mkdir -p $(BSVBUILDDIR)
-	@bsc 	-passthrough-assertions -u -sim -simdir $(BSVBUILDDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) -keep-fires \
-	-suppress-warnings S0015 -check-assert $(define_macros) \
-		-p $(BSVINCDIR) -g $(TOP_MODULE)  \
+	@bsc -u -sim -simdir $(BSVBUILDDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) -keep-fires \
+	-suppress-warnings S0015 -check-assert $(define_macros) -p $(BSVINCDIR) -g $(TOP_MODULE)  \
 	$(TOP_DIR)/$(TOP_FILE) 
 	@echo Compilation finished
 
@@ -94,7 +87,7 @@ generate_verilog:
 	@mkdir -p $(BSVBUILDDIR); 
 	@mkdir -p $(VERILOGDIR); 
 	@echo "old_define_macros = $(define_macros)" > vars
-	bsc -passthrough-assertions -u -verilog -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) \
+	bsc -u -verilog -elab -vdir $(VERILOGDIR) -bdir $(BSVBUILDDIR) -info-dir $(BSVBUILDDIR) \
 		+RTS -K40000M -RTS -check-assert  -keep-fires -opt-undetermined-vals -remove-false-rules \
 		-remove-empty-rules -remove-starved-rules -remove-dollar -unspecified-to X -show-schedule \
 		-show-module-use $(define_macros) -D verilog=True $(BSVCOMPILEOPTS) \

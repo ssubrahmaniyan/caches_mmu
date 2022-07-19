@@ -20,42 +20,55 @@ package dmem;
   import dcache_types::*;
   import io_func::*;
   `include "dcache.defines"
+  `include "Logger.bsv"
 `ifdef dcache
-  `ifdef dcache_dualport
+  `ifdef dcache_2rw
     import dcache2rw :: *;
+  `elsif dcache_1r1w
+    import dcache1r1w :: *;
   `else
     import dcache1rw :: *;
   `endif
 `else
   import null_dcache :: *;
 `endif
-`ifdef supervisor
+`ifdef hypervisor
+  import fa_dtlb_hypervisor :: * ;
+  import common_tlb_types :: * ;
+`elsif supervisor
   import fa_dtlb :: * ;
   import common_tlb_types :: * ;
 `endif
 
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
-    interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) put_core_req;
-    interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) get_core_resp;
-    method Bool mv_storebuffer_empty;
-    method Action ma_perform_store(Bit#(`desize ) currepoch);
-  `ifdef dcache
-    method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) mv_write_mem_req_rd;
-    interface Put#(DCache_mem_writeresp) put_write_mem_resp;
-  `else
-    method DCache_mem_writereq#(`paddr, TMul#(`dwords, 8)) mv_write_mem_req_rd;
-  `endif
-    method Action ma_write_mem_req_deq;
-    method Action ma_cache_enable(Bool c);
-    interface Get#(DCache_mem_readreq#(`paddr)) get_read_mem_req;
-    interface Put#(DCache_mem_readresp#(`dbuswidth)) put_read_mem_resp;
-    method Bool mv_cacheable_store;
-    method Bool mv_cache_available;
-    method Bool mv_commit_store_ready;
-    (*always_ready, always_enabled*)
-    /*doc:method: method to recieve the current privilege mode of operation*/
+    interface Put#(DMem_request#(`vaddr, TMul#( `dwords, 8),`desize )) receive_core_req;
+    interface Get#(DMem_core_response#(TMul#(`dwords, 8), `desize )) send_core_cache_resp;
+    method Maybe#(DMem_core_response#(TMul#(`dwords,8),`desize)) send_core_io_resp;
+
+    interface Get#(DCache_io_req#(`paddr, `dbuswidth)) send_mem_io_req;
+    interface Put#(DCache_io_response#(`dbuswidth)) receive_mem_io_resp;
+
+    (*always_ready,always_enabled*)
     method Action ma_curr_priv (Bit#(2) c);
+    method Action ma_commit_io(Bit#(`desize) currepoch);
+    (*always_ready*)
+    method Bool mv_dmem_available;
+
+  `ifdef dcache
+    method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) send_mem_wr_req;
+    interface Put#(DCache_mem_writeresp) receive_mem_wr_resp;
+    method Action deq_mem_wr_req;
+
+    interface Get#(DCache_mem_readreq#(`paddr)) send_mem_rd_req;
+    interface Put#(DCache_mem_readresp#(`dbuswidth)) receive_mem_rd_resp;
+
+    //method Action ma_commit_store(Bit#(`desize ) currepoch);
+    method Action ma_commit_store(Tuple2#(Bit#(`desize), Bit#(TLog#(`dsbsize))) storecommit);
+    method Action ma_cache_enable(Bool c);
+    (*always_ready*)
+    method Bool mv_storebuffer_empty;
+  `endif
       // ---------------------------------------------------------//
       // - ---------------- TLB interfaces ---------------------- //
   `ifdef supervisor
@@ -84,7 +97,11 @@ package dmem;
     method Maybe#(ECC_dcache_tag#(`paddr, `dways)) mv_sed_tag;
     method Action ma_ram_request(DRamAccess access);
     method Bit#(`respwidth) mv_ram_response;
-`endif
+  `endif
+  `ifdef hypervisor
+   	method Action ma_vsatp_from_csr (Bit#(`vaddr) vsatp);	//For VS-stage translation (if v = 1)
+   	method Action ma_vsstatus_from_csr (Bit#(`vaddr) vsstatus);
+  `endif
       // ---------------------------------------------------------//
   endinterface
 
@@ -111,7 +128,13 @@ package dmem;
                                       cause     : truncate(req.writedata),
                                       ptwalk_trap: req.ptwalk_trap,
                                       ptwalk_req: req.ptwalk_req,
-                                      sfence    : req.sfence
+                                      sfence    : req.sfence,
+                                      prv       : req.prv
+                                    `ifdef hypervisor
+                                      , hfence    : req.hfence
+                                      , virt      : req.virt
+                                      , hlvx      : req.hlvx
+                                    `endif
                                       };
   endfunction
 `endif
@@ -128,36 +151,36 @@ package dmem;
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(id);
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
   `endif
-    interface put_core_req = interface Put
+    interface receive_core_req = interface Put
       method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
+        `logLevel( dmem, 0, $format("DMEM: Req from Core:",fshow(r)))
       `ifdef supervisor
-        if(r.ptwalk_req || !r.sfence)
-            dcache.put_core_req.put(get_cache_packet(r));
+        if(r.ptwalk_req || (!r.sfence `ifdef hypervisor && !r.hfence `endif ))
+            dcache.receive_core_req.put(get_cache_packet(r));
         if(!r.fence)
             dtlb.put_core_request.put(get_tlb_packet(r));
       `else
-        dcache.put_core_req.put(get_cache_packet(r));
+        dcache.receive_core_req.put(get_cache_packet(r));
       `endif
       endmethod
     endinterface;
-    interface get_core_resp = dcache.get_core_resp;
-    interface get_read_mem_req = dcache.get_read_mem_req;
-    interface put_read_mem_resp = dcache.put_read_mem_resp;
+    interface send_core_cache_resp = dcache.send_core_cache_resp;
+    method send_core_io_resp = dcache.send_core_io_resp;
+    interface send_mem_io_req = dcache.send_mem_io_req;
+    interface receive_mem_io_resp = dcache.receive_mem_io_resp;
     method ma_cache_enable =  dcache.ma_cache_enable;
-    method mv_write_mem_req_rd = dcache.mv_write_mem_req;
 `ifdef dcache
-    interface put_write_mem_resp = dcache.put_write_mem_resp;
+    method send_mem_wr_req = dcache.send_mem_wr_req;
+    interface receive_mem_wr_resp = dcache.receive_mem_wr_resp;
+    interface send_mem_rd_req = dcache.send_mem_rd_req;
+    interface receive_mem_rd_resp = dcache.receive_mem_rd_resp;
+    method deq_mem_wr_req = dcache.deq_mem_wr_req;
 `endif
-    method ma_write_mem_req_deq = dcache.ma_write_mem_req_deq;
-    method ma_perform_store = dcache.ma_perform_store;
-    method mv_cacheable_store    =dcache.mv_cacheable_store;
-    method mv_cache_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
-    method mv_commit_store_ready = `ifdef dcache dcache.mv_commit_store_ready `else True `endif ;
+    method ma_commit_store = dcache.ma_commit_store;
+    method ma_commit_io = dcache.ma_commit_io;
+    method mv_dmem_available    =dcache.mv_cache_available `ifdef supervisor && dtlb.mv_tlb_available `endif ;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
     method Action ma_curr_priv (Bit#(2) c);
-    `ifdef supervisor
-      dtlb.ma_curr_priv(c);
-    `endif
       dcache.ma_curr_priv(c);
     endmethod
   `ifdef supervisor
@@ -183,7 +206,11 @@ package dmem;
     method mv_sed_tag = dcache.mv_sed_tag;
     method ma_ram_request = dcache.ma_ram_request;
     method mv_ram_response = dcache.mv_ram_response;
-`endif
+  `endif
+  `ifdef hypervisor
+   	method ma_vsatp_from_csr = dtlb.ma_vsatp_from_csr;
+   	method ma_vsstatus_from_csr = dtlb.ma_vsstatus_from_csr;
+  `endif
   endmodule
 endpackage
 
