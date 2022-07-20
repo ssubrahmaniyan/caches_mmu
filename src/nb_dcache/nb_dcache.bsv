@@ -1754,7 +1754,7 @@ package nb_dcache;
     //TODO can optimize this to stall in second stage so that cache can still respond to hits.
     //Since the write resp from memory will never cause a fault, this is fine.
     //This will not work once you change eviction buffer to a multi-entry buffer.
-    //  Moving back to conserative dequeue => no invalidation needed
+    //  Moving back to conservative dequeue => no invalidation needed
     //  Invalidation check is on fifo empty and write response but the enqueue rules do not 
     //  check for line address valid => wrong, because another enqueue can happen in the fifo before write response arrives
     //  and the register data only stores one line address (and valid) at a time => eviction addr match check is incomplete!

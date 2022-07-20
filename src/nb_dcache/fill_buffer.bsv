@@ -1,8 +1,8 @@
 /* 
 see LICENSE.iitm
 
-Author: Arjun Menon
-Email id: c.arjunmenon@gmail.com
+Author: Arjun Menon, Nitya Ranganathan
+Email id: c.arjunmenon@gmail.com, nitya.ranganathan@gmail.com
 Details:
 
 --------------------------------------------------------------------------------------------------
