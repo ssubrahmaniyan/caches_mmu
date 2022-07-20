@@ -726,7 +726,11 @@ package icache;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault ;
       Bit#(TLog#(TDiv#(`ibuswidth,8))) word_offset = truncate(req.address);
-      let response_word = response.data >> {word_offset,3'b0};
+      `ifndef iclass
+        let response_word = response.data >> {word_offset,3'b0};
+      `else
+        let response_word = response.data;
+      `endif
       let lv_response = IMem_core_response{word:truncate(response_word), trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
@@ -827,7 +831,15 @@ package icache;
     interface put_read_mem_resp = toPut(ff_read_mem_response);
     interface get_core_resp = toGet(ff_core_response);
   `ifdef supervisor
-    interface put_pa_from_tlb = toPut(ff_from_tlb);
+    `ifndef iclass
+      interface put_pa_from_tlb = toPut(ff_from_tlb);
+    `else
+      interface put_pa_from_tlb = interface Put
+        method Action put(ITLB_core_response#(`paddr) resp);
+          ff_from_tlb.enq(resp);
+        endmethod
+      endinterface;
+    `endif // iclass
   `endif
     `ifdef perfmonitors
       method mv_perf_counters = {wr_total_read_access, wr_total_io_reads ,wr_total_read_miss ,

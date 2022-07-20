@@ -1,8 +1,8 @@
 /* 
 see LICENSE.iitm
 
-Author: Neel Gala
-Email id: neelgala@gmail.com
+Author: Neel Gala, Sujay Pandit
+Email id: neelgala@gmail.com, contact.sujaypandit@gmail.com
 Details: 
 
 This module allows you to create the cache data tag arrays in various configurations. You
@@ -40,7 +40,7 @@ Four different types of modules are available:
 */
 package mem_config_nb;
  
-  import RegFile::*;
+  import BRAMCore ::*;
   import DReg::*;
   import FIFOF::*;
   import SpecialFIFOs::*;
@@ -55,36 +55,39 @@ package mem_config_nb;
   
   module mkmem_config1r1w#(parameter Bool ramreg, parameter String memname) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width));
 
-		Reg#(Bit#(TLog#(n_entries))) rg_index <-mkReg(0);
-		//RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd127);
-		RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd63);
+    // Reg#(Bit#(TLog#(n_entries))) rg_index <-mkReg(0);
+    // RegFile#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkRegFileWCF(0, 'd63);
+    BRAM_DUAL_PORT#(Bit#(TLog#(n_entries)), Bit#(datawidth)) ram <- mkBRAMCore2(`dsetsize, False);
 
     method Action write(Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
       `logLevel( dcache, 2, $format(memname,": writing data: %h at index: %d", data, index))
-			ram.upd(index, data);
-		endmethod
+      ram.b.put(True,index,data);
+      // ram.upd(index, data);
+    endmethod
 
     method Action read(Bit#(TLog#(n_entries)) index);
       `logLevel( dcache, 2, $format(memname,"Read from index: %d", index))
-			rg_index<= index;
-		endmethod
+      // rg_index<= index;
+      ram.a.put(False,index,'0);
+    endmethod
 
     method Bit#(datawidth) read_response;
-			Bit#(datawidth) res= ram.sub(rg_index); 
+
+      Bit#(datawidth) res= ram.a.read(); //ram.sub(rg_index);
       //`logLevel( dcache, 2, $format(memname,": Reading data: %h from index: %d", res, rg_index))
-			return res;
-		endmethod
-	endmodule
+      return res;
+    endmethod
+  endmodule
 //  module mkmem_config1r1w#(parameter Bool ramreg) (Ifc_mem_config1r1w#(n_entries, datawidth, sram_width))
 //    provisos(
 //             Div#(datawidth, sram_width, banks)
-//						 //Add#(sram_width, x__, datawidth),
-//						 //Add#(y__, TSub#(datawidth, TMul#(sram_width, banks)), sram_width)
+//             //Add#(sram_width, x__, datawidth),
+//             //Add#(y__, TSub#(datawidth, TMul#(sram_width, banks)), sram_width)
 //    );
 //
-//		let v_banks= valueOf(banks);
-//		let v_datawidth= valueOf(datawidth);
-//		let v_sram_width= valueOf(sram_width);
+//    let v_banks= valueOf(banks);
+//    let v_datawidth= valueOf(datawidth);
+//    let v_sram_width= valueOf(sram_width);
 //
 //    Ifc_bram_1r1w#(TLog#(n_entries), sram_width, n_entries) ram [v_banks];
 //    Reg#(Bit#(sram_width)) rg_output[v_banks][2];
@@ -103,17 +106,17 @@ package mem_config_nb;
 //    end
 //
 //    method Action write(Bit#(1) we, Bit#(TLog#(n_entries)) index, Bit#(datawidth) data);
-//			Bit#(TMax#(datawidth, sram_width)) temp_data= zeroExtend(data);
-//			if(v_datawidth>v_sram_width) begin
-//      	for(Integer i=0;i<v_banks-1;i=i+1) begin
-//      	  ram[i].write(temp_data[(i*v_sram_width) + v_sram_width-1 : i*v_sram_width], index, we);
-//      	end
-//				Bit#(TSub#(datawidth, TMul#(sram_width, banks))) remaining_MSB= temp_data[v_datawidth-1:v_sram_width*v_banks];
-//				ram[v_banks-1].write(zeroExtend(remaining_MSB), index, we);
-//			end
-//			else begin
-//				ram[v_banks-1].write(truncate(temp_data), index, we);
-//			end
+//      Bit#(TMax#(datawidth, sram_width)) temp_data= zeroExtend(data);
+//      if(v_datawidth>v_sram_width) begin
+//        for(Integer i=0;i<v_banks-1;i=i+1) begin
+//          ram[i].write(temp_data[(i*v_sram_width) + v_sram_width-1 : i*v_sram_width], index, we);
+//        end
+//        Bit#(TSub#(datawidth, TMul#(sram_width, banks))) remaining_MSB= temp_data[v_datawidth-1:v_sram_width*v_banks];
+//        ram[v_banks-1].write(zeroExtend(remaining_MSB), index, we);
+//      end
+//      else begin
+//        ram[v_banks-1].write(truncate(temp_data), index, we);
+//      end
 //    endmethod
 //    method Action read(Bit#(TLog#(n_entries)) index);
 //      for(Integer i=0;i<v_banks;i=i+1) begin
@@ -122,26 +125,26 @@ package mem_config_nb;
 //    endmethod
 //    method Bit#(datawidth) read_response;
 //      Bit#(datawidth) data_resp=0;
-//			Bit#(TMax#(datawidth, sram_width)) temp_data_resp;
-//			if(v_datawidth>v_sram_width) begin
-//	      for(Integer i=0;i<v_banks-1;i=i+1)begin
-//					temp_data_resp= zeroExtend(rg_output[i][1]);
-//  	      data_resp[ (i*v_sram_width) + v_sram_width-1 : i*v_sram_width]= truncate(temp_data_resp);
-//    	  end
-//				Bit#(TSub#(datawidth, TMul#(sram_width, banks))) remaining_MSB= rg_output[v_banks-1][1][v_datawidth-1:v_sram_width*v_banks];
-//				temp_data_resp= zeroExtend(remaining_MSB);
-//				data_resp[v_datawidth-1 : v_sram_width*v_banks]= truncate(temp_data_resp);
-//			end
-//			else begin
-//				temp_data_resp= zeroExtend(rg_output[0][1]);
-//				data_resp= truncate(temp_data_resp);
-//			end
+//      Bit#(TMax#(datawidth, sram_width)) temp_data_resp;
+//      if(v_datawidth>v_sram_width) begin
+//        for(Integer i=0;i<v_banks-1;i=i+1)begin
+//          temp_data_resp= zeroExtend(rg_output[i][1]);
+//          data_resp[ (i*v_sram_width) + v_sram_width-1 : i*v_sram_width]= truncate(temp_data_resp);
+//        end
+//        Bit#(TSub#(datawidth, TMul#(sram_width, banks))) remaining_MSB= rg_output[v_banks-1][1][v_datawidth-1:v_sram_width*v_banks];
+//        temp_data_resp= zeroExtend(remaining_MSB);
+//        data_resp[v_datawidth-1 : v_sram_width*v_banks]= truncate(temp_data_resp);
+//      end
+//      else begin
+//        temp_data_resp= zeroExtend(rg_output[0][1]);
+//        data_resp= truncate(temp_data_resp);
+//      end
 //      return data_resp;
 //    endmethod
 //  endmodule
   
-//	(*synthesize*)
-//	module mkmem_config(Ifc_mem_config1r1w#(64,22,32));
+//  (*synthesize*)
+//  module mkmem_config(Ifc_mem_config1r1w#(64,22,32));
 //    let ifc();
 //    mkmem_config1r1w#(False) _temp(ifc);
 //    return (ifc);

@@ -10,7 +10,6 @@ Details:
 package fa_dtlb;
   `include "Logger.bsv"
   `include "nb_dcache.defines"
-  `include "parameters.txt"
   import FIFO :: * ;
   import FIFOF :: * ;
   import SpecialFIFOs :: * ;
@@ -42,12 +41,13 @@ package fa_dtlb;
     /*doc:method: method to receive the current values of the mstatus register*/
     method Action ma_mstatus_from_csr (Bit#(xlen) m);
 
-  `ifdef pmp
-    /*doc:method: */
-    method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
-    /*doc:method: */
-    method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(paddr)) pmpaddr);
-  `endif
+//  `ifdef pmp
+//    /*doc:method: */
+//    method Action ma_pmp_cfg ( Vector#(`PMPSIZE, Bit#(8)) pmpcfg) ;
+//    /*doc:method: */
+//    method Action ma_pmp_addr ( Vector#(`PMPSIZE, Bit#(paddr)) pmpaddr);
+//  `endif
+
   `ifdef perfmonitors
     method Bit#(1) mv_perf_counters;
   `endif
@@ -119,10 +119,10 @@ package fa_dtlb;
     /*doc:reg: register to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkConfigReg(False);
 
-  `ifdef pmp
-    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
-    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
-  `endif
+//  `ifdef pmp
+//    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
+//    Vector#(`PMPSIZE, Wire#(Bit#(paddr))) wr_pmp_addr <- replicateM(mkWire());
+//  `endif
 
   `ifdef perfmonitors
     /*doc:wire: */
@@ -147,7 +147,7 @@ package fa_dtlb;
     endrule
 
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
-      `logLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
+      `logTimeLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
 
       Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
 
@@ -254,8 +254,8 @@ package fa_dtlb;
             end
           end
           else begin
-            `logLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-            `logLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte)))
 `ifdef supervisor
             exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
 `endif
@@ -405,7 +405,7 @@ package fa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          `logLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
+          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
           v_vpn_tag[rg_replace] <= tag;
           rg_replace <= rg_replace + 1;
         end
@@ -430,16 +430,16 @@ package fa_dtlb;
         wr_mstatus <= m;
       endmethod
 
-    `ifdef pmp
-      method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
-        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-          wr_pmp_cfg[i] <= pmpcfg[i];
-      endmethod
-      method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
-        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
-          wr_pmp_addr[i] <= pmpadr[i];
-      endmethod
-    `endif
+//    `ifdef pmp
+//      method Action ma_pmp_cfg (Vector#(`PMPSIZE, Bit#(8)) pmpcfg);
+//        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
+//          wr_pmp_cfg[i] <= pmpcfg[i];
+//      endmethod
+//      method Action ma_pmp_addr(Vector#(`PMPSIZE, Bit#(paddr)) pmpadr);
+//        for(Integer i = 0;i<valueOf(`PMPSIZE) ;i = i+1)
+//          wr_pmp_addr[i] <= pmpadr[i];
+//      endmethod
+//    `endif
 
     `ifdef perfmonitors
       method mv_perf_counters = wr_count_misses;

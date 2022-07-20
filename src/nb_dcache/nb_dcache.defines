@@ -1,3 +1,21 @@
+/* 
+see LICENSE.iitm
+--------------------------------------------------------------------------------------------------
+*/
+
+`define Wordsize        `dwordsize
+`define Linesize        `dlinesize
+`define Setsize         `dsetsize
+`define Ways            `dways
+`define Paddr           `paddr
+`define Vaddr           `vaddr
+`define Dsram           `ddram_width
+`define Tsram           `dtram_width
+`define Id_bits         `axi4_id_bits
+`define Mshrsize        `dmshr_size
+`define Mshrfifo_depth  `dmshr_depth
+`define Buswidth        `dbuswidth
+
 // set virtual page size based on the sv mode selected.
 //`define sv39
 `ifdef sv32
