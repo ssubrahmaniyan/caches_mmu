@@ -202,6 +202,15 @@ package nb_dcache;
     `ifdef atomic
       , Add#(w__, 32, datawidth)
     `endif
+    `ifdef iclass
+      , Add#(buswidth, TAdd#(buswidth, buswidth), h__),
+        Mul#(8, y__, buswidth),
+        Mul#(16, x__, buswidth),
+        Mul#(32, k__, buswidth),
+        Mul#(datawidth, c__, buswidth),
+        Add#(z__, datawidth, buswidth),
+        Add#(aa__, buswidth, 128)
+    `endif
     //----------------------//
     );
 
@@ -388,6 +397,30 @@ package nb_dcache;
 `endif
 
 
+  `ifdef iclass
+    function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
+      Bit#(buswidth) lv_cmask = '0;
+      Bit#(linewidth) lv_lmask = '0;
+
+      Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
+                             size[1 : 0] == 1?'hFFFF : 
+                             size[1 : 0] == 2?'hFFFFFFFF : '1;
+      Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+                                    size=='d1? duplicate(core_data[15:0]) :
+                                    size=='d2? duplicate(core_data[31:0]) :
+                                               duplicate(core_data);
+      lv_cmask = zeroExtend(temp);
+      lv_cmask = lv_cmask << {line_offset[3:0], 3'd0};
+      lv_lmask = zeroExtend(lv_cmask);
+      lv_lmask = (line_offset[5:4] == 2'b11) ? (lv_lmask << 'd384)
+                  : ((line_offset[5:4] == 2'b10) ? (lv_lmask << 'd256)
+                      : ((line_offset[5:4] == 2'b01) ? (lv_lmask << 'd128) : lv_lmask));
+
+      Bit#(linewidth) writedata= (lv_lmask & data_to_mask) | (~lv_lmask & sram_data);
+      return writedata;
+    endfunction
+
+  `else
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
       Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
                              size[1 : 0] == 1?'hFFFF : 
@@ -401,7 +434,33 @@ package nb_dcache;
       Bit#(linewidth) writedata= (mask & data_to_mask) | (~mask & sram_data);
       return writedata;
     endfunction
+  `endif
 
+  `ifdef iclass
+    function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size);
+      Bit#(buswidth) lv_chunk = '0;
+
+      lv_chunk = (line_offset[5:4] == 2'b11) ? truncate(line[511:384])
+                  : ((line_offset[5:4] == 2'b10) ? truncate(line[383:256])
+                      : ((line_offset[5:4] == 2'b01) ? truncate(line[255:128]) : truncate(line[127:0])));
+
+      lv_chunk = lv_chunk >> {line_offset[3:0], 3'd0};
+      Bit#(datawidth) readdata= truncate(lv_chunk);
+      Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
+                             size[1 : 0] == 1?'hFFFF : 
+                             size[1 : 0] == 2?'hFFFFFFFF : '1;
+      if(size[2]==0) begin
+        readdata = size[1 : 0] == 0? signExtend(readdata[7:0]): 
+                   size[1 : 0] == 1? signExtend(readdata[15:0]): 
+                   size[1 : 0] == 2? signExtend(readdata[31:0]) : readdata;
+      end
+      else begin
+        readdata = readdata & mask;
+      end
+      return readdata;
+    endfunction
+
+  `else
     function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size);
       line = line>>{line_offset,3'd0};
       Bit#(datawidth) readdata= truncate(line);
@@ -418,6 +477,7 @@ package nb_dcache;
       end
       return readdata;
     endfunction
+  `endif
 
     function Cache_req#(paddr, datawidth, rob_index, prf_index) convert_to_Cache_req(Req_from_core#(paddr, datawidth, rob_index, prf_index, lsq_index) req);
       Bit#(datawidth) lv_payload= req.origin==Store_commit? req.data : zeroExtend(req.prf_index);
