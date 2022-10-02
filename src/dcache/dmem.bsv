@@ -182,6 +182,7 @@ package dmem;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
     method Action ma_curr_priv (Bit#(2) c);
       dcache.ma_curr_priv(c);
+      dtlb.ma_curr_priv(c);
     endmethod
   `ifdef supervisor
     interface get_ptw_resp = dcache.get_ptw_resp;

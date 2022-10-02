@@ -103,8 +103,7 @@ package fa_itlb;
         /*doc:func: */
         function Bool fn_vtag_match (VPNTag t);
           return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
-                                 && (t.asid == satp_asid || t.permissions.g)
-																 && (t.vs_bit == req.virt);
+                                 && (t.asid == satp_asid || t.permissions.g);
         endfunction
 
         Bit#(TLog#(`itlbsize)) tagmatch = 0;
