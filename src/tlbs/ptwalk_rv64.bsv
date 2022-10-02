@@ -318,7 +318,11 @@ package ptwalk_rv64;
   endmodule
 
   (*synthesize*)
+`ifndef iclass
   module mkinstance(Ifc_ptwalk_rv64#(9));
+`else
+  module mkptwalk_rv64_instance(Ifc_ptwalk_rv64#(`asidwidth));
+`endif
     let ifc();
     mkptwalk_rv64 _temp(ifc);
     return (ifc);
