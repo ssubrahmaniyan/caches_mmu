@@ -85,22 +85,23 @@ package nb_dcache;
     method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
     method Action load_drop(Bit#(rob_index) load_rob);
     method Bool cache_busy;
-`ifdef supervisor
-    method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
-`endif
-`ifdef pref
-  method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
-`endif
-`ifdef perfmonitors
-    method DCACHE_cntrs mv_dcache_perf_counters();
-`endif
-`ifdef simulate
-  `ifdef fesvr_sim
-    `ifndef baremetal_sim
-        method Action debug_print();
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
+    `ifdef supervisor
+      method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
     `endif
-  `endif
-`endif
+    `ifdef pref
+      method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
+    `endif
+    `ifdef perfmonitors
+      method DCACHE_cntrs mv_dcache_perf_counters();
+    `endif
+    `ifdef simulate
+      `ifdef fesvr_sim
+        `ifndef baremetal_sim
+          method Action debug_print();
+        `endif
+      `endif
+    `endif
   endinterface
 
   (*preempts = "rl_MSHR_req_to_fill_buffer, rl_stage2_req_to_fb"*)
@@ -363,6 +364,10 @@ package nb_dcache;
 
     Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
     Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
+
+    Wire#(Bit#(1)) wr_stage1_valid <- mkDWire(0);
+    Wire#(Bit#(1)) wr_stage1_load <- mkDWire(0);
+    Wire#(Bit#(prf_index)) wr_stage1_prf_index <- mkDWire(0);
 
   `ifdef pref
     Reg#(Bit#(1)) rg_fill_response_valid <- mkDReg(0);
@@ -780,6 +785,10 @@ package nb_dcache;
             else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
               `logTimeLevel( dcache, 1, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
               ff_first_stage.enq(req);
+              // regular load in stage1
+              wr_stage1_valid <= 1;
+              wr_stage1_load <= pack(req.origin == Load_buffer);
+              wr_stage1_prf_index <= req.prf_index;
             end
           `ifdef atomic
             else begin
@@ -2348,6 +2357,10 @@ package nb_dcache;
       wr_load_drop_valid <= True;
       wr_load_drop_robid <= load_rob;
       `logTimeLevel( dcache, 1, $format("DCACHE : Load (early) drop received for rob_id %d", load_rob))
+    endmethod
+
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
+      return tuple3(wr_stage1_valid, wr_stage1_load, wr_stage1_prf_index);
     endmethod
 
 `ifdef supervisor
