@@ -243,7 +243,7 @@ package dcache1rw;
   (*conflict_free="ma_commit_store, rl_commit_stores"*)
   (*conflict_free="ma_commit_store, rl_response_to_core"*)
   (*conflict_free="ma_commit_io, rl_io_response"*)
-  (*conflict_free="rl_response_to_core, rl_commit_stores"*)
+  // (*conflict_free="rl_response_to_core, rl_commit_stores"*)
   // both the following will update the replacement policy
   (*conflict_free="rl_release_from_fillbuffer, rl_response_to_core"*)
   // the following 2 conflict in responding to the ptw. however, only one of them can feed responses
