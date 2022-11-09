@@ -89,7 +89,7 @@ package nb_dcache;
     `ifdef supervisor
       method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
     `endif
-    `ifdef pref
+    `ifdef prefetch
       method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
     `endif
     `ifdef perfmonitors
@@ -369,7 +369,7 @@ package nb_dcache;
     Wire#(Bit#(1)) wr_stage1_load <- mkDWire(0);
     Wire#(Bit#(prf_index)) wr_stage1_prf_index <- mkDWire(0);
 
-  `ifdef pref
+  `ifdef prefetch
     Reg#(Bit#(1)) rg_fill_response_valid <- mkDReg(0);
     Reg#(Bit#(1)) rg_fill_response_demand <- mkReg(0);
     Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fill_response_address <- mkReg(0);
@@ -718,6 +718,7 @@ package nb_dcache;
         else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
 `endif
           `logTimeLevel( dcache, 1, $format("DCACHE : Hit in the TLB"))
+
           if(resp_from_tlb.trap) begin  //Access fault
             if (req.origin != Store_buffer) begin
               rg_cache_busy<= True;
@@ -728,24 +729,35 @@ package nb_dcache;
               `logTimeLevel( dcache, 1, $format("DCACHE : Access fault on prefetch request address: dropping."))
             end
           end
+
+          `ifdef atomic
+            else if(is_IO_access && core_req.is_atomic) begin
+              rg_cache_busy<= True;
+              `logTimeLevel( dcache, 1, $format("DCACHE : Access fault: IO atomics not supported!"))
+              DCache_exception lv_excp = ((core_req.origin == Store_commit) && (core_req.atomic_fn != 'h5) && (core_req.atomic_fn != 'h15)) ? Store_access_fault : Load_access_fault;
+              rg_access_fault_response<= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
+            end
+          `endif
+
           else begin  //Access is valid
             Bool lv_sc_pass= True;
-          `ifdef atomic
-            if(core_req.is_atomic) begin
-              if((core_req.atomic_fn=='h5 || core_req.atomic_fn=='h15) && !tpl_1(rg_lr_info)) //(LR.W or LR.D) and rg_lr_info is false
-                rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
-              else
-                rg_lr_info<= tuple3(False, ?, ?);
+            `ifdef atomic
+              if(core_req.is_atomic) begin
+                if((core_req.atomic_fn=='h5 || core_req.atomic_fn=='h15) && !tpl_1(rg_lr_info)) //(LR.W or LR.D) and rg_lr_info is false
+                  rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
+                else
+                  rg_lr_info<= tuple3(False, ?, ?);
 
-              if(core_req.atomic_fn=='h7 || core_req.atomic_fn=='h17) begin   //SC.W or SC.D
-                Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
-                if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
-                  lv_sc_pass= False;
+                if(core_req.atomic_fn=='h7 || core_req.atomic_fn=='h17) begin   //SC.W or SC.D
+                  Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
+                  if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
+                    lv_sc_pass= False;
+                end
               end
-            end
-            else 
-              rg_lr_info<= tuple3(False, ?, ?);
-          `endif
+              else begin
+                rg_lr_info<= tuple3(False, ?, ?);
+              end
+            `endif // atomic
 
             // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
             `ifdef store_early_ack
@@ -781,7 +793,8 @@ package nb_dcache;
               else begin
                 `logTimeLevel( dcache, 1, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
               end
-            end
+            end // io access
+
             else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
               `logTimeLevel( dcache, 1, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
               ff_first_stage.enq(req);
@@ -790,16 +803,18 @@ package nb_dcache;
               wr_stage1_load <= pack(req.origin == Load_buffer);
               wr_stage1_prf_index <= req.prf_index;
             end
-          `ifdef atomic
-            else begin
-              rg_sc_fail<= True;
-              rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
-              rg_cache_busy<= True;
-              `logTimeLevel( dcache, 1, $format("DCACHE : Atomic failed"))
-            end
-          `endif
+
+            `ifdef atomic
+              else begin
+                rg_sc_fail<= True;
+                rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
+                rg_cache_busy<= True;
+                `logTimeLevel( dcache, 1, $format("DCACHE : Atomic failed"))
+              end
+            `endif
           end // no trap
         end // TLB hit
+
         else begin    //Miss in the TLB and not IO or fence operation
           if (core_req.origin != Store_buffer) begin
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB"))
@@ -2155,7 +2170,7 @@ package nb_dcache;
                                        `endif };
     endrule
 
-`ifdef pref
+`ifdef prefetch
     rule rl_fill_response_to_prefetch;
       if (wr_read_resp_from_mem.id != '1) begin  // valid mem response
         if (fill_buffer.first_response_from_mem()) begin // response for first chunk
@@ -2369,7 +2384,7 @@ package nb_dcache;
     endmethod
 `endif // supervisor
 
-`ifdef pref
+`ifdef prefetch
     method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info();
       return tuple3(rg_fill_response_valid, rg_fill_response_demand, rg_fill_response_address);
     endmethod

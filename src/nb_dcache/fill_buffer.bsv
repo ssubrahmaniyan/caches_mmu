@@ -33,7 +33,7 @@ package fill_buffer;
     method Bool can_release;
     method Tuple2#(Bit#(1), Bit#(linewidth)) data;
     (*always_ready, always_enabled*) method Bit#(TSub#(paddr, lineoffset)) line_addr;
-    `ifdef pref
+    `ifdef prefetch
       method Bool first_response_from_mem();
     `endif
   endinterface
@@ -383,7 +383,7 @@ package fill_buffer;
       return rg_fb_addr;
     endmethod
 
-    `ifdef pref
+    `ifdef prefetch
       method Bool first_response_from_mem();
         return rg_first_resp;
       endmethod
