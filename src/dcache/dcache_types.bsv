@@ -200,6 +200,7 @@ package dcache_types;
     Bool              is_io;
     Bool              entry_alloc;
     Bit#(TLog#(`dsbsize)) sb_id;
+		Bit#(TAdd#(`ppnsize,12)) mtval2;
   } DMem_core_response#( numeric type data, numeric type esize) deriving (Bits, Eq);
 
   instance FShow#(DMem_core_response#(data,esize));
