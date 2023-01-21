@@ -732,12 +732,19 @@ package nb_dcache;
 
           `ifdef atomic
             else if(is_IO_access && core_req.is_atomic) begin
-              rg_cache_busy<= True;
+              rg_cache_busy <= True;
               `logTimeLevel( dcache, 1, $format("DCACHE : Access fault: IO atomics not supported!"))
               DCache_exception lv_excp = ((core_req.origin == Store_commit) && (core_req.atomic_fn != 'h5) && (core_req.atomic_fn != 'h15)) ? Store_access_fault : Load_access_fault;
-              rg_access_fault_response<= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
+              rg_access_fault_response <= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
             end
           `endif
+
+          else if(is_IO_access && (core_req.origin == PTW)) begin
+            rg_cache_busy <= True;
+            `logTimeLevel( dcache, 1, $format("DCACHE : Access fault: PTW access to IO space not supported!"))
+            DCache_exception lv_excp = Load_access_fault;
+            rg_access_fault_response <= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
+          end
 
           else begin  //Access is valid
             Bool lv_sc_pass= True;
