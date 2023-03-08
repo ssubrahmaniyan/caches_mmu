@@ -81,7 +81,7 @@ package nb_dcache_types;
     Bit#(rob_index) rob;
     DCache_exception exception;
 `ifdef atomic
-  `ifdef simulate
+  `ifdef commit_log
     Bit#(data) atomic_result;
   `endif
 `endif
@@ -92,7 +92,7 @@ package nb_dcache_types;
                                 rob: 0,
                                 exception: defaultValue
                               `ifdef atomic
-                                `ifdef simulate
+                                `ifdef commit_log
                                 , atomic_result: 0
                                 `endif
                               `endif
