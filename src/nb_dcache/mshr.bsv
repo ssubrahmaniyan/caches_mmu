@@ -584,7 +584,7 @@ package mshr;
     method Action flush (Flush_type#(rob_index) bundle);
       rg_flush[0]<= bundle;
       if (`VERBOSITY > 1) begin
-        $display("MSHR : Fluss ", fshow(bundle));
+        `logTimeLevel( dcache, 1, $format("MSHR : Flush: ", fshow(bundle)))
       end
       `logTimeLevel( dcache, 1, $format("MSHR : Flush initiated: ", fshow(bundle)))
       for(Integer i=0; i<mshrsize_val; i=i+1) begin
