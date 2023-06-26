@@ -2114,8 +2114,8 @@ package nb_dcache;
         rg_sc_fail<= False;
       `endif
 
-      wr_resp_to_core<= Resp_to_core { data: ?,
-                                       prf_index: ?,
+      wr_resp_to_core<= Resp_to_core { data: '0,
+                                       prf_index: '0,
                                        rob: rg_fence_rob,
                                        exception: No_exception
                                        `ifdef atomic
