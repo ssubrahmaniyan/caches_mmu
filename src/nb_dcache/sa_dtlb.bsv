@@ -1,8 +1,8 @@
 /*
 see LICENSE.iitm
 
-Author: Arjun Menon, Neel Gala, Nitya Ranganathan
-Email id: c.arjunmenon@gmail.com, neelgala@gmail.com, nitya.ranganathan@gmail.com
+Author: Arjun Menon, Neel Gala, Nitya Ranganathan, Sriram Shanmuga
+Email id: c.arjunmenon@gmail.com, neelgala@gmail.com, nitya.ranganathan@gmail.com, sriramshanmugacf+shakti@gmail.com
 Details:
 
 --------------------------------------------------------------------------------------------------
@@ -86,19 +86,17 @@ package sa_dtlb;
     `endif
     );
 
-    /*doc:vector: vector that holds all the tags*/
-    Vector#( `dtlbsize, Reg#(VPNTag) ) v_vpn_tag <- replicateM(mkReg(unpack(0))) ;
-    // Vector#( `dtlbsize/4, Reg#(VPNTag) ) v_vpn_tag_s1 <- replicateM(mkReg(unpack(0))) ; // set 1
-    // Vector#( `dtlbsize/4, Reg#(VPNTag) ) v_vpn_tag_s2 <- replicateM(mkReg(unpack(0))) ; // set 2
-    // Vector#( `dtlbsize/4, Reg#(VPNTag) ) v_vpn_tag_s3 <- replicateM(mkReg(unpack(0))) ; // set 3
-    // Vector#( `dtlbsize/4, Reg#(VPNTag) ) v_vpn_tag_s4 <- replicateM(mkReg(unpack(0))) ; // set 4
+    /*doc:vector: vector array that holds all the tags*/
+    Vector#( `associativity, Reg#(VPNTag) ) v_vpn_tags[TDiv#(`dtlbsize,`associativity)]; // m-way cache with n/m sets
+    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+      v_vpn_tags[i] <- replicateM(mkReg(unpack(0))) ;
+    end
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
-    Reg#(Bit#(TLog#(`dtlbsize))) rg_replace <- mkReg(0);
-    // Reg#(Bit#(TLog#(`dtlbsize/4))) rg_replace_s1 <- mkReg(0); 
-    // Reg#(Bit#(TLog#(`dtlbsize/4))) rg_replace_s2 <- mkReg(0); 
-    // Reg#(Bit#(TLog#(`dtlbsize/4))) rg_replace_s3 <- mkReg(0); 
-    // Reg#(Bit#(TLog#(`dtlbsize/4))) rg_replace_s4 <- mkReg(0); 
+    Reg#(Bit#(TLog#(`associativity))) rgs_replace[TDiv#(`dtlbsize,`associativity)]; 
+    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+      rgs_replace[i] <- mkReg(0);
+    end
 
     /*doc:wire: wire holding the latest value of the satp csr*/
     Wire#(Bit#(xlen)) wr_satp <- mkWire();
@@ -109,10 +107,6 @@ package sa_dtlb;
 
     /*doc:reg: record vpn that triggered a tlb miss*/
     Reg#(Bit#(xlen)) rg_miss_queue <- mkConfigReg(0);
-    // Reg#(Bit#(xlen)) rg_miss_queue_s1 <- mkConfigReg(0);
-    // Reg#(Bit#(xlen)) rg_miss_queue_s2 <- mkConfigReg(0);
-    // Reg#(Bit#(xlen)) rg_miss_queue_s3 <- mkConfigReg(0);
-    // Reg#(Bit#(xlen)) rg_miss_queue_s4 <- mkConfigReg(0);
 
     // global variables based on the above wires
     Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
@@ -129,17 +123,13 @@ package sa_dtlb;
 
     /*doc:reg: register to indicate that a tlb miss is in progress*/
     Reg#(Bool) rg_tlb_miss <- mkConfigReg(False);
-    // Reg#(Bool) rg_tlb_miss_s1 <- mkConfigReg(False);
-    // Reg#(Bool) rg_tlb_miss_s2 <- mkConfigReg(False);
-    // Reg#(Bool) rg_tlb_miss_s3 <- mkConfigReg(False);
-    // Reg#(Bool) rg_tlb_miss_s4 <- mkConfigReg(False);
 
-    /*doc:reg: register to indicate the tlb is undergoing an sfence*/
+    /*doc:reg: registers to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkConfigReg(False);
-    // Reg#(Bool) rg_sfence_s1 <- mkConfigReg(False);
-    // Reg#(Bool) rg_sfence_s2 <- mkConfigReg(False);
-    // Reg#(Bool) rg_sfence_s3 <- mkConfigReg(False);
-    // Reg#(Bool) rg_sfence_s4 <- mkConfigReg(False);
+    Reg#(Bool) rgs_sfence[TDiv#(`dtlbsize,`associativity)];
+    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+      rgs_sfence[i] <- mkConfigReg(False);
+    end
 
 //  `ifdef pmp
 //    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
@@ -153,20 +143,25 @@ package sa_dtlb;
 
     rule rl_display_tlb_regs;
       if (`VERBOSITY > 1) begin
-        $display($time, " PT: DTLB: tlb_miss %d sfence %d miss_va %h", rg_tlb_miss, rg_sfence, rg_miss_queue);
+        $display($time, " PT: DTLB: tlb_miss %d miss_va %h", rg_tlb_miss, rg_miss_queue);
+        for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+          $display($time, "sfence[%d] -> %d", i, rgs_sfence[i]);
+        end
       end
     endrule
 
-    /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate
-     all the tlb entries in all the sets*/
-    // Create a method that takes a set number as a parameter and flushes that set alone
+    /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate the tlb entries in 
+    all the sets that have been sfenced*/
     rule rl_fence(rg_sfence && !rg_tlb_miss);
-      for (Integer i = 0; i < `dtlbsize; i = i + 1) begin
-        v_vpn_tag[i] <= unpack(0);
+      for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+        if (rgs_sfence[i]) begin
+          v_vpn_tags[i] = replicate(unpack(0)) ;
+          rgs_replace[i] <= 0;
+          `logLevel( dtlb, 1, $format("DTLB: SFencing Now, Set -> %d", i))
+          rg_sfence <= False;
+          rgs_sfence[i] <= False;
+        end
       end
-      rg_sfence <= False;
-      rg_replace <= 0;
-      `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
     endrule
 
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
@@ -174,7 +169,7 @@ package sa_dtlb;
 
       Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
 
-      /*doc:func: */
+      /*doc:func: check if the given tag matches the tag in the request*/
       function Bool fn_vtag_match (VPNTag t);
         return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
                                && (t.asid == satp_asid || t.permissions.g);
@@ -184,7 +179,8 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag)); // instead of going through the entire cache, go through a set
+      Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
       Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(req.address);
@@ -202,6 +198,7 @@ package sa_dtlb;
       end
 
       if(req.sfence && !req.ptwalk_req)begin
+        rgs_sfence[set_index] <= True;
         rg_sfence <= True;
         if (`VERBOSITY > 1) begin
           $display($time, " PT: DTLB: case: sfence");
@@ -328,7 +325,8 @@ package sa_dtlb;
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tag));
+      Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
       Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(vaddr);
@@ -405,6 +403,7 @@ package sa_dtlb;
     interface response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
         let core_req = rg_miss_queue ;
+        Bit#(xlen) va = rg_miss_queue;
         Bit#(12) page_offset = core_req[11 : 0];
 
         Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
@@ -428,9 +427,11 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", rg_replace, fshow(tag)))
-          v_vpn_tag[rg_replace] <= tag;
-          rg_replace <= rg_replace + 1;
+          Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+          let evict_index = rgs_replace[set_index];
+          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", evict_index, fshow(tag)))
+          v_vpn_tags[set_index][evict_index] <= tag;
+          rgs_replace[set_index] <= evict_index + 1;
         end
 
         if (`VERBOSITY > 1) begin
