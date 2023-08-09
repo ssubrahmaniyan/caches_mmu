@@ -788,7 +788,7 @@ package nb_dcache;
                 //Enqueue into a separate FIFO that handles IO Requests
                 `logTimeLevel( dcache, 1, $format("DCACHE : IO request sent to Stage2"))
                 `ifdef ASSERT
-                  dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
+                  dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE : Origin wrong for IO request.");
                 `endif
                 ff_io_info.enq(req);
                 rg_access_fault_response<= tuple4(defaultValue, ?, ?, core_req.addr);
