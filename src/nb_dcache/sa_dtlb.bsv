@@ -87,14 +87,14 @@ package sa_dtlb;
     );
 
     /*doc:vector: vector array that holds all the tags*/
-    Vector#( `associativity, Reg#(VPNTag) ) v_vpn_tags[TDiv#(`dtlbsize,`associativity)]; // m-way cache with n/m sets
-    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+    Vector#( `dtlbways, Reg#(VPNTag) ) v_vpn_tags[`dtlbsets]; // m-way cache with n/m sets
+    for (Integer i = 0; i < (`dtlbsets); ++i) begin
       v_vpn_tags[i] <- replicateM(mkReg(unpack(0))) ;
     end
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
-    Reg#(Bit#(TLog#(`associativity))) rgs_replace[TDiv#(`dtlbsize,`associativity)]; 
-    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
+    Reg#(Bit#(TLog#(`dtlbways))) rgs_replace[`dtlbsets]; 
+    for (Integer i = 0; i < (`dtlbsets); ++i) begin
       rgs_replace[i] <- mkReg(0);
     end
 
@@ -126,10 +126,6 @@ package sa_dtlb;
 
     /*doc:reg: registers to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkConfigReg(False);
-    Reg#(Bool) rgs_sfence[TDiv#(`dtlbsize,`associativity)];
-    for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
-      rgs_sfence[i] <- mkConfigReg(False);
-    end
 
 //  `ifdef pmp
 //    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
@@ -143,25 +139,19 @@ package sa_dtlb;
 
     rule rl_display_tlb_regs;
       if (`VERBOSITY > 1) begin
-        $display($time, " PT: DTLB: tlb_miss %d miss_va %h", rg_tlb_miss, rg_miss_queue);
-        for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
-          $display($time, "sfence[%d] -> %d", i, rgs_sfence[i]);
-        end
+        $display($time, " PT: DTLB: tlb_miss %d sfence %d miss_va %h", rg_tlb_miss, rg_sfence, rg_miss_queue);
       end
     endrule
 
     /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate the tlb entries in 
     all the sets that have been sfenced*/
     rule rl_fence(rg_sfence && !rg_tlb_miss);
-      for (Integer i = 0; i < (TDiv#(`dtlbsize,`associativity)); ++i) begin
-        if (rgs_sfence[i]) begin
-          v_vpn_tags[i] = replicate(unpack(0)) ;
-          rgs_replace[i] <= 0;
-          `logLevel( dtlb, 1, $format("DTLB: SFencing Now, Set -> %d", i))
-          rg_sfence <= False;
-          rgs_sfence[i] <= False;
-        end
+      for (Integer i = 0; i < `dtlbsets; i = i + 1) begin
+        v_vpn_tags[i] <- replicate(unpack(0)) ;
+        rgs_replace[i] <= 0;
       end
+      rg_sfence <= False;
+      `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
     endrule
 
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
@@ -179,7 +169,7 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+      Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
@@ -198,7 +188,6 @@ package sa_dtlb;
       end
 
       if(req.sfence && !req.ptwalk_req)begin
-        rgs_sfence[set_index] <= True;
         rg_sfence <= True;
         if (`VERBOSITY > 1) begin
           $display($time, " PT: DTLB: case: sfence");
@@ -325,7 +314,7 @@ package sa_dtlb;
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+      Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
@@ -427,7 +416,7 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          Bit#(TLog#(TDiv#(`dtlbsize,`associativity))) set_index = va[TLog#(TDiv#(`dtlbsize,`associativity))-1+`offset:`offset]; 
+          Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
           let evict_index = rgs_replace[set_index];
           `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", evict_index, fshow(tag)))
           v_vpn_tags[set_index][evict_index] <= tag;
