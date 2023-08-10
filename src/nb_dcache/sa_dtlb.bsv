@@ -169,7 +169,7 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
+      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
@@ -314,7 +314,7 @@ package sa_dtlb;
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
+      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
@@ -392,7 +392,6 @@ package sa_dtlb;
     interface response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
         let core_req = rg_miss_queue ;
-        Bit#(xlen) va = rg_miss_queue;
         Bit#(12) page_offset = core_req[11 : 0];
 
         Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
@@ -416,7 +415,7 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          Bit#(TLog#(`dtlbsets)) set_index = va[TLog#(`dtlbsets)-1+`offset:`offset]; 
+          Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
           let evict_index = rgs_replace[set_index];
           `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", evict_index, fshow(tag)))
           v_vpn_tags[set_index][evict_index] <= tag;
