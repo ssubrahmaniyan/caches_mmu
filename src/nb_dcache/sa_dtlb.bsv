@@ -22,7 +22,12 @@ package sa_dtlb;
   import io_func :: * ;
 `endif
 
-  // structure of the virtual tag for fully-associative look-up
+  `define dtlbways 4
+  `define dtlbsets 4
+  `define tlogdtlbsets 2
+  `define VERBOSITY 5
+
+  // structure of the virtual tag for set-associative look-up
   typedef struct{
     TLB_permissions permissions;
     Bit#(`vpnsize) vpn;
@@ -88,13 +93,13 @@ package sa_dtlb;
 
     /*doc:vector: vector array that holds all the tags*/
     Vector#( `dtlbways, Reg#(VPNTag) ) v_vpn_tags[`dtlbsets]; // m-way cache with n/m sets
-    for (Integer i = 0; i < (`dtlbsets); ++i) begin
+    for (Integer i = 0; i < (`dtlbsets); i = i + 1) begin
       v_vpn_tags[i] <- replicateM(mkReg(unpack(0))) ;
     end
 
     /*doc:reg: register to indicate which entry need to be filled/replaced*/
     Reg#(Bit#(TLog#(`dtlbways))) rgs_replace[`dtlbsets]; 
-    for (Integer i = 0; i < (`dtlbsets); ++i) begin
+    for (Integer i = 0; i < (`dtlbsets); i = i + 1) begin
       rgs_replace[i] <- mkReg(0);
     end
 
@@ -147,7 +152,9 @@ package sa_dtlb;
     all the sets that have been sfenced*/
     rule rl_fence(rg_sfence && !rg_tlb_miss);
       for (Integer i = 0; i < `dtlbsets; i = i + 1) begin
-        v_vpn_tags[i] <- replicate(unpack(0)) ;
+        for (Integer j = 0; j < `dtlbways; j = j + 1) begin
+          v_vpn_tags[i][j] <= unpack(0);
+        end
         rgs_replace[i] <= 0;
       end
       rg_sfence <= False;
@@ -169,8 +176,8 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
-      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)])); 
+      Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
+      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
       Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(req.address);
@@ -314,8 +321,8 @@ package sa_dtlb;
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
-      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[unpack(set_index)]));       
+      Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
+      let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
       Bit#(TSub#(xlen, paddr)) upper_bits = truncateLSB(vaddr);
@@ -415,7 +422,7 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          Bit#(TLog#(`dtlbsets)) set_index = fullvpn[TLog#(`dtlbsets)-1:0]; 
+          Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
           let evict_index = rgs_replace[set_index];
           `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", evict_index, fshow(tag)))
           v_vpn_tags[set_index][evict_index] <= tag;
