@@ -25,8 +25,8 @@ package sa_dtlb;
   `define dtlbways 4
   `define dtlbsets 4
   `define tlogdtlbsets 2
-  `define VERBOSITY 5
-
+  `define enable_cache_dump
+  
   // structure of the virtual tag for set-associative look-up
   typedef struct{
     TLB_permissions permissions;
@@ -62,6 +62,9 @@ package sa_dtlb;
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req);
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
     interface Ifc_ptw_meta#(xlen) ptw_meta;
+`ifdef enable_cache_dump
+    method Action dump;
+`endif
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) early_lookup(Bit#(xlen) vaddr, Bit#(1) is_store);
 `endif
@@ -464,6 +467,16 @@ package sa_dtlb;
       method mv_perf_counters = wr_count_misses;
     `endif
     endinterface;
+    
+    `ifdef enable_cache_dump
+    method Action dump;
+      for (Integer i = 0; i < `dtlbsets; i = i + 1) begin
+        for (Integer j = 0; j < `dtlbways; j = j + 1) begin
+          $display(fshow(v_vpn_tags[i][j]));
+        end
+      end
+    endmethod : dump
+    `endif
     
   endmodule
 
