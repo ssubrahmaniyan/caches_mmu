@@ -9,7 +9,11 @@ Details:
 */
 package sa_dtlb_tb;
 
+    `include "nb_dcache.defines"
+
+    import GetPut::*;
     import nb_dcache_types :: * ;
+    import common_tlb_types :: *;
     import sa_dtlb::*;
     import fa_dtlb::*;
 
@@ -36,16 +40,23 @@ package sa_dtlb_tb;
         endrule : cache_dump
 
         rule tlb_miss(cycles == 2 || cycles == 8);
-            let request = Cache_DTLB_request{address : 64'h1000,
+            let request = Cache_DTLB_request{address : 64'h80123456,
                                             access : 2'b0,
                                             ptwalk_trap : False,
-                                            ptwalk_req : True,
+                                            ptwalk_req : False,
                                             sfence : False};
             let response <- dut.translate(request);
         endrule : tlb_miss
 
+        rule fill_cache (cycles == 3);
+            dut.response_frm_ptw.put(PTWalk_tlb_response{pte : 54'h56754,
+                                                        levels : `varpages,
+                                                        trap : False,
+                                                        cause : ?});
+        endrule : fill_cache
+
         rule tlb_hit(cycles == 4);
-            let request = Cache_DTLB_request{address : 64'h1000,
+            let request = Cache_DTLB_request{address : 64'h80123456,
                                             access : 2'b0,
                                             ptwalk_trap : False,
                                             ptwalk_req : False,

@@ -26,7 +26,7 @@ package sa_dtlb;
   `define dtlbsets 4
   `define tlogdtlbsets 2
   `define enable_cache_dump
-  
+
   // structure of the virtual tag for set-associative look-up
   typedef struct{
     TLB_permissions permissions;
