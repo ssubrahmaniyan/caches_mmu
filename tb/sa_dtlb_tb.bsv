@@ -26,7 +26,7 @@ package sa_dtlb_tb;
 
         rule cycle_counter;
             cycles <= cycles + 1;
-            //$display("End of Cycle:%d", cycles);
+            $display("End of Cycle:%d", cycles);
         endrule : cycle_counter
 
         rule ptw_meta_driver;
@@ -35,11 +35,13 @@ package sa_dtlb_tb;
             dut.ptw_meta.ma_mstatus_from_csr(64'h8000000a00046000);
         endrule : ptw_meta_driver
 
-        rule cache_dump (cycles % 2 == 1);
-            //dut.dump();
+        rule cache_dump (cycles == 9);
+            dut.dump();
+            let sresp = dut.early_lookup(64'h80123456, 1'b0);
+            $display(fshow(sresp));
         endrule : cache_dump
 
-        rule tlb_miss(cycles == 2 || cycles == 8);
+        rule tlb_miss(cycles == 2 || cycles == 10);
             let request = Cache_DTLB_request{address : 64'h80123456,
                                             access : 2'b0,
                                             ptwalk_trap : False,
@@ -49,8 +51,8 @@ package sa_dtlb_tb;
         endrule : tlb_miss
 
         rule fill_cache (cycles == 3);
-            dut.response_frm_ptw.put(PTWalk_tlb_response{pte : 54'h56754,
-                                                        levels : `varpages,
+            dut.response_frm_ptw.put(PTWalk_tlb_response{pte : 54'h200000cf,
+                                                        levels : 1,
                                                         trap : False,
                                                         cause : ?});
         endrule : fill_cache
@@ -62,10 +64,13 @@ package sa_dtlb_tb;
                                             ptwalk_req : False,
                                             sfence : False};
             let response <- dut.translate(request);
+            let sresp = dut.early_lookup(64'h80123456, 1'b0);
+            $display(fshow(sresp));
+            dut.dump();
         endrule : tlb_hit
 
         rule fence(cycles == 6);
-            let request = Cache_DTLB_request{address : 64'h1000,
+            let request = Cache_DTLB_request{address : 64'h80123456,
                                             access : 2'b0,
                                             ptwalk_trap : False,
                                             ptwalk_req : False,
@@ -73,7 +78,7 @@ package sa_dtlb_tb;
             let response <- dut.translate(request);
         endrule : fence
 
-        rule endsim (cycles == 10);
+        rule endsim (cycles == 14);
             $display("Reached the end of simulation, total cycles=\t%d", cycles);
             $finish(0);
         endrule : endsim
