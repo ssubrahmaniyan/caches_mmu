@@ -22,10 +22,7 @@ package sa_dtlb;
   import io_func :: * ;
 `endif
 
-  `define dtlbways 4
-  `define dtlbsets 4
   `define tlogdtlbsets 2
-  `define enable_cache_dump
 
   // structure of the virtual tag for set-associative look-up
   typedef struct{
@@ -63,14 +60,14 @@ package sa_dtlb;
     interface Put#(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages)) response_frm_ptw;
     interface Ifc_ptw_meta#(xlen) ptw_meta;
 `ifdef enable_cache_dump
-    method Action dump;
+    method Action ma_dump;
 `endif
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) early_lookup(Bit#(xlen) vaddr, Bit#(1) is_store);
 `endif
   endinterface
 
-  /*doc:module: */
+  /*doc:module:*/
   module mksa_dtlb(Ifc_sa_dtlb#(xlen, paddr))
     provisos (
       Add#(TMul#(TSub#(`varpages,1),`subvpn), a__, xlen),
@@ -145,14 +142,14 @@ package sa_dtlb;
     Wire#(Bit#(1)) wr_count_misses <- mkDWire(0);
   `endif
 
+    /*doc:rule: this rule is fired when VERBOSITY > 1, it dumps register values.*/
     rule rl_display_tlb_regs;
       if (`VERBOSITY > 1) begin
         $display($time, " PT: DTLB: tlb_miss %d sfence %d miss_va %h", rg_tlb_miss, rg_sfence, rg_miss_queue);
       end
     endrule
 
-    /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate the tlb entries in 
-    all the sets that have been sfenced*/
+    /*doc:rule: this rule is fired when the core requests a sfence. This rule will simply invalidate all tlb entries.*/
     rule rl_fence(rg_sfence && !rg_tlb_miss);
       for (Integer i = 0; i < `dtlbsets; i = i + 1) begin
         for (Integer j = 0; j < `dtlbways; j = j + 1) begin
@@ -164,6 +161,7 @@ package sa_dtlb;
       `logLevel( dtlb, 1, $format("DTLB: SFencing Now"))
     endrule
 
+    /*doc:method: looks up the given virtual address in the cache and returns the corresponding physical address if present.*/
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
       `logTimeLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
 
@@ -316,7 +314,7 @@ package sa_dtlb;
       // TODO: sfence check not needed now.
       Bit#(`vpnsize) fullvpn = truncate(vaddr >> 12);
 
-      /*doc:func: */
+      /*doc:func: check if the given tag matches the tag in the request.*/
       function Bool fn_vtag_match (VPNTag t);
         return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
                                && (t.asid == satp_asid || t.permissions.g);
@@ -426,10 +424,10 @@ package sa_dtlb;
                           ppn: fullppn };
         if(!resp.trap) begin
           Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
-          let evict_index = rgs_replace[set_index];
-          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d for Tag:", evict_index, fshow(tag)))
-          v_vpn_tags[set_index][evict_index] <= tag;
-          rgs_replace[set_index] <= evict_index + 1;
+          $display("fullvpn", fshow(fullvpn));
+          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d for Tag:", rgs_replace[set_index], set_index, fshow(tag)))
+          v_vpn_tags[set_index][rgs_replace[set_index]] <= tag;
+          rgs_replace[set_index] <= rgs_replace[set_index] + 1;
         end
 
         if (`VERBOSITY > 1) begin
@@ -469,10 +467,11 @@ package sa_dtlb;
     endinterface;
     
     `ifdef enable_cache_dump
+    /*doc:method: dump the entire cache*/
     method Action dump;
       for (Integer i = 0; i < `dtlbsets; i = i + 1) begin
         for (Integer j = 0; j < `dtlbways; j = j + 1) begin
-          $display(fshow(v_vpn_tags[i][j]));
+          $display("Set%d, Entry%d", i, j, fshow(v_vpn_tags[i][j]));
         end
       end
     endmethod : dump
