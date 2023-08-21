@@ -22,8 +22,6 @@ package sa_dtlb;
   import io_func :: * ;
 `endif
 
-  `define tlogdtlbsets 2
-
   // structure of the virtual tag for set-associative look-up
   typedef struct{
     TLB_permissions permissions;
@@ -177,7 +175,7 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
+      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
@@ -322,7 +320,7 @@ package sa_dtlb;
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
+      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
@@ -423,7 +421,7 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          Bit#(`tlogdtlbsets) set_index = fullvpn[`tlogdtlbsets-1:0]; 
+          Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
           $display("fullvpn", fshow(fullvpn));
           `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d for Tag:", rgs_replace[set_index], set_index, fshow(tag)))
           v_vpn_tags[set_index][rgs_replace[set_index]] <= tag;
