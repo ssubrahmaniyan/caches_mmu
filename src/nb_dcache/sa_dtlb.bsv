@@ -167,7 +167,12 @@ package sa_dtlb;
 
       /*doc:func: check if the given tag matches the tag in the request*/
       function Bool fn_vtag_match (VPNTag t);
-        return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
+        Bit#(`vpnsize) fullmask = {'1, t.pagemask};
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask = truncateLSB(fullmask);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) req_tag = truncateLSB(fullvpn);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) cache_tag = truncateLSB(t.vpn);
+
+        return t.permissions.v && ((mask & req_tag) == cache_tag)
                                && (t.asid == satp_asid || t.permissions.g);
       endfunction
 
@@ -175,7 +180,7 @@ package sa_dtlb;
       DCache_exception exception = No_exception;
       Bool trap = req.ptwalk_trap;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
+      Bit#(TLog#(`dtlbsets)) set_index = (valueOf(TLog#(`dtlbsets)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets))-1:0]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index])); 
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry); // contains the page table entry of the required page
@@ -314,13 +319,18 @@ package sa_dtlb;
 
       /*doc:func: check if the given tag matches the tag in the request.*/
       function Bool fn_vtag_match (VPNTag t);
-        return t.permissions.v && (({'1,t.pagemask} & fullvpn) == t.vpn)
+        Bit#(`vpnsize) fullmask = {'1, t.pagemask};
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask = truncateLSB(fullmask);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) req_tag = truncateLSB(fullvpn);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) cache_tag = truncateLSB(t.vpn);
+
+        return t.permissions.v && ((mask & req_tag) == cache_tag)
                                && (t.asid == satp_asid || t.permissions.g);
       endfunction
 
       Bit#(xlen) va = vaddr;
       Bool translation_done = False;
-      Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
+      Bit#(TLog#(`dtlbsets)) set_index = (valueOf(TLog#(`dtlbsets)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets))-1:0]; 
       let hit_entry = find(fn_vtag_match, readVReg(v_vpn_tags[set_index]));       
       Bool tlbmiss = !isValid(hit_entry);
       VPNTag pte = fromMaybe(?,hit_entry);
@@ -421,8 +431,7 @@ package sa_dtlb;
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
-          Bit#(TLog#(`dtlbsets)) set_index = fullvpn[valueOf(TLog#(`dtlbsets)) - 1 : 0];
-          $display("fullvpn", fshow(fullvpn));
+          Bit#(TLog#(`dtlbsets)) set_index = (valueOf(TLog#(`dtlbsets)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets))-1:0]; 
           `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d for Tag:", rgs_replace[set_index], set_index, fshow(tag)))
           v_vpn_tags[set_index][rgs_replace[set_index]] <= tag;
           rgs_replace[set_index] <= rgs_replace[set_index] + 1;

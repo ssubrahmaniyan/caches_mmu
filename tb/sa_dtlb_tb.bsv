@@ -71,10 +71,9 @@ package sa_dtlb_tb;
         endrule : tlb_hit
 
 	/*doc:rule: this rule issues a sideband access request.*/
-	rule sideband_access(cycles = 4);
+	rule sideband_access(cycles == 4);
             let sresp = dut.early_lookup(64'h80122456, 1'b0);
             $display(fshow(sresp));
-            dut.dump();
 	endrule : sideband_access
  
 	/*doc:rule: this rule issues a request that invalidates all TLB entries.*/
