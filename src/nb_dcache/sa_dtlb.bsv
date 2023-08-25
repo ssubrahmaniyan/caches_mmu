@@ -25,7 +25,7 @@ package sa_dtlb;
   // structure of the virtual tag for set-associative look-up
   typedef struct{
     TLB_permissions permissions;
-    Bit#(`vpnsize) vpn;
+    Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) vpn;
     Bit#(`asidwidth) asid;
     Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
@@ -168,12 +168,8 @@ package sa_dtlb;
       /*doc:func: check if the given tag matches the tag in the request*/
       function Bool fn_vtag_match (VPNTag t);
         Bit#(`vpnsize) fullmask = {'1, t.pagemask};
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask = truncateLSB(fullmask);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) req_tag = truncateLSB(fullvpn);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) cache_tag = truncateLSB(t.vpn);
-
-        return t.permissions.v && ((mask & req_tag) == cache_tag)
-                               && (t.asid == satp_asid || t.permissions.g);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask_and_vpn = truncateLSB(fullmask & fullvpn);
+        return t.permissions.v && (mask_and_vpn == t.vpn) && (t.asid == satp_asid || t.permissions.g);
       endfunction
 
       Bit#(xlen) va = req.address;
@@ -320,12 +316,8 @@ package sa_dtlb;
       /*doc:func: check if the given tag matches the tag in the request.*/
       function Bool fn_vtag_match (VPNTag t);
         Bit#(`vpnsize) fullmask = {'1, t.pagemask};
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask = truncateLSB(fullmask);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) req_tag = truncateLSB(fullvpn);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) cache_tag = truncateLSB(t.vpn);
-
-        return t.permissions.v && ((mask & req_tag) == cache_tag)
-                               && (t.asid == satp_asid || t.permissions.g);
+        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) mask_and_vpn = truncateLSB(fullmask & fullvpn);
+        return t.permissions.v && (mask_and_vpn == t.vpn) && (t.asid == satp_asid || t.permissions.g);
       endfunction
 
       Bit#(xlen) va = vaddr;
@@ -425,14 +417,17 @@ package sa_dtlb;
         Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
       `endif
 
+	Bit#(`vpnsize) fullmask = {'1, mask};
+	Bit#(TSub#(`vpnsize, TLog#(`dtlbsets))) actual_vpn = truncateLSB(fullmask & fullvpn);
+
         let tag = VPNTag{ permissions: unpack(truncate(resp.pte)),
-                          vpn: {'1,mask} & fullvpn,
+                          vpn: actual_vpn,
                           asid: satp_asid,
                           pagemask: mask,
                           ppn: fullppn };
         if(!resp.trap) begin
           Bit#(TLog#(`dtlbsets)) set_index = (valueOf(TLog#(`dtlbsets)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets))-1:0]; 
-          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d for Tag:", rgs_replace[set_index], set_index, fshow(tag)))
+          `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d for (%x), ", rgs_replace[set_index], set_index, core_req, fshow(tag)))
           v_vpn_tags[set_index][rgs_replace[set_index]] <= tag;
           rgs_replace[set_index] <= rgs_replace[set_index] + 1;
         end
