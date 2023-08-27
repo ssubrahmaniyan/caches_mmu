@@ -827,13 +827,13 @@ package nb_dcache;
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB"))
             wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
             rg_cache_busy<= True;
+            `ifdef perfmonitors
+              wr_dtlb_miss <= 1;
+            `endif
           end
           else begin
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
           end
-          `ifdef perfmonitors
-            wr_dtlb_miss <= 1;
-          `endif
         end
         `logTimeLevel( dcache, 1, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 
