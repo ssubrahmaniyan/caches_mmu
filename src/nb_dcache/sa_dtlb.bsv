@@ -7,6 +7,7 @@ Details:
 
 --------------------------------------------------------------------------------------------------
 */
+`ifdef sv39
 package sa_dtlb;
   `include "Logger.bsv"
   `include "nb_dcache.defines"
@@ -18,13 +19,10 @@ package sa_dtlb;
   import ConfigReg :: * ;
   import nb_dcache_types :: * ;
   import common_tlb_types :: * ;
+  import Assert :: * ;
 `ifdef supervisor
   import io_func :: * ;
 `endif
-
-  `ifndef sv39
-    `define sv39
-  `endif
 
   // structure of the virtual tags for set-associative look-ups
   typedef struct{
@@ -290,6 +288,10 @@ package sa_dtlb;
           if (((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)) && (`VERBOSITY > 1)) begin
             $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
           end
+
+          // `ifdef ASSERT
+          // dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
+          // `endif
 
           if (!tlbmiss_4k) begin
 
@@ -586,6 +588,10 @@ package sa_dtlb;
           let x = $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
         end
 
+        // `ifdef ASSERT
+        // dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
+        // `endif
+
         if (!tlbmiss_4k) begin
           let permissions = pte_4k.permissions;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
@@ -717,11 +723,6 @@ package sa_dtlb;
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
         Bit#(TLog#(TMul#(TSub#(`varpages,1),`subvpn))) shiftamt = `subvpn * zeroExtend(resp.levels);
         mask = mask << shiftamt;
-        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(fullppn);
-        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(core_req >> 12);
-        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
-        Bit#(`lastppnsize) highest_ppn = truncateLSB(fullppn);
-        Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
 
         if (resp.levels == 0) begin
 
@@ -859,4 +860,4 @@ package sa_dtlb;
   endmodule
 
 endpackage
-
+`endif
