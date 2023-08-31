@@ -22,7 +22,9 @@ package sa_dtlb;
   import io_func :: * ;
 `endif
 
-  `define sv39
+  `ifndef sv39
+    `define sv39
+  `endif
 
   // structure of the virtual tags for set-associative look-ups
   typedef struct{
@@ -88,23 +90,13 @@ package sa_dtlb;
     provisos (
       Add#(TMul#(TSub#(`varpages,1),`subvpn), a__, xlen),
       Add#(b__, paddr, xlen),
-    `ifdef sv32
-      Add#(c__, 22, xlen),
-      Add#(d__, 20, xlen),
-      Add#(e__, xlen, 34),
-      Add#(f__, 1, xlen)
-    `else
       `ifdef sv39
         Add#(c__, 40, xlen),
         Add#(d__, 27, xlen),
-      `else
-        Add#(c__, 49, xlen),
-        Add#(d__, 36, xlen),
       `endif
       Add#(e__, 44, xlen),
       Add#(f__, 56, xlen),
       Add#(g__, 4, xlen)
-    `endif
     );
 
     /*doc:vector: vector arrays that hold all the tags*/
@@ -152,11 +144,7 @@ package sa_dtlb;
     // global variables based on the above wires
     Bit#(`ppnsize) satp_ppn = truncate(wr_satp);
     Bit#(`asidwidth) satp_asid = wr_satp[`asidwidth - 1 + `ppnsize : `ppnsize ];
-  `ifdef sv32
-    Bit#(1) satp_mode = truncateLSB(wr_satp);
-  `else
     Bit#(4) satp_mode = truncateLSB(wr_satp);
-  `endif
     Bit#(1) mxr = wr_mstatus[19];
     Bit#(1) sum = wr_mstatus[18];
     Bit#(2) mpp = wr_mstatus[12 : 11];
@@ -299,20 +287,19 @@ package sa_dtlb;
           Bool page_fault = False;
           Bit#(TSub#(xlen, `maxvaddr)) unused_va = va[valueOf(xlen) - 1 : `maxvaddr];
 
+          if (((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)) && (`VERBOSITY > 1)) begin
+            $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
+          end
+
           if (!tlbmiss_4k) begin
 
             let permissions = pte_4k.permissions;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
-            //if (mask != 'h3fff) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 4K"))
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_4k.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_4k.ppn);
-          `ifdef sv32
-            Bit#(xlen) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
-          `else
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
 
             `logLevel( dtlb, 2, $format("mask:%h",mask))
             `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
@@ -324,11 +311,9 @@ package sa_dtlb;
             end
 
             // check for permission faults
-          `ifndef sv32
             if(unused_va != signExtend(va[`maxvaddr-1]))begin
               page_fault = True;
             end
-          `endif
             // pte_4k.a == 0 || pte_4k.d == 0 and access != Load
             if(!permissions.a || (!permissions.d && req.access != 0))begin
               page_fault = True;
@@ -372,20 +357,16 @@ package sa_dtlb;
               end
             end
 
-          end else if (!tlbmiss_2m) begin
+          end // No hit in 4k
+          else if (!tlbmiss_2m) begin
 
             let permissions = pte_2m.permissions;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_2m.pagemask);
-            //if (mask != 'h3fe00) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 2M"))
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_2m.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_2m.ppn);
-          `ifdef sv32
-            Bit#(xlen) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
-          `else
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
 
             `logLevel( dtlb, 2, $format("mask:%h",mask))
             `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
@@ -397,11 +378,9 @@ package sa_dtlb;
             end
 
             // check for permission faults
-          `ifndef sv32
             if(unused_va != signExtend(va[`maxvaddr-1]))begin
               page_fault = True;
             end
-          `endif
             // pte_2m.a == 0 || pte_2m.d == 0 and access != Load
             if(!permissions.a || (!permissions.d && req.access != 0))begin
               page_fault = True;
@@ -445,20 +424,16 @@ package sa_dtlb;
               end
             end
 
-          end else begin
+          end // No hit in 2m
+          else begin
 
             let permissions = pte_1g.permissions;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_1g.pagemask);
-            //if (mask != 'h00000) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 1G"))
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_1g.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_1g.ppn);
-          `ifdef sv32
-            Bit#(xlen) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
-          `else
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
 
             `logLevel( dtlb, 2, $format("mask:%h",mask))
             `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
@@ -470,11 +445,9 @@ package sa_dtlb;
             end
 
             // check for permission faults
-          `ifndef sv32
             if(unused_va != signExtend(va[`maxvaddr-1]))begin
               page_fault = True;
             end
-          `endif
             // pte_1g.a == 0 || pte_1g.d == 0 and access != Load
             if(!permissions.a || (!permissions.d && req.access != 0))begin
               page_fault = True;
@@ -518,7 +491,7 @@ package sa_dtlb;
               end
             end
 
-          end
+          end // request serviced
 
         end
       end
@@ -606,28 +579,26 @@ package sa_dtlb;
       end
       // translate
       else begin
+        
         Bit#(TSub#(xlen, `maxvaddr)) unused_va = va[valueOf(xlen) - 1 : `maxvaddr];
+
+        if (((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)) && (`VERBOSITY > 1)) begin
+          let x = $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
+        end
 
         if (!tlbmiss_4k) begin
           let permissions = pte_4k.permissions;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
-          //if (mask != 'h3ffff) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 4K SUPERVISOR"))
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_4k.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_4k.ppn);
-          `ifdef sv32
-            lv_paddr = truncate({highest_ppn, lower_pa, page_offset});
-          `else
-            lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
+          lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-          `ifndef sv32
             if(unused_va != signExtend(va[`maxvaddr-1]))begin
               page_fault = True;
             end
-          `endif
           // pte_4k.a == 0 || pte_4k.d == 0 and access != Load
           if(!permissions.a || (!permissions.d && (is_store == 1)))begin
             page_fault = True;
@@ -647,27 +618,21 @@ package sa_dtlb;
             page_fault = True;
           end
 
-        end else if (!tlbmiss_2m) begin
+        end // No hit in 4k
+        else if (!tlbmiss_2m) begin
 
           let permissions = pte_2m.permissions;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_2m.pagemask);
-          //if (mask != 'h3fe00) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 2M SUPERVISOR"))
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_2m.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_2m.ppn);
-          `ifdef sv32
-            lv_paddr = truncate({highest_ppn, lower_pa, page_offset});
-          `else
-            lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
+          lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-          `ifndef sv32
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
-              page_fault = True;
-            end
-          `endif
+          if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            page_fault = True;
+          end
           // pte_2m.a == 0 || pte_2m.d == 0 and access != Load
           if(!permissions.a || (!permissions.d && (is_store == 1)))begin
             page_fault = True;
@@ -687,27 +652,21 @@ package sa_dtlb;
             page_fault = True;
           end
 
-        end else begin
+        end // No hit in 2m
+        else begin
 
           let permissions = pte_1g.permissions;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_1g.pagemask);
-          //if (mask != 'h00000) `logLevel( dtlb, 2, $format("FALSE POSITIVE IN 1G SUPERVISOR"))
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_1g.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_1g.ppn);
-          `ifdef sv32
-            lv_paddr = truncate({highest_ppn, lower_pa, page_offset});
-          `else
-            lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
-          `endif
+          lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-          `ifndef sv32
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
-              page_fault = True;
-            end
-          `endif
+          if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            page_fault = True;
+          end
           // pte_1g.a == 0 || pte_1g.d == 0 and access != Load
           if(!permissions.a || (!permissions.d && (is_store == 1)))begin
             page_fault = True;
@@ -729,7 +688,7 @@ package sa_dtlb;
 
         end
 
-      end // translate
+      end // request serviced
 
       // tlb miss
       if (tlbmiss) begin
@@ -762,11 +721,7 @@ package sa_dtlb;
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(core_req >> 12);
         Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
         Bit#(`lastppnsize) highest_ppn = truncateLSB(fullppn);
-      `ifdef sv32
-        Bit#(xlen) physicaladdress = truncate({highest_ppn, lower_pa, page_offset});
-      `else
         Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
-      `endif
 
         if (resp.levels == 0) begin
 
