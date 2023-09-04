@@ -203,7 +203,7 @@ package sa_dtlb;
 
     /*doc:method: looks up the given virtual address in the cache and returns the corresponding physical address if present.*/
     method ActionValue#(DTLB_Cache_response#(paddr)) translate(Cache_DTLB_request#(xlen) req) if(!rg_sfence);
-      `logTimeLevel( dtlb, 0, $format("DTLB: received req: ",fshow(req)))
+      `logTimeLevel( dtlb, 0, $format("DTLB: Translate request for ",fshow(req)))
 
       Bit#(`vpnsize) fullvpn = truncate(req.address >> 12);
       Bit#(xlen) va = req.address;
@@ -715,6 +715,9 @@ package sa_dtlb;
 
     interface response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
+
+        `logTimeLevel( dtlb, 0, $format("DTLB: Put request for , ", fshow(resp)))
+
         let core_req = rg_miss_queue ;
         Bit#(12) page_offset = core_req[11 : 0];
 
