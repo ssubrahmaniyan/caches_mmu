@@ -1,9 +1,9 @@
 /*
 see LICENSE.iitm
 
-Author: Arjun Menon, Neel Gala, Nitya Ranganathan, Sriram Shanmuga
-Email id: c.arjunmenon@gmail.com, neelgala@gmail.com, nitya.ranganathan@gmail.com, sriramshanmugacf+shakti@gmail.com
-Details:
+Author: Arjun Menon, Neel Gala, Sriram Shanmuga, Nitya Ranganathan
+Email id: c.arjunmenon@gmail.com, neelgala@gmail.com, sriramshanmugacf+shakti@gmail.com, nitya.ranganathan@gmail.com
+Details: sa_dtlb is an associativity-configurable and 'sv39 only' implementation that succeeds fa_dtlb; It supports 4K, 2M and 1G pages; 
 
 --------------------------------------------------------------------------------------------------
 */
@@ -88,10 +88,8 @@ package sa_dtlb;
     provisos (
       Add#(TMul#(TSub#(`varpages,1),`subvpn), a__, xlen),
       Add#(b__, paddr, xlen),
-      `ifdef sv39
-        Add#(c__, 40, xlen),
-        Add#(d__, 27, xlen),
-      `endif
+      Add#(c__, 40, xlen),
+      Add#(d__, 27, xlen),
       Add#(e__, 44, xlen),
       Add#(f__, 56, xlen),
       Add#(g__, 4, xlen)
@@ -255,7 +253,7 @@ package sa_dtlb;
       translation_done = (satp_mode == 0 || priv == 3 || req.ptwalk_req || req.ptwalk_trap);
       DTLB_Cache_response#(paddr) core_resp= ?;
 
-      if(!trap && translation_done)begin
+      if(!trap && translation_done) begin
          trap = |upper_bits == 1;
          exception = req.access == 0? Load_access_fault: Store_access_fault;
       end
@@ -264,7 +262,7 @@ package sa_dtlb;
         $display($time, " PT: DTLB: satp mode %h priv %d ptw_req %d ptw_trap %d trap %d exception %h mprv %d mpp %d", satp_mode, priv, req.ptwalk_req, req.ptwalk_trap, trap, exception, mprv, mpp);
       end
 
-      if(req.sfence && !req.ptwalk_req)begin
+      if(req.sfence && !req.ptwalk_req) begin
         rg_sfence <= True;
         if (`VERBOSITY > 1) begin
           $display($time, " PT: DTLB: case: sfence");
@@ -272,7 +270,7 @@ package sa_dtlb;
       end
       else begin
         Bit#(12) page_offset = va[11 : 0]; 
-        if(translation_done)begin
+        if(translation_done) begin
           core_resp= (DTLB_Cache_response{address: truncate(va),
                                          trap: trap,
                                          exception: exception,
@@ -289,9 +287,9 @@ package sa_dtlb;
             $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
           end
 
-          // `ifdef ASSERT
-          // dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
-          // `endif
+          `ifdef ASSERT
+          dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
+          `endif
 
           if (!tlbmiss_4k) begin
 
@@ -313,28 +311,28 @@ package sa_dtlb;
             end
 
             // check for permission faults
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            if(unused_va != signExtend(va[`maxvaddr-1])) begin
               page_fault = True;
             end
             // pte_4k.a == 0 || pte_4k.d == 0 and access != Load
-            if(!permissions.a || (!permissions.d && req.access != 0))begin
+            if(!permissions.a || (!permissions.d && req.access != 0)) begin
               page_fault = True;
             end
             if(req.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
               page_fault = True;
             end
-            if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+            if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
               page_fault = True;
             end
-            if(!permissions.u && priv == 0)begin
+            if(!permissions.u && priv == 0) begin
               page_fault = True;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
-            if(tlbmiss)begin
+            if(tlbmiss) begin
               rg_miss_queue <= va;
               core_resp= (DTLB_Cache_response{address  : ?,
                                             trap     : False,
@@ -380,28 +378,28 @@ package sa_dtlb;
             end
 
             // check for permission faults
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            if(unused_va != signExtend(va[`maxvaddr-1])) begin
               page_fault = True;
             end
             // pte_2m.a == 0 || pte_2m.d == 0 and access != Load
-            if(!permissions.a || (!permissions.d && req.access != 0))begin
+            if(!permissions.a || (!permissions.d && req.access != 0)) begin
               page_fault = True;
             end
             if(req.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
               page_fault = True;
             end
-            if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+            if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
               page_fault = True;
             end
-            if(!permissions.u && priv == 0)begin
+            if(!permissions.u && priv == 0) begin
               page_fault = True;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
-            if(tlbmiss)begin
+            if(tlbmiss) begin
               rg_miss_queue <= va;
               core_resp= (DTLB_Cache_response{address  : ?,
                                             trap     : False,
@@ -447,28 +445,28 @@ package sa_dtlb;
             end
 
             // check for permission faults
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            if(unused_va != signExtend(va[`maxvaddr-1])) begin
               page_fault = True;
             end
             // pte_1g.a == 0 || pte_1g.d == 0 and access != Load
-            if(!permissions.a || (!permissions.d && req.access != 0))begin
+            if(!permissions.a || (!permissions.d && req.access != 0)) begin
               page_fault = True;
             end
             if(req.access == 0 && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
               page_fault = True;
             end
-            if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+            if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
               page_fault = True;
             end
-            if(!permissions.u && priv == 0)begin
+            if(!permissions.u && priv == 0) begin
               page_fault = True;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w)begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
-            if(tlbmiss)begin
+            if(tlbmiss) begin
               rg_miss_queue <= va;
               core_resp= (DTLB_Cache_response{address  : ?,
                                             trap     : False,
@@ -570,7 +568,7 @@ package sa_dtlb;
 
       Bool tlbmiss = tlbmiss_4k && tlbmiss_2m && tlbmiss_1g;
 
-      if(!trap && translation_done)begin
+      if(!trap && translation_done) begin
          trap = |upper_bits == 1;
       end
 
@@ -588,10 +586,6 @@ package sa_dtlb;
           let x = $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
         end
 
-        // `ifdef ASSERT
-        // dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
-        // `endif
-
         if (!tlbmiss_4k) begin
           let permissions = pte_4k.permissions;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
@@ -602,25 +596,25 @@ package sa_dtlb;
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-            if(unused_va != signExtend(va[`maxvaddr-1]))begin
+            if(unused_va != signExtend(va[`maxvaddr-1])) begin
               page_fault = True;
             end
           // pte_4k.a == 0 || pte_4k.d == 0 and access != Load
-          if(!permissions.a || (!permissions.d && (is_store == 1)))begin
+          if(!permissions.a || (!permissions.d && (is_store == 1))) begin
             page_fault = True;
           end
           if((is_store == 0) && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
             page_fault = True;
           end
-          if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+          if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
             page_fault = True;
           end
-          if(!permissions.u && priv == 0)begin
+          if(!permissions.u && priv == 0) begin
             page_fault = True;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w)begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
             page_fault = True;
           end
 
@@ -636,25 +630,25 @@ package sa_dtlb;
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-          if(unused_va != signExtend(va[`maxvaddr-1]))begin
+          if(unused_va != signExtend(va[`maxvaddr-1])) begin
             page_fault = True;
           end
           // pte_2m.a == 0 || pte_2m.d == 0 and access != Load
-          if(!permissions.a || (!permissions.d && (is_store == 1)))begin
+          if(!permissions.a || (!permissions.d && (is_store == 1))) begin
             page_fault = True;
           end
           if((is_store == 0) && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
             page_fault = True;
           end
-          if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+          if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
             page_fault = True;
           end
-          if(!permissions.u && priv == 0)begin
+          if(!permissions.u && priv == 0) begin
             page_fault = True;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w)begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
             page_fault = True;
           end
 
@@ -670,25 +664,25 @@ package sa_dtlb;
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
           // check for permission faults
-          if(unused_va != signExtend(va[`maxvaddr-1]))begin
+          if(unused_va != signExtend(va[`maxvaddr-1])) begin
             page_fault = True;
           end
           // pte_1g.a == 0 || pte_1g.d == 0 and access != Load
-          if(!permissions.a || (!permissions.d && (is_store == 1)))begin
+          if(!permissions.a || (!permissions.d && (is_store == 1))) begin
             page_fault = True;
           end
           if((is_store == 0) && !permissions.r && (!permissions.x || mxr == 0)) begin// if not readable and not mxr  executable
             page_fault = True;
           end
-          if(priv == 1 && permissions.u && sum == 0)begin // supervisor accessing user
+          if(priv == 1 && permissions.u && sum == 0) begin // supervisor accessing user
             page_fault = True;
           end
-          if(!permissions.u && priv == 0)begin
+          if(!permissions.u && priv == 0) begin
             page_fault = True;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w)begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
             page_fault = True;
           end
 
@@ -716,7 +710,7 @@ package sa_dtlb;
     interface response_frm_ptw = interface Put
       method Action put(PTWalk_tlb_response#(TAdd#(`ppnsize,10), `varpages) resp) if(rg_tlb_miss && !rg_sfence);
 
-        `logTimeLevel( dtlb, 0, $format("DTLB: Put request for , ", fshow(resp)))
+        `logTimeLevel( dtlb, 0, $format("DTLB: Put request for ", fshow(resp)))
 
         let core_req = rg_miss_queue ;
         Bit#(12) page_offset = core_req[11 : 0];
@@ -750,7 +744,8 @@ package sa_dtlb;
             
           end
 
-        end else if (resp.levels == 1) begin
+        end // not a 4K page
+        else if (resp.levels == 1) begin
 
           Bit#(TSub#(`vpnsize, 9)) vpn_2m = truncateLSB(fullvpn);
           Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) actual_mask = truncate(mask);
@@ -774,7 +769,8 @@ package sa_dtlb;
             
           end
 
-        end else begin
+        end // not a 2M page
+        else begin
 
           Bit#(TSub#(`vpnsize, TMul#(`subvpn, 2))) vpn_1g = truncateLSB(fullvpn);
           Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_1g), TMul#(`subvpn, 2)))) actual_vpn = truncateLSB(vpn_1g);
@@ -814,7 +810,6 @@ package sa_dtlb;
         wr_priv <= c;
       endmethod
 
-      /*doc:method: */
       method Action ma_mstatus_from_csr (Bit#(xlen) m);
         wr_mstatus <= m;
       endmethod

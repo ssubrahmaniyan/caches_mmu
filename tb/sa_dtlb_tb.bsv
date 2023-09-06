@@ -3,7 +3,7 @@ see LICENSE.iitm
 
 Author: Sriram Shanmuga
 Email id: sriramshanmugacf+shakti@gmail.com
-Details:
+Details: Testbench for the multi-page dtlb (sa_dtlb); Note: rule ptw_meta_driver is essential for the functioning of the module.
 
 --------------------------------------------------------------------------------------------------
 */
