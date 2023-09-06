@@ -44,7 +44,7 @@ package nb_dcache;
   import BUtils::*;
   import mshr::*;
   import fill_buffer::*;
-  import fa_dtlb::*;
+  import sa_dtlb::*;
   import replacement_dcache::*;
   import Assert  :: * ;
   import io_func::*;
@@ -233,7 +233,7 @@ package nb_dcache;
     Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val];         // data array
     //TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
     Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
-    Ifc_fa_dtlb#(vaddr, paddr) dtlb <-mkfa_dtlb;
+    Ifc_sa_dtlb#(vaddr, paddr) dtlb <-mksa_dtlb;
     Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index, rob_index) fill_buffer <-mkfill_buffer;
     Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
@@ -827,13 +827,13 @@ package nb_dcache;
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB"))
             wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
             rg_cache_busy<= True;
+            `ifdef perfmonitors
+              wr_dtlb_miss <= 1;
+            `endif
           end
           else begin
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
           end
-          `ifdef perfmonitors
-            wr_dtlb_miss <= 1;
-          `endif
         end
         `logTimeLevel( dcache, 1, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 
