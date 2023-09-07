@@ -288,7 +288,7 @@ package sa_dtlb;
           end
 
           `ifdef ASSERT
-          dynamicAssert(((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
+          dynamicAssert(!((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
           `endif
 
           if (!tlbmiss_4k) begin
