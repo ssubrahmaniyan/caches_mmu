@@ -3,7 +3,10 @@ see LICENSE.iitm
 
 Author: Sriram Shanmuga
 Email id: sriramshanmugacf+shakti@gmail.com
-Details: Testbench for sa_dtlb. Every 20 cycles, the pagesize is cycled from 0 to 2 using 'levels' and the following rules take place in order: 
+Details: Testbench for the multi-page dtlb (sa_dtlb.bsv). 
+
+Every 20 cycles, the pagesize is cycled from 0 to 2 using 'levels' and the following rules take place in order: 
+
 	T    : tlb_miss
 	T+4  : fill_cache
 	T+8  : tlb_hit
@@ -11,8 +14,8 @@ Details: Testbench for sa_dtlb. Every 20 cycles, the pagesize is cycled from 0 t
 	T+12 : fence
 	T+18 : probe
 
-Note: rule ptw_meta_driver is essential for the functioning of the module,
-Note: define enable_cache_dump in "nb_dcache.defines" for enabling ma_dump
+Note: rule ptw_meta_driver is essential for the functioning of the module.
+Note: define enable_cache_dump in "nb_dcache.defines" for enabling ma_dump.
 Note: Every new issue is marked by "NEW ISSUE" in logs.
 
 --------------------------------------------------------------------------------------------------
@@ -51,7 +54,7 @@ package sa_dtlb_tb;
 	/*doc:rule: this rule issues a request that results in TLB miss.*/
         rule tlb_miss(cycles % 20 == 0);
 		
-	    $display("NEW CYCLE");
+	    $display("NEW ISSUE");
             let request = Cache_DTLB_request{address : 64'h80122456,
                                             access : 2'b1,
                                             ptwalk_trap : False,
