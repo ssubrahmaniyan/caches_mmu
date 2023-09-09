@@ -36,25 +36,24 @@ package sa_dtlb_tb;
         Ifc_sa_dtlb#(`xlen, `paddr) dut <- mksa_dtlb();
       
         Reg#(int) cycles <- mkReg(1);
-	Reg#(Bit#(2)) levels <- mkReg(0);
+        Reg#(Bit#(2)) levels <- mkReg(0);
 
 	/*doc:rule: this rule is fired every cycle which counts the cycles. */
         rule cycle_counter;
             cycles <= cycles + 1;
         endrule : cycle_counter
 
-    /*doc:rule: this rule drives the ptw_meta values.*/
-    rule ptw_meta_driver;
-        dut.ptw_meta.ma_satp_from_csr(64'h8000000000080007);
-        dut.ptw_meta.ma_curr_priv(2'b1);
-        dut.ptw_meta.ma_mstatus_from_csr(64'h8000000a00046000);
-    endrule : ptw_meta_driver
-
+        /*doc:rule: this rule drives the ptw_meta values.*/
+        rule ptw_meta_driver;
+            dut.ptw_meta.ma_satp_from_csr(64'h8000000000080007);
+            dut.ptw_meta.ma_curr_priv(2'b1);
+            dut.ptw_meta.ma_mstatus_from_csr(64'h8000000a00046000);
+        endrule : ptw_meta_driver
 
 	/*doc:rule: this rule issues a request that results in TLB miss.*/
         rule tlb_miss(cycles % 20 == 0);
 		
-	    $display("NEW ISSUE");
+	        $display("NEW ISSUE");
             let request = Cache_DTLB_request{address : 64'h80122456,
                                             access : 2'b1,
                                             ptwalk_trap : False,
@@ -68,7 +67,7 @@ package sa_dtlb_tb;
 	/*doc:rule: this rule populates the cache with a legal entry.*/
         rule fill_cache ((cycles >= 4) && ((cycles-4) % 20 == 0));
 
-	    levels <= levels + 1;
+	        levels <= levels + 1;
 
             dut.response_frm_ptw.put(PTWalk_tlb_response{pte : 54'h200000cf,
                                                         levels : levels%3,

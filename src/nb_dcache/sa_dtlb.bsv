@@ -527,7 +527,6 @@ package sa_dtlb;
       /*doc:func: check for 2m hit*/
       Bit#(TSub#(`vpnsize, `subvpn)) vpn_2m = truncateLSB(fullvpn);
       function Bool fn_vtag_match_2m (VPNTag_2M t);
-        Bit#(TLog#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn)))) shift = fromInteger(valueOf(TLog#(`dtlbsets_2m)) + `subvpn);
         Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) vpn = truncateLSB(vpn_2m);
         return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
@@ -704,7 +703,6 @@ package sa_dtlb;
 
         Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
         Bit#(`ppnsize) fullppn = truncate(resp.pte >> 10);
-        Bit#(TLog#(TMul#(TSub#(`varpages,1),`subvpn))) shiftamt = `subvpn * zeroExtend(resp.levels);
 
         if (resp.levels == 0) begin
 
@@ -730,7 +728,7 @@ package sa_dtlb;
         end // 4K page
         else if (resp.levels == 1) begin
 
-          Bit#(TSub#(`vpnsize, 9)) vpn_2m = truncateLSB(fullvpn);
+          Bit#(TSub#(`vpnsize, `subvpn)) vpn_2m = truncateLSB(fullvpn);
           Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) actual_vpn = truncateLSB(vpn_2m);
 
           let tag = VPNTag_2M{ permissions: unpack(truncate(resp.pte)),
