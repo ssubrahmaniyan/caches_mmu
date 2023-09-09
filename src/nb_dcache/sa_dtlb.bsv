@@ -211,9 +211,8 @@ package sa_dtlb;
 
       /*doc:func: check for 4k hit*/
       function Bool fn_vtag_match_4k (VPNTag_4K t);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) mask = {'1, t.pagemask};
         Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) vpn = truncateLSB(fullvpn);
-        return t.permissions.v && ((mask & vpn) == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_4k)) set_index_4k = (valueOf(TLog#(`dtlbsets_4k)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets_4k))-1:0]; 
@@ -224,9 +223,8 @@ package sa_dtlb;
       /*doc:func: check for 2m hit*/
       Bit#(TSub#(`vpnsize, `subvpn)) vpn_2m = truncateLSB(fullvpn);
       function Bool fn_vtag_match_2m (VPNTag_2M t);
-        Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) mask = truncate(t.pagemask);
         Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) vpn = truncateLSB(vpn_2m);
-        return t.permissions.v && ((mask & vpn) == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_2m)) set_index_2m = (valueOf(TLog#(`dtlbsets_2m)) == 0) ? 0 : vpn_2m[valueOf(TLog#(`dtlbsets_2m))-1:0]; 
@@ -234,11 +232,20 @@ package sa_dtlb;
       Bool tlbmiss_2m = !isValid(hit_entry_2m);
       VPNTag_2M pte_2m = fromMaybe(?, hit_entry_2m);
 
+//      if (`VERBOSITY > 1) begin
+//        for (Integer i = 0; i < `dtlbsets_2m; i = i + 1) begin
+//          for (Integer j = 0; j < `dtlbways_2m; j = j + 1) begin
+//            Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) lvpn = truncateLSB(vpn_2m);
+//            `logTimeLevel( dtlb, 0, $format("DTLB: checking dtlb_2m[%d][%d] for vpn_2m %h vpn %h t.vpn %h: ", i, j, vpn_2m, lvpn, v_vpn_tags_2m[i][j].vpn, fshow(v_vpn_tags_2m[i][j])))
+//          end
+//        end
+//      end
+
       /*doc:func: check for 1g hit*/
       Bit#(TSub#(`vpnsize, TMul#(`subvpn, 2))) vpn_1g = truncateLSB(fullvpn);
       function Bool fn_vtag_match_1g (VPNTag_1G t);
         Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_1g), TMul#(`subvpn, 2)))) vpn = truncateLSB(vpn_1g);
-        return t.permissions.v && (vpn == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_1g)) set_index_1g = (valueOf(TLog#(`dtlbsets_1g)) == 0) ? 0 : vpn_1g[valueOf(TLog#(`dtlbsets_1g))-1:0]; 
@@ -284,30 +291,31 @@ package sa_dtlb;
           Bit#(TSub#(xlen, `maxvaddr)) unused_va = va[valueOf(xlen) - 1 : `maxvaddr];
 
           if (((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)) && (`VERBOSITY > 1)) begin
-            $display($time, " DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
+            $display($time, " PT: DTLB: multiple hits detected! 4K:%d,2M:%d,1G:%d", !tlbmiss_4k, !tlbmiss_2m, !tlbmiss_1g);
           end
 
           `ifdef ASSERT
           dynamicAssert(!((!tlbmiss_4k && !tlbmiss_2m) || (!tlbmiss_2m && !tlbmiss_1g) || (!tlbmiss_1g && !tlbmiss_4k)), "DTLB: multiple hits detected!");
           `endif
 
+          // hit in 4k table?
           if (!tlbmiss_4k) begin
 
             let permissions = pte_4k.permissions;
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_4k.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_4k.ppn);
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
 
-            `logLevel( dtlb, 2, $format("mask:%h",mask))
-            `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
-            `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
-            `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
-            `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: mask:%h",mask))
+            `logLevel( dtlb, 2, $format("DTLB: lower_ppn:%h",lower_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_vpn:%h",lower_vpn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_pa:%h",lower_pa))
+            `logLevel( dtlb, 2, $format("DTLB: highest_ppn:%h",highest_ppn))
             if (`VERBOSITY > 1) begin
-              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h", va, unused_va, permissions, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn);
+              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h paddr %h", va, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn, physicaladdress);
             end
 
             // check for permission faults
@@ -332,49 +340,39 @@ package sa_dtlb;
             if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
-            if(tlbmiss) begin
-              rg_miss_queue <= va;
-              core_resp= (DTLB_Cache_response{address  : ?,
-                                            trap     : False,
-                                            exception: exception,
-                                            tlbmiss  : True});
-              if (`VERBOSITY > 1) begin
-                $display($time, " PT: DTLB: miss in tlb");
-              end
-            end
-            else begin
-              `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-              `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_4k)))
+
+            `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_4k)))
   `ifdef supervisor
-              exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
+            exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
   `endif
-              core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
+            core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
                                             trap     : page_fault,
                                             exception: exception,
                                             tlbmiss  : False});
-              if (`VERBOSITY > 1) begin
-                $display($time, " PT: DTLB: hit in tlb: paddr %h trap %h exception %h", physicaladdress, page_fault, exception);
-              end
+            if (`VERBOSITY > 1) begin
+              $display($time, " PT: DTLB: hit in tlb: paddr %h trap %h exception %h", physicaladdress, page_fault, exception);
             end
+          end // hit in 4k
 
-          end // No hit in 4k
+          // hit in 2m table?
           else if (!tlbmiss_2m) begin
 
             let permissions = pte_2m.permissions;
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_2m.pagemask);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = 'h3fe00;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_2m.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_2m.ppn);
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
 
-            `logLevel( dtlb, 2, $format("mask:%h",mask))
-            `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
-            `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
-            `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
-            `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: mask:%h",mask))
+            `logLevel( dtlb, 2, $format("DTLB: lower_ppn:%h",lower_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_vpn:%h",lower_vpn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_pa:%h",lower_pa))
+            `logLevel( dtlb, 2, $format("DTLB: highest_ppn:%h",highest_ppn))
             if (`VERBOSITY > 1) begin
-              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h", va, unused_va, permissions, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn);
+              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h paddr %h", va, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn, physicaladdress);
             end
 
             // check for permission faults
@@ -399,49 +397,39 @@ package sa_dtlb;
             if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
-            if(tlbmiss) begin
-              rg_miss_queue <= va;
-              core_resp= (DTLB_Cache_response{address  : ?,
-                                            trap     : False,
-                                            exception: exception,
-                                            tlbmiss  : True});
-              if (`VERBOSITY > 1) begin
-                $display($time, " PT: DTLB: miss in tlb");
-              end
-            end
-            else begin
-              `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
-              `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_2m)))
+
+            `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_2m)))
   `ifdef supervisor
-              exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
+            exception = (req.access == 0) ? Load_page_fault : Store_page_fault;
   `endif
-              core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
+            core_resp= (DTLB_Cache_response{address  : truncate(physicaladdress),
                                             trap     : page_fault,
                                             exception: exception,
                                             tlbmiss  : False});
-              if (`VERBOSITY > 1) begin
-                $display($time, " PT: DTLB: hit in tlb: paddr %h trap %h exception %h", physicaladdress, page_fault, exception);
-              end
+            if (`VERBOSITY > 1) begin
+              $display($time, " PT: DTLB: hit in tlb: paddr %h trap %h exception %h", physicaladdress, page_fault, exception);
             end
+          end // hit in 2m
 
-          end // No hit in 2m
+          // hit in 1g table or miss in all
           else begin
 
             let permissions = pte_1g.permissions;
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_1g.pagemask);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '0;
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_1g.ppn);
             Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+            Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
             Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_1g.ppn);
             Bit#(xlen) physicaladdress = zeroExtend({highest_ppn, lower_pa, page_offset});
 
-            `logLevel( dtlb, 2, $format("mask:%h",mask))
-            `logLevel( dtlb, 2, $format("lower_ppn:%h",lower_ppn))
-            `logLevel( dtlb, 2, $format("lower_vpn:%h",lower_vpn))
-            `logLevel( dtlb, 2, $format("lower_pa:%h",lower_pa))
-            `logLevel( dtlb, 2, $format("highest_ppn:%h",highest_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: mask:%h",mask))
+            `logLevel( dtlb, 2, $format("DTLB: lower_ppn:%h",lower_ppn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_vpn:%h",lower_vpn))
+            `logLevel( dtlb, 2, $format("DTLB: lower_pa:%h",lower_pa))
+            `logLevel( dtlb, 2, $format("DTLB: highest_ppn:%h",highest_ppn))
             if (`VERBOSITY > 1) begin
-              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h", va, unused_va, permissions, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn);
+              $display($time, " PT: DTLB: translating: addr %h unused %h perm %h # mask %h lower_ppn %h lower_vpn %h lower_pa %h highest_ppn %h paddr %h", va, unused_va, permissions, mask, lower_ppn, lower_vpn, lower_pa, highest_ppn, physicaladdress);
             end
 
             // check for permission faults
@@ -466,6 +454,8 @@ package sa_dtlb;
             if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
               page_fault = True;
             end
+
+            // miss in all tables
             if(tlbmiss) begin
               rg_miss_queue <= va;
               core_resp= (DTLB_Cache_response{address  : ?,
@@ -476,6 +466,7 @@ package sa_dtlb;
                 $display($time, " PT: DTLB: miss in tlb");
               end
             end
+            // hit in 1g table
             else begin
               `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
               `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_1g)))
@@ -527,9 +518,8 @@ package sa_dtlb;
 
       /*doc:func: check for 4k hit*/
       function Bool fn_vtag_match_4k (VPNTag_4K t);
-        Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) mask = {'1, t.pagemask};
         Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) vpn = truncateLSB(fullvpn);
-        return t.permissions.v && ((mask & vpn) == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_4k)) set_index_4k = (valueOf(TLog#(`dtlbsets_4k)) == 0) ? 0 : fullvpn[valueOf(TLog#(`dtlbsets_4k))-1:0]; 
@@ -540,9 +530,9 @@ package sa_dtlb;
       /*doc:func: check for 2m hit*/
       Bit#(TSub#(`vpnsize, `subvpn)) vpn_2m = truncateLSB(fullvpn);
       function Bool fn_vtag_match_2m (VPNTag_2M t);
-        Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) mask = truncate(t.pagemask);
+        Bit#(TLog#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn)))) shift = fromInteger(valueOf(TLog#(`dtlbsets_2m)) + `subvpn);
         Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) vpn = truncateLSB(vpn_2m);
-        return t.permissions.v && ((mask & vpn) == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_2m)) set_index_2m = (valueOf(TLog#(`dtlbsets_2m)) == 0) ? 0 : vpn_2m[valueOf(TLog#(`dtlbsets_2m))-1:0]; 
@@ -554,7 +544,7 @@ package sa_dtlb;
       Bit#(TSub#(`vpnsize, TMul#(`subvpn, 2))) vpn_1g = truncateLSB(fullvpn);
       function Bool fn_vtag_match_1g (VPNTag_1G t);
         Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_1g), TMul#(`subvpn, 2)))) vpn = truncateLSB(vpn_1g);
-        return t.permissions.v && (vpn == t.vpn) && (t.asid == satp_asid || t.permissions.g);
+        return t.permissions.v && (vpn == t.vpn) && ((t.asid == satp_asid) || t.permissions.g);
       endfunction
 
       Bit#(TLog#(`dtlbsets_1g)) set_index_1g = (valueOf(TLog#(`dtlbsets_1g)) == 0) ? 0 : vpn_1g[valueOf(TLog#(`dtlbsets_1g))-1:0]; 
@@ -588,10 +578,10 @@ package sa_dtlb;
 
         if (!tlbmiss_4k) begin
           let permissions = pte_4k.permissions;
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_4k.pagemask);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_4k.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_4k.ppn);
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
@@ -622,10 +612,10 @@ package sa_dtlb;
         else if (!tlbmiss_2m) begin
 
           let permissions = pte_2m.permissions;
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_2m.pagemask);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = 'h3fe00;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_2m.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_2m.ppn);
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
@@ -656,10 +646,10 @@ package sa_dtlb;
         else begin
 
           let permissions = pte_1g.permissions;
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = truncate(pte_1g.pagemask);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '0;
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_ppn = truncate(pte_1g.ppn);
           Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_vpn = truncate(fullvpn);
-          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa =(mask&lower_ppn)|(~mask&lower_vpn);
+          Bit#(TMul#(TSub#(`varpages,1),`subvpn)) lower_pa = (mask & lower_ppn) | (~mask & lower_vpn);
           Bit#(`lastppnsize) highest_ppn = truncateLSB(pte_1g.ppn);
           lv_paddr = zeroExtend({highest_ppn, lower_pa, page_offset});
 
@@ -717,19 +707,16 @@ package sa_dtlb;
 
         Bit#(`vpnsize) fullvpn = truncate(core_req >> 12);
         Bit#(`ppnsize) fullppn = truncate(resp.pte >> 10);
-        Bit#(TMul#(TSub#(`varpages,1),`subvpn)) mask = '1;
         Bit#(TLog#(TMul#(TSub#(`varpages,1),`subvpn))) shiftamt = `subvpn * zeroExtend(resp.levels);
-        mask = mask << shiftamt;
 
         if (resp.levels == 0) begin
 
-          Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) actual_mask = {'1, mask};
           Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) actual_vpn = truncateLSB(fullvpn);
 
           let tag = VPNTag_4K{ permissions: unpack(truncate(resp.pte)),
-                          vpn: (actual_mask & actual_vpn),
+                          vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: mask,
+                          pagemask: '1,
                           ppn: fullppn };
 
           if(!resp.trap) begin
@@ -744,24 +731,23 @@ package sa_dtlb;
             
           end
 
-        end // not a 4K page
+        end // 4K page
         else if (resp.levels == 1) begin
 
           Bit#(TSub#(`vpnsize, 9)) vpn_2m = truncateLSB(fullvpn);
-          Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) actual_mask = truncate(mask);
           Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) actual_vpn = truncateLSB(vpn_2m);
 
           let tag = VPNTag_2M{ permissions: unpack(truncate(resp.pte)),
-                          vpn: (actual_mask & actual_vpn),
+                          vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: mask,
+                          pagemask: 'h3fe00,
                           ppn: fullppn };
 
           if(!resp.trap) begin
 
             Bit#(TLog#(`dtlbsets_2m)) set_index = (valueOf(TLog#(`dtlbsets_2m)) == 0) ? 0 : vpn_2m[valueOf(TLog#(`dtlbsets_2m))-1:0]; 
-            `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d in PT:%d for (%x), ", 
-                                            rgs_replace_2m[set_index], set_index, resp.levels, core_req, fshow(tag)))
+            `logTimeLevel( dtlb, 0, $format("DTLB: Allocating index:%d in set:%d in PT:%d with actual_vpn %x for (%x), ", 
+                                            rgs_replace_2m[set_index], set_index, resp.levels, actual_vpn, core_req, fshow(tag)))
 
             v_vpn_tags_2m[set_index][rgs_replace_2m[set_index]] <= tag;
 
@@ -769,7 +755,7 @@ package sa_dtlb;
             
           end
 
-        end // not a 2M page
+        end // 2M page
         else begin
 
           Bit#(TSub#(`vpnsize, TMul#(`subvpn, 2))) vpn_1g = truncateLSB(fullvpn);
@@ -778,7 +764,7 @@ package sa_dtlb;
           let tag = VPNTag_1G{ permissions: unpack(truncate(resp.pte)),
                           vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: mask,
+                          pagemask: '0,
                           ppn: fullppn };
 
           if(!resp.trap) begin
@@ -793,7 +779,7 @@ package sa_dtlb;
             
           end
 
-        end
+        end // 1G page
 
         if (`VERBOSITY > 1) begin
           $display($time, " PT: DTLB: Response received from PTW: pte %h levels %d trap %d cause %h", resp.pte, resp.levels, resp.trap, resp.cause);
