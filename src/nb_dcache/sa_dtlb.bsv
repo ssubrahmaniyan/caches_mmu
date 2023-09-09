@@ -29,7 +29,6 @@ package sa_dtlb;
     TLB_permissions permissions;
     Bit#(TSub#(`vpnsize, TLog#(`dtlbsets_4k))) vpn;
     Bit#(`asidwidth) asid;
-    Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
   } VPNTag_4K deriving(Bits, FShow, Eq);
 
@@ -37,7 +36,6 @@ package sa_dtlb;
     TLB_permissions permissions;
     Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) vpn;
     Bit#(`asidwidth) asid;
-    Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
   } VPNTag_2M deriving(Bits, FShow, Eq);
 
@@ -45,7 +43,6 @@ package sa_dtlb;
     TLB_permissions permissions;
     Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_1g), TMul#(`subvpn, 2)))) vpn;
     Bit#(`asidwidth) asid;
-    Bit#(TMul#(TSub#(`varpages,1), `subvpn)) pagemask;
     Bit#(`ppnsize) ppn;
   } VPNTag_1G deriving(Bits, FShow, Eq);
 
@@ -716,7 +713,6 @@ package sa_dtlb;
           let tag = VPNTag_4K{ permissions: unpack(truncate(resp.pte)),
                           vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: '1,
                           ppn: fullppn };
 
           if(!resp.trap) begin
@@ -740,7 +736,6 @@ package sa_dtlb;
           let tag = VPNTag_2M{ permissions: unpack(truncate(resp.pte)),
                           vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: 'h3fe00,
                           ppn: fullppn };
 
           if(!resp.trap) begin
@@ -764,7 +759,6 @@ package sa_dtlb;
           let tag = VPNTag_1G{ permissions: unpack(truncate(resp.pte)),
                           vpn: actual_vpn,
                           asid: satp_asid,
-                          pagemask: '0,
                           ppn: fullppn };
 
           if(!resp.trap) begin
@@ -818,7 +812,7 @@ package sa_dtlb;
     
     `ifdef enable_cache_dump
     /*doc:method: dump the entire cache*/
-    method Action dump;
+    method Action ma_dump;
 
       for (Integer i = 0; i < `dtlbsets_4k; i = i + 1) begin
         for (Integer j = 0; j < `dtlbways_4k; j = j + 1) begin
@@ -826,19 +820,19 @@ package sa_dtlb;
         end
       end
 
-      for (Integer i = 0; i < `dtlbsets_4k; i = i + 1) begin
-        for (Integer j = 0; j < `dtlbways_4k; j = j + 1) begin
+      for (Integer i = 0; i < `dtlbsets_2m; i = i + 1) begin
+        for (Integer j = 0; j < `dtlbways_2m; j = j + 1) begin
           $display("2M: Set%d, Entry%d", i, j, fshow(v_vpn_tags_2m[i][j]));
         end
       end
 
-      for (Integer i = 0; i < `dtlbsets_4k; i = i + 1) begin
-        for (Integer j = 0; j < `dtlbways_4k; j = j + 1) begin
+      for (Integer i = 0; i < `dtlbsets_1g; i = i + 1) begin
+        for (Integer j = 0; j < `dtlbways_1g; j = j + 1) begin
           $display("1G: Set%d, Entry%d", i, j, fshow(v_vpn_tags_1g[i][j]));
         end
       end
 
-    endmethod : dump
+    endmethod : ma_dump
     `endif
     
   endmodule
