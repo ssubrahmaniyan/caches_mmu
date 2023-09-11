@@ -44,7 +44,7 @@ package nb_dcache;
   import BUtils::*;
   import mshr::*;
   import fill_buffer::*;
-  import fa_dtlb::*;
+  import sa_dtlb::*;
   import replacement_dcache::*;
   import Assert  :: * ;
   import io_func::*;
@@ -85,22 +85,23 @@ package nb_dcache;
     method Action flush(Bit#(rob_index) head, Bit#(rob_index) flush_rob);
     method Action load_drop(Bit#(rob_index) load_rob);
     method Bool cache_busy;
-`ifdef supervisor
-    method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
-`endif
-`ifdef pref
-  method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
-`endif
-`ifdef perfmonitors
-    method DCACHE_cntrs mv_dcache_perf_counters();
-`endif
-`ifdef simulate
-  `ifdef fesvr_sim
-    `ifndef baremetal_sim
-        method Action debug_print();
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
+    `ifdef supervisor
+      method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
     `endif
-  `endif
-`endif
+    `ifdef prefetch
+      method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
+    `endif
+    `ifdef perfmonitors
+      method DCACHE_cntrs mv_dcache_perf_counters();
+    `endif
+    `ifdef simulate
+      `ifdef fesvr_sim
+        `ifndef baremetal_sim
+          method Action debug_print();
+        `endif
+      `endif
+    `endif
   endinterface
 
   (*preempts = "rl_MSHR_req_to_fill_buffer, rl_stage2_req_to_fb"*)
@@ -202,6 +203,15 @@ package nb_dcache;
     `ifdef atomic
       , Add#(w__, 32, datawidth)
     `endif
+    `ifdef iclass
+      , Add#(buswidth, TAdd#(buswidth, buswidth), h__),
+        Mul#(8, y__, buswidth),
+        Mul#(16, x__, buswidth),
+        Mul#(32, k__, buswidth),
+        Mul#(datawidth, c__, buswidth),
+        Add#(z__, datawidth, buswidth),
+        Add#(aa__, buswidth, 128)
+    `endif
     //----------------------//
     );
 
@@ -223,7 +233,7 @@ package nb_dcache;
     Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val];         // data array
     //TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
     Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
-    Ifc_fa_dtlb#(vaddr, paddr) dtlb <-mkfa_dtlb;
+    Ifc_sa_dtlb#(vaddr, paddr) dtlb <-mksa_dtlb;
     Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index, rob_index) fill_buffer <-mkfill_buffer;
     Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
@@ -355,7 +365,11 @@ package nb_dcache;
     Wire#(Bool) wr_load_drop_valid <- mkDWire(False);
     Wire#(Bit#(rob_index)) wr_load_drop_robid <- mkDWire(0);
 
-  `ifdef pref
+    Wire#(Bit#(1)) wr_stage1_valid <- mkDWire(0);
+    Wire#(Bit#(1)) wr_stage1_load <- mkDWire(0);
+    Wire#(Bit#(prf_index)) wr_stage1_prf_index <- mkDWire(0);
+
+  `ifdef prefetch
     Reg#(Bit#(1)) rg_fill_response_valid <- mkDReg(0);
     Reg#(Bit#(1)) rg_fill_response_demand <- mkReg(0);
     Reg#(Bit#(TSub#(paddr, lineoffset))) rg_fill_response_address <- mkReg(0);
@@ -388,6 +402,30 @@ package nb_dcache;
 `endif
 
 
+  `ifdef iclass
+    function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
+      Bit#(buswidth) lv_cmask = '0;
+      Bit#(linewidth) lv_lmask = '0;
+
+      Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
+                             size[1 : 0] == 1?'hFFFF : 
+                             size[1 : 0] == 2?'hFFFFFFFF : '1;
+      Bit#(linewidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+                                    size=='d1? duplicate(core_data[15:0]) :
+                                    size=='d2? duplicate(core_data[31:0]) :
+                                               duplicate(core_data);
+      lv_cmask = zeroExtend(temp);
+      lv_cmask = lv_cmask << {line_offset[3:0], 3'd0};
+      lv_lmask = zeroExtend(lv_cmask);
+      lv_lmask = (line_offset[5:4] == 2'b11) ? (lv_lmask << 'd384)
+                  : ((line_offset[5:4] == 2'b10) ? (lv_lmask << 'd256)
+                      : ((line_offset[5:4] == 2'b01) ? (lv_lmask << 'd128) : lv_lmask));
+
+      Bit#(linewidth) writedata= (lv_lmask & data_to_mask) | (~lv_lmask & sram_data);
+      return writedata;
+    endfunction
+
+  `else
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(datawidth) core_data, Bit#(lineoffset) line_offset, Bit#(3) size);
       Bit#(datawidth) temp = size[1 : 0] == 0?'hFF : 
                              size[1 : 0] == 1?'hFFFF : 
@@ -401,7 +439,33 @@ package nb_dcache;
       Bit#(linewidth) writedata= (mask & data_to_mask) | (~mask & sram_data);
       return writedata;
     endfunction
+  `endif
 
+  `ifdef iclass
+    function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size);
+      Bit#(buswidth) lv_chunk = '0;
+
+      lv_chunk = (line_offset[5:4] == 2'b11) ? truncate(line[511:384])
+                  : ((line_offset[5:4] == 2'b10) ? truncate(line[383:256])
+                      : ((line_offset[5:4] == 2'b01) ? truncate(line[255:128]) : truncate(line[127:0])));
+
+      lv_chunk = lv_chunk >> {line_offset[3:0], 3'd0};
+      Bit#(datawidth) readdata= truncate(lv_chunk);
+      Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
+                             size[1 : 0] == 1?'hFFFF : 
+                             size[1 : 0] == 2?'hFFFFFFFF : '1;
+      if(size[2]==0) begin
+        readdata = size[1 : 0] == 0? signExtend(readdata[7:0]): 
+                   size[1 : 0] == 1? signExtend(readdata[15:0]): 
+                   size[1 : 0] == 2? signExtend(readdata[31:0]) : readdata;
+      end
+      else begin
+        readdata = readdata & mask;
+      end
+      return readdata;
+    endfunction
+
+  `else
     function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size);
       line = line>>{line_offset,3'd0};
       Bit#(datawidth) readdata= truncate(line);
@@ -418,6 +482,7 @@ package nb_dcache;
       end
       return readdata;
     endfunction
+  `endif
 
     function Cache_req#(paddr, datawidth, rob_index, prf_index) convert_to_Cache_req(Req_from_core#(paddr, datawidth, rob_index, prf_index, lsq_index) req);
       Bit#(datawidth) lv_payload= req.origin==Store_commit? req.data : zeroExtend(req.prf_index);
@@ -653,6 +718,7 @@ package nb_dcache;
         else if(!resp_from_tlb.tlbmiss || is_IO_access) begin      //Hit in the TLB or is an IO operation
 `endif
           `logTimeLevel( dcache, 1, $format("DCACHE : Hit in the TLB"))
+
           if(resp_from_tlb.trap) begin  //Access fault
             if (req.origin != Store_buffer) begin
               rg_cache_busy<= True;
@@ -663,24 +729,42 @@ package nb_dcache;
               `logTimeLevel( dcache, 1, $format("DCACHE : Access fault on prefetch request address: dropping."))
             end
           end
+
+          `ifdef atomic
+            else if(is_IO_access && core_req.is_atomic) begin
+              rg_cache_busy <= True;
+              `logTimeLevel( dcache, 1, $format("DCACHE : Access fault: IO atomics not supported!"))
+              DCache_exception lv_excp = ((core_req.origin == Store_commit) && (core_req.atomic_fn != 'h5) && (core_req.atomic_fn != 'h15)) ? Store_access_fault : Load_access_fault;
+              rg_access_fault_response <= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
+            end
+          `endif
+
+          else if(is_IO_access && (core_req.origin == PTW)) begin
+            rg_cache_busy <= True;
+            `logTimeLevel( dcache, 1, $format("DCACHE : Access fault: PTW access to IO space not supported!"))
+            DCache_exception lv_excp = Load_access_fault;
+            rg_access_fault_response <= tuple4(lv_excp, core_req.prf_index, core_req.rob, core_req.addr);
+          end
+
           else begin  //Access is valid
             Bool lv_sc_pass= True;
-          `ifdef atomic
-            if(core_req.is_atomic) begin
-              if((core_req.atomic_fn=='h5 || core_req.atomic_fn=='h15) && !tpl_1(rg_lr_info)) //(LR.W or LR.D) and rg_lr_info is false
-                rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
-              else
-                rg_lr_info<= tuple3(False, ?, ?);
+            `ifdef atomic
+              if(core_req.is_atomic) begin
+                if((core_req.atomic_fn=='h5 || core_req.atomic_fn=='h15) && !tpl_1(rg_lr_info)) //(LR.W or LR.D) and rg_lr_info is false
+                  rg_lr_info<= tuple3(True, resp_from_tlb.address, core_req.rob);
+                else
+                  rg_lr_info<= tuple3(False, ?, ?);
 
-              if(core_req.atomic_fn=='h7 || core_req.atomic_fn=='h17) begin   //SC.W or SC.D
-                Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
-                if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
-                  lv_sc_pass= False;
+                if(core_req.atomic_fn=='h7 || core_req.atomic_fn=='h17) begin   //SC.W or SC.D
+                  Bit#(TSub#(paddr,3)) lv_reserved_addr= tpl_2(rg_lr_info)[paddr_val-1:3];
+                  if(!(tpl_1(rg_lr_info) && lv_reserved_addr==resp_from_tlb.address[paddr_val-1:3]))
+                    lv_sc_pass= False;
+                end
               end
-            end
-            else 
-              rg_lr_info<= tuple3(False, ?, ?);
-          `endif
+              else begin
+                rg_lr_info<= tuple3(False, ?, ?);
+              end
+            `endif // atomic
 
             // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
             `ifdef store_early_ack
@@ -692,7 +776,7 @@ package nb_dcache;
                                                         rob: req.rob,
                                                         exception: No_exception
                                                         `ifdef atomic
-                                                        `ifdef simulate
+                                                        `ifdef commit_log
                                                            ,  atomic_result: 0
                                                         `endif
                                                         `endif };
@@ -704,7 +788,7 @@ package nb_dcache;
                 //Enqueue into a separate FIFO that handles IO Requests
                 `logTimeLevel( dcache, 1, $format("DCACHE : IO request sent to Stage2"))
                 `ifdef ASSERT
-                  dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE: Origin wrong for IO request.");
+                  dynamicAssert(req.origin==Store_commit || req.origin==Load_buffer,"DCACHE : Origin wrong for IO request.");
                 `endif
                 ff_io_info.enq(req);
                 rg_access_fault_response<= tuple4(defaultValue, ?, ?, core_req.addr);
@@ -716,33 +800,40 @@ package nb_dcache;
               else begin
                 `logTimeLevel( dcache, 1, $format("DCACHE : Prefetch request sent for an IO address: dropping."))
               end
-            end
+            end // io access
+
             else if(lv_sc_pass) begin  //Else it's a cacheable request. Enqueue in the first stage FIFO.
               `logTimeLevel( dcache, 1, $format("DCACHE : Sending req ", fshow(req), " to Stage2"))
               ff_first_stage.enq(req);
+              // regular load in stage1
+              wr_stage1_valid <= 1;
+              wr_stage1_load <= pack(req.origin == Load_buffer);
+              wr_stage1_prf_index <= req.prf_index;
             end
-          `ifdef atomic
-            else begin
-              rg_sc_fail<= True;
-              rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
-              rg_cache_busy<= True;
-              `logTimeLevel( dcache, 1, $format("DCACHE : Atomic failed"))
-            end
-          `endif
+
+            `ifdef atomic
+              else begin
+                rg_sc_fail<= True;
+                rg_access_fault_response<= tuple4(defaultValue, core_req.prf_index, core_req.rob, ?);
+                rg_cache_busy<= True;
+                `logTimeLevel( dcache, 1, $format("DCACHE : Atomic failed"))
+              end
+            `endif
           end // no trap
         end // TLB hit
+
         else begin    //Miss in the TLB and not IO or fence operation
           if (core_req.origin != Store_buffer) begin
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB"))
             wr_req_to_ptw<= core_req;    //TODO PTW will store the req and send it again, once PTW is done.
             rg_cache_busy<= True;
+            `ifdef perfmonitors
+              wr_dtlb_miss <= 1;
+            `endif
           end
           else begin
             `logTimeLevel( dcache, 1, $format("DCACHE : Miss in the TLB for prefetch request: dropping."))
           end
-          `ifdef perfmonitors
-            wr_dtlb_miss <= 1;
-          `endif
         end
         `logTimeLevel( dcache, 1, $format("DCACHE : Physical addr from TLB: %h", req.addr))
 
@@ -760,7 +851,7 @@ package nb_dcache;
                                       prf_index: tpl_2(rg_access_fault_response),
                                       exception: tpl_1(rg_access_fault_response)
                                       `ifdef atomic
-                                        `ifdef simulate
+                                        `ifdef commit_log
                                         ,  atomic_result: 0
                                         `endif
                                       `endif };
@@ -776,7 +867,7 @@ package nb_dcache;
                                       rob: tpl_3(rg_access_fault_response),
                                       exception: defaultValue
                                       `ifdef atomic
-                                        `ifdef simulate
+                                        `ifdef commit_log
                                         ,  atomic_result: 0
                                         `endif
                                       `endif };
@@ -905,7 +996,7 @@ package nb_dcache;
                                                   rob: req.rob,
                                                   exception: No_exception
                                                   `ifdef atomic
-                                                    `ifdef simulate
+                                                    `ifdef commit_log
                                                       ,  atomic_result: 0
                                                     `endif
                                                   `endif };
@@ -993,7 +1084,7 @@ package nb_dcache;
                                                                           rob: req.rob,
                                                                           exception: No_exception
                                                                           `ifdef atomic
-                                                                            `ifdef simulate
+                                                                            `ifdef commit_log
                                                                             ,  atomic_result: atomic_result
                                                                             `endif
                                                                           `endif };
@@ -1070,7 +1161,7 @@ package nb_dcache;
                                                      rob: req.rob,
                                                      exception: No_exception
                                                      `ifdef atomic
-                                                       `ifdef simulate
+                                                       `ifdef commit_log
                                                        ,  atomic_result: 0
                                                        `endif
                                                      `endif };
@@ -1187,7 +1278,7 @@ package nb_dcache;
                                                              rob: req.rob,
                                                              exception: No_exception
                                                              `ifdef atomic
-                                                               `ifdef simulate
+                                                               `ifdef commit_log
                                                                ,  atomic_result: '0
                                                                `endif
                                                              `endif };
@@ -1383,7 +1474,7 @@ package nb_dcache;
           if(req_from_mshr.is_atomic && (req_from_mshr.atomic_fn=='h7 || req_from_mshr.atomic_fn=='h17)) begin //SC
             data_to_core= 0;
           end
-          `ifdef simulate
+          `ifdef commit_log
             let lv_atomic_result = fn_atomic_op(req_from_mshr.atomic_fn, req_from_mshr.payload, data_to_core);
           `endif
         `endif
@@ -1392,7 +1483,7 @@ package nb_dcache;
                                                 rob: req_from_mshr.rob,
                                                 exception: No_exception
                                                 `ifdef atomic
-                                                  `ifdef simulate
+                                                  `ifdef commit_log
                                                   ,  atomic_result: lv_atomic_result
                                                   `endif
                                                 `endif };
@@ -2023,12 +2114,12 @@ package nb_dcache;
         rg_sc_fail<= False;
       `endif
 
-      wr_resp_to_core<= Resp_to_core { data: ?,
-                                       prf_index: ?,
+      wr_resp_to_core<= Resp_to_core { data: '0,
+                                       prf_index: '0,
                                        rob: rg_fence_rob,
                                        exception: No_exception
                                        `ifdef atomic
-                                         `ifdef simulate
+                                         `ifdef commit_log
                                          ,  atomic_result: 0
                                          `endif
                                        `endif };
@@ -2080,13 +2171,13 @@ package nb_dcache;
                                        rob: ff_io_info.first.rob,
                                        exception: resp.exception
                                        `ifdef atomic
-                                         `ifdef simulate
+                                         `ifdef commit_log
                                          ,  atomic_result: 0
                                          `endif
                                        `endif };
     endrule
 
-`ifdef pref
+`ifdef prefetch
     rule rl_fill_response_to_prefetch;
       if (wr_read_resp_from_mem.id != '1) begin  // valid mem response
         if (fill_buffer.first_response_from_mem()) begin // response for first chunk
@@ -2290,13 +2381,17 @@ package nb_dcache;
       `logTimeLevel( dcache, 1, $format("DCACHE : Load (early) drop received for rob_id %d", load_rob))
     endmethod
 
+    method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
+      return tuple3(wr_stage1_valid, wr_stage1_load, wr_stage1_prf_index);
+    endmethod
+
 `ifdef supervisor
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       return dtlb.early_lookup(vaddr, is_store);
     endmethod
 `endif // supervisor
 
-`ifdef pref
+`ifdef prefetch
     method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info();
       return tuple3(rg_fill_response_valid, rg_fill_response_demand, rg_fill_response_address);
     endmethod
