@@ -166,6 +166,9 @@ module mkptwalk(Ifc_ptwalk);
   Wire#(Bool) wr_deq_holding_ff <- mkWire();
 //HSTATUS?//
 
+	Reg#(Bit#(TAdd#(`ppnsize,10))) rg_s1_pte <- mkReg(0);
+  Reg#(Bit#(TAdd#(`ppnsize , 12))) rg_mtval2 <- mkReg(0);
+
   function DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) gen_dcache_packet (PTWalk_tlb_request#(`vaddr) req, 
                                                  Bool reqtype, Bool trap, Bit#(`causesize) cause);
     return DMem_request{address     : req.address,
@@ -342,6 +345,7 @@ module mkptwalk(Ifc_ptwalk);
       fault=True;
     end
     else if(permissions.x||permissions.r||permissions.w) begin // valid PTE
+    	`logLevel( ptwalk, 2, $format("PTW : Valid PTE: access: %b prv: %b u: %b sum: %b", request.access, prv, permissions.u, sum))
       // general
       if(!permissions.a || (!permissions.d && (request.access==2 || request.access==1)))
         fault=True;
@@ -394,6 +398,8 @@ module mkptwalk(Ifc_ptwalk);
 	                                cause   : ?
 	                              `ifdef hypervisor 
   	                              , virt: pack(rg_stage2) & request.virt
+																	, s1_pte: rg_s1_pte
+																	, mtval2: rg_mtval2
 	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
@@ -431,6 +437,8 @@ module mkptwalk(Ifc_ptwalk);
                                       cause   : cause
 	                              `ifdef hypervisor 
   	                              , virt: pack(rg_stage2) & request.virt
+																	, s1_pte: rg_s1_pte
+																	, mtval2: rg_mtval2
 	                              `endif });
       ff_req_queue.deq();
       rg_state<=GeneratePTE;
@@ -476,6 +484,8 @@ module mkptwalk(Ifc_ptwalk);
 	                                            cause   : ?
 	                                          `ifdef hypervisor 
   	                                          , virt: pack(rg_stage2) & request.virt
+																							, s1_pte: rg_s1_pte
+																							, mtval2: rg_mtval2
 	                                          `endif };
 	        ff_response.enq(tlb_resp);
 	        `logLevel( ptwalk, 0, $format("PTW: Sending response to from Stage1 TLB:",temp1))
@@ -498,6 +508,8 @@ module mkptwalk(Ifc_ptwalk);
           lv_levels = hgatp_mode == 8?2 : 3;
         `endif
     	    rg_stage2<= True;
+					rg_s1_pte<= truncate(response.word);
+					rg_mtval2<= temp1;
           rg_gpa<=temp1; 	//rg_gpa ,for next stage 
           rg_state<=GeneratePTE;
           `logLevel( ptwalk, 2, $format("PTW : (Second Stage) Pointer to NextLevel:%h Levels:%d", temp1, lv_levels))
@@ -510,6 +522,8 @@ module mkptwalk(Ifc_ptwalk);
 	                                cause   : cause
 	                              `ifdef hypervisor 
   	                              , virt: pack(rg_stage2) & request.virt
+																	, s1_pte: rg_s1_pte
+																	, mtval2: rg_mtval2
 	                              `endif });
       	`logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
 	                              lv_levels))

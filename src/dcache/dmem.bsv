@@ -124,7 +124,7 @@ package dmem;
   function DTLB_core_request#(`vaddr) get_tlb_packet
                                     (DMem_request#(`vaddr, TMul#(`dwords, 8), `desize) req);
           return DTLB_core_request{   address   : req.address,
-                                      access    : req.access,
+                                      access    : (req.access== 2 && req.atomic_op[3:0]=='b0101) ? 0 : req.access,
                                       cause     : truncate(req.writedata),
                                       ptwalk_trap: req.ptwalk_trap,
                                       ptwalk_req: req.ptwalk_req,
@@ -182,6 +182,9 @@ package dmem;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
     method Action ma_curr_priv (Bit#(2) c);
       dcache.ma_curr_priv(c);
+      `ifndef hypervisor
+	      dtlb.ma_curr_priv(c);
+      `endif
     endmethod
   `ifdef supervisor
     interface get_ptw_resp = dcache.get_ptw_resp;
