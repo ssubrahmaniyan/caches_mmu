@@ -229,15 +229,6 @@ package sa_dtlb;
       Bool tlbmiss_2m = !isValid(hit_entry_2m);
       VPNTag_2M pte_2m = fromMaybe(?, hit_entry_2m);
 
-//      if (`VERBOSITY > 1) begin
-//        for (Integer i = 0; i < `dtlbsets_2m; i = i + 1) begin
-//          for (Integer j = 0; j < `dtlbways_2m; j = j + 1) begin
-//            Bit#(TSub#(`vpnsize, TAdd#(TLog#(`dtlbsets_2m), `subvpn))) lvpn = truncateLSB(vpn_2m);
-//            `logTimeLevel( dtlb, 0, $format("DTLB: checking dtlb_2m[%d][%d] for vpn_2m %h vpn %h t.vpn %h: ", i, j, vpn_2m, lvpn, v_vpn_tags_2m[i][j].vpn, fshow(v_vpn_tags_2m[i][j])))
-//          end
-//        end
-//      end
-
       /*doc:func: check for 1g hit*/
       Bit#(TSub#(`vpnsize, TMul#(`subvpn, 2))) vpn_1g = truncateLSB(fullvpn);
       function Bool fn_vtag_match_1g (VPNTag_1G t);
