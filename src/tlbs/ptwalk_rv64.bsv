@@ -183,6 +183,8 @@ package ptwalk_rv64;
       Bit#(9) ppn1 = response.word[27 : 19];
       Bit#(9) ppn2 = response.word[36 : 28];
       
+      Bit#(10) upper_ten = response.word[63 : 54];
+
       Bool fault = False;
 `ifndef iclass
       Bit#(`causesize) cause = 0;
@@ -205,6 +207,9 @@ package ptwalk_rv64;
       else if(permissions.x||permissions.r||permissions.w) begin // valid PTE
         // general
         if(!permissions.a || (!permissions.d && (request.access == 2||request.access == 1)))
+          fault = True;
+
+        if (upper_ten != 0) 
           fault = True;
 
         // for execute access

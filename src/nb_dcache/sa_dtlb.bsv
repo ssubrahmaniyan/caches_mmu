@@ -325,7 +325,26 @@ package sa_dtlb;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not writable
+              page_fault = True;
+            end
+
+            // Store and Dirty bit unset
+            if (req.access == 1 && !permissions.d) begin
+              page_fault = True;
+            end
+            // Writable pages must also be readable
+            if (permissions.w && !permissions.r) begin
+              page_fault = True;
+            end
+
+            // For non-leaf PTEs, the D, A, and U bits should be cleared.
+            if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
+              page_fault = True;
+            end
+
+            // Reserved cases
+            if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
               page_fault = True;
             end
 
