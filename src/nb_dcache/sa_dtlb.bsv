@@ -330,21 +330,12 @@ package sa_dtlb;
             end
 
             // Store and Dirty bit unset
-            if (req.access == 1 && !permissions.d) begin
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
+
             // Writable pages must also be readable
             if (permissions.w && !permissions.r) begin
-              page_fault = True;
-            end
-
-            // For non-leaf PTEs, the D, A, and U bits should be cleared.
-            if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-              page_fault = True;
-            end
-
-            // Reserved cases
-            if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
               page_fault = True;
             end
 
@@ -406,21 +397,12 @@ package sa_dtlb;
             end
 
             // Store and Dirty bit unset
-            if (req.access == 1 && !permissions.d) begin
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
+
             // Writable pages must also be readable
             if (permissions.w && !permissions.r) begin
-              page_fault = True;
-            end
-
-            // For non-leaf PTEs, the D, A, and U bits should be cleared.
-            if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-              page_fault = True;
-            end
-
-            // Reserved cases
-            if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
               page_fault = True;
             end
 
@@ -482,21 +464,12 @@ package sa_dtlb;
             end
 
             // Store and Dirty bit unset
-            if (req.access == 1 && !permissions.d) begin
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
+
             // Writable pages must also be readable
             if (permissions.w && !permissions.r) begin
-              page_fault = True;
-            end
-
-            // For non-leaf PTEs, the D, A, and U bits should be cleared.
-            if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-              page_fault = True;
-            end
-
-            // Reserved cases
-            if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
               page_fault = True;
             end
 
@@ -661,16 +634,6 @@ package sa_dtlb;
             page_fault = True;
           end
 
-          // For non-leaf PTEs, the D, A, and U bits should be cleared.
-          if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-            page_fault = True;
-          end
-
-          // Reserved cases
-          if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
-            page_fault = True;
-          end
-
         end // No hit in 4k
         else if (!tlbmiss_2m) begin
 
@@ -714,16 +677,6 @@ package sa_dtlb;
             page_fault = True;
           end
 
-          // For non-leaf PTEs, the D, A, and U bits should be cleared.
-          if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-            page_fault = True;
-          end
-
-          // Reserved cases
-          if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
-            page_fault = True;
-          end
-
         end // No hit in 2m
         else begin
 
@@ -764,16 +717,6 @@ package sa_dtlb;
           end
           // Writable pages must also be readable
           if (permissions.w && !permissions.r) begin
-            page_fault = True;
-          end
-
-          // For non-leaf PTEs, the D, A, and U bits should be cleared.
-          if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
-            page_fault = True;
-          end
-
-          // Reserved cases
-          if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) begin
             page_fault = True;
           end
 
