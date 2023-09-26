@@ -396,11 +396,6 @@ package sa_dtlb;
               page_fault = True;
             end
 
-            // Writable pages must also be readable
-            if (permissions.w && !permissions.r) begin
-              page_fault = True;
-            end
-
             `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
             `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_2m)))
   `ifdef supervisor
@@ -460,11 +455,6 @@ package sa_dtlb;
 
             // Store and Dirty bit unset
             if ((req.access == 1 || req.access == 2) && !permissions.d) begin
-              page_fault = True;
-            end
-
-            // Writable pages must also be readable
-            if (permissions.w && !permissions.r) begin
               page_fault = True;
             end
 
@@ -624,10 +614,6 @@ package sa_dtlb;
           if ((is_store == 1) && !permissions.d) begin
             page_fault = True;
           end
-          // Writable pages must also be readable
-          if (permissions.w && !permissions.r) begin
-            page_fault = True;
-          end
 
         end // No hit in 4k
         else if (!tlbmiss_2m) begin
@@ -667,10 +653,6 @@ package sa_dtlb;
           if ((is_store == 1) && !permissions.d) begin
             page_fault = True;
           end
-          // Writable pages must also be readable
-          if (permissions.w && !permissions.r) begin
-            page_fault = True;
-          end
 
         end // No hit in 2m
         else begin
@@ -708,10 +690,6 @@ package sa_dtlb;
 
           // Store and Dirty bit unset
           if ((is_store == 1) && !permissions.d) begin
-            page_fault = True;
-          end
-          // Writable pages must also be readable
-          if (permissions.w && !permissions.r) begin
             page_fault = True;
           end
 
