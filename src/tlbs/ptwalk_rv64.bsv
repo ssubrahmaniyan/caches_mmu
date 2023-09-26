@@ -183,7 +183,9 @@ package ptwalk_rv64;
       Bit#(9) ppn1 = response.word[27 : 19];
       Bit#(9) ppn2 = response.word[36 : 28];
       
+    `ifdef iclass
       Bit#(10) upper_ten = response.word[63 : 54];
+    `endif
 
       Bool fault = False;
       Bit#(`causesize) cause = 0;
@@ -205,8 +207,10 @@ package ptwalk_rv64;
         if(!permissions.a || (!permissions.d && (request.access == 2||request.access == 1)))
           fault = True;
 
+      `ifdef iclass
         if (upper_ten != 0) 
           fault = True;
+      `endif
 
         // for execute access
         if(request.access == 3  && !permissions.x)
@@ -226,6 +230,10 @@ package ptwalk_rv64;
         
         // for Store access
         if((request.access == 2 || request.access == 1) && !permissions.w) // Store but no write permissions
+          fault = True;
+
+        // Writable pages must also be readable
+        if (permissions.w && !permissions.r) 
           fault = True;
 
         // mis - aligned page fault

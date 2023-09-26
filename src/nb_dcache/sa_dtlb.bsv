@@ -334,11 +334,6 @@ package sa_dtlb;
               page_fault = True;
             end
 
-            // Writable pages must also be readable
-            if (permissions.w && !permissions.r) begin
-              page_fault = True;
-            end
-
             `logTimeLevel( dtlb, 0, $format("DTLB: Sending PA:%h Trap:%b", physicaladdress, page_fault))
             `logTimeLevel( dtlb, 0, $format("DTLB: Hit in TLB:",fshow(pte_4k)))
   `ifdef supervisor
