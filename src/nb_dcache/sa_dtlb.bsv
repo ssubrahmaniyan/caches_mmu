@@ -325,7 +325,12 @@ package sa_dtlb;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not writable
+              page_fault = True;
+            end
+
+            // Store and Dirty bit unset
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
 
@@ -382,7 +387,12 @@ package sa_dtlb;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not writable
+              page_fault = True;
+            end
+
+            // Store and Dirty bit unset
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
 
@@ -439,7 +449,12 @@ package sa_dtlb;
             end
 
             // for Store access
-            if(req.access != 0 && !permissions.w) begin // if not readable and not mxr  executable
+            if(req.access != 0 && !permissions.w) begin // if not writable
+              page_fault = True;
+            end
+
+            // Store and Dirty bit unset
+            if ((req.access == 1 || req.access == 2) && !permissions.d) begin
               page_fault = True;
             end
 
@@ -591,7 +606,12 @@ package sa_dtlb;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not writable
+            page_fault = True;
+          end
+
+          // Store and Dirty bit unset
+          if ((is_store == 1) && !permissions.d) begin
             page_fault = True;
           end
 
@@ -625,7 +645,12 @@ package sa_dtlb;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not writable
+            page_fault = True;
+          end
+
+          // Store and Dirty bit unset
+          if ((is_store == 1) && !permissions.d) begin
             page_fault = True;
           end
 
@@ -659,7 +684,12 @@ package sa_dtlb;
           end
 
           // for Store access
-          if((is_store == 1) && !permissions.w) begin // if not readable and not mxr executable
+          if((is_store == 1) && !permissions.w) begin // if not writable
+            page_fault = True;
+          end
+
+          // Store and Dirty bit unset
+          if ((is_store == 1) && !permissions.d) begin
             page_fault = True;
           end
 
