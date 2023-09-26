@@ -241,10 +241,6 @@ package ptwalk_rv64;
                                                                 {ppn2, ppn1, ppn0}!=0) )
           fault = True;
 
-        // Reserved cases
-        if ((!permissions.x && permissions.w && !permissions.r) || (permissions.x && permissions.w && !permissions.r)) 
-          fault = True;
-
       end 
       else if ((!permissions.r && !permissions.w && !permissions.x) && (permissions.d || permissions.a || permissions.u)) begin
         fault = True; // For non-leaf PTEs, the D, A, and U bits should be cleared.
