@@ -27,13 +27,21 @@ package sa_dtlb_tb;
     import GetPut::*;
     import nb_dcache_types :: * ;
     import common_tlb_types :: *;
+`ifdef iclass
     import dtlb :: *;
+`else
+    import sa_dtlb :: *;
+`endif
 
     (*synthesize*)
     /*doc:module:*/
     module mksa_dtlb_tb();
 
+    `ifdef iclass
         Ifc_dtlb#(`xlen, `paddr) dut <- mk_dtlb();
+    `else
+        Ifc_sa_dtlb#(`xlen, `paddr) dut <- mksa_dtlb();
+    `endif
       
         Reg#(int) cycles <- mkReg(1);
         Reg#(Bit#(2)) levels <- mkReg(0);
