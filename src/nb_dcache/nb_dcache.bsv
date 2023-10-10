@@ -44,7 +44,11 @@ package nb_dcache;
   import BUtils::*;
   import mshr::*;
   import fill_buffer::*;
+`ifdef iclass
+  import dtlb::*;
+`else
   import sa_dtlb::*;
+`endif
   import replacement_dcache::*;
   import Assert  :: * ;
   import io_func::*;
@@ -233,7 +237,11 @@ package nb_dcache;
     Ifc_mem_config1r1w#(setsize, linewidth, dsram) data_arr [ways_val];         // data array
     //TODO Make sure that for now (tagbits+2)/tsram is an integer. Will have to edit mem_config.
     Ifc_mem_config1r1w#(setsize, TAdd#(tagbits, 2), tsram) tag_arr [ways_val]; // extra valid and dirty bits
+  `ifdef iclass
+    Ifc_dtlb#(vaddr, paddr) dtlb <-mk_dtlb;
+  `else
     Ifc_sa_dtlb#(vaddr, paddr) dtlb <-mksa_dtlb;
+  `endif
     Ifc_fill_buffer#(paddr, datawidth, buswidth, linewidth, lineoffset, wordsize, prf_index, rob_index) fill_buffer <-mkfill_buffer;
     Ifc_mshr#(paddr, lineoffset, datawidth, mshrsize, mshrfifo_depth, rob_index, prf_index) mshr <- mkmshr;
     Ifc_replace#(setsize, ways) repl <- mkreplace(alg);
