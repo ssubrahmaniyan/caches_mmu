@@ -515,6 +515,9 @@ package sa_dtlb;
         wr_count_misses <= pack(tlbmiss);
       `endif
       end
+      else begin
+        wr_tlb_miss <= rg_tlb_miss;
+      end
 
       return core_resp;
     endmethod
