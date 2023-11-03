@@ -144,10 +144,14 @@ package sa_dtlb;
     Bit#(1) mprv = wr_mstatus[17];
 
     /*doc:reg: register to indicate that a tlb miss is in progress*/
-    Reg#(Bool) rg_tlb_miss <- mkConfigReg(False);
+    Reg#(Bool) rg_tlb_miss <- mkReg(False);
 
     /*doc:reg: registers to indicate the tlb is undergoing an sfence*/
     Reg#(Bool) rg_sfence <- mkConfigReg(False);
+
+    Wire#(Bool) wr_tlb_miss <- mkDWire(False);
+    Wire#(Bit#(1)) wr_translate_valid <- mkDWire(0);
+    Wire#(Bit#(1)) wr_response_valid <- mkDWire(0);
 
 //  `ifdef pmp
 //    Vector#(`PMPSIZE, Wire#(Bit#(8))) wr_pmp_cfg <- replicateM(mkWire());
@@ -163,6 +167,16 @@ package sa_dtlb;
     rule rl_display_tlb_regs;
       if (`VERBOSITY > 1) begin
         $display($time, " PT: DTLB: tlb_miss %d sfence %d miss_va %h", rg_tlb_miss, rg_sfence, rg_miss_queue);
+      end
+    endrule
+
+    // update state registers
+    rule rl_update_regs;
+      if (wr_translate_valid == 1) begin
+        rg_tlb_miss <= wr_tlb_miss;
+      end
+      else if (wr_response_valid == 1) begin
+        rg_tlb_miss <= False;
       end
     endrule
 
@@ -490,12 +504,13 @@ package sa_dtlb;
         end
       end
 
+      wr_translate_valid <= 1;
       if(req.sfence)
-        rg_tlb_miss <= False;
+        wr_tlb_miss <= False;
       else if(rg_tlb_miss && req.ptwalk_trap)
-        rg_tlb_miss <= False;
+        wr_tlb_miss <= False;
       else if(!translation_done && !req.ptwalk_req) begin
-        rg_tlb_miss <= tlbmiss;
+        wr_tlb_miss <= tlbmiss;
       `ifdef perfmonitors
         wr_count_misses <= pack(tlbmiss);
       `endif
@@ -793,6 +808,8 @@ package sa_dtlb;
           end
 
         end // 1G page
+
+        wr_response_valid <= 1;
 
         if (`VERBOSITY > 1) begin
           $display($time, " PT: DTLB: Response received from PTW: pte %h levels %d trap %d cause %h", resp.pte, resp.levels, resp.trap, resp.cause);
