@@ -553,6 +553,7 @@ package nb_dcache;
                                                              access: access,
                                                              ptwalk_trap: core_req.ptwalk_trap,
                                                              ptwalk_req: (core_req.origin==PTW),
+                                                             prefetch_req: (core_req.origin == Store_buffer),
                                                              sfence: core_req.sfence };
       return dtlb_req;
     endfunction

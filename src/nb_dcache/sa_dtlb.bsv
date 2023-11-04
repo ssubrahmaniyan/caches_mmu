@@ -507,6 +507,8 @@ package sa_dtlb;
       wr_translate_valid <= 1;
       if(req.sfence)
         wr_tlb_miss <= False;
+      else if (req.prefetch_req)
+        wr_tlb_miss <= False;
       else if(rg_tlb_miss && req.ptwalk_trap)
         wr_tlb_miss <= False;
       else if(!translation_done && !req.ptwalk_req) begin
