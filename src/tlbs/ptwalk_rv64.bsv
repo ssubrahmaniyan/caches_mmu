@@ -103,19 +103,19 @@ package ptwalk_rv64;
 
 `ifdef iclass
     rule rl_display_fifo_corereq;
-      `logLevel( ptwalk, 2, $format("PTW : core req_queue ", fshow(ff_req_queue.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : core req_queue ", fshow(ff_req_queue.first)))
     endrule
 
     rule rl_display_fifo_memreq;
-      `logLevel( ptwalk, 2, $format("PTW : mem req_queue ", fshow(ff_memory_req.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : mem req_queue ", fshow(ff_memory_req.first)))
     endrule
 
     rule rl_displayfifo_memresp;
-      `logLevel( ptwalk, 2, $format("PTW : mem response first ", fshow(ff_memory_response.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : mem response first ", fshow(ff_memory_response.first)))
     endrule
 
     rule rl_display_ptw_state;
-      `logLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
+      `logTimeLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
     endrule
 `endif
 
@@ -149,7 +149,7 @@ package ptwalk_rv64;
 
     rule generate_pte(rg_state == GeneratePTE);
       let request = ff_req_queue.first;
-      `logLevel( ptwalk, 2, $format("PTW : Recieved Request: ",fshow(ff_req_queue.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : Received Request: ",fshow(ff_req_queue.first)))
       Bit#(9) vpn[3];
       vpn[2] = request.address[38 : 30];
       vpn[1] = request.address[29 : 21];
@@ -163,7 +163,7 @@ package ptwalk_rv64;
       // re - organize request packet for ptwalk 
       request.address = signExtend(pte_address);
 
-      `logLevel( ptwalk, 2, $format("PTW : Sending PTE - Address to DMEM:%h",pte_address))
+      `logTimeLevel( ptwalk, 2, $format("PTW : Sending PTE - Address to DMEM:%h",pte_address))
       ff_memory_req.enq(gen_dcache_packet(request, True, False,?));
       rg_state <= WaitForMemory;
     endrule
@@ -174,8 +174,8 @@ package ptwalk_rv64;
       vpn[2] = request.address[38 : 30];
       vpn[1] = request.address[29 : 21];
       vpn[0] = request.address[20 : 12];
-      `logLevel( ptwalk, 2, $format("PTW : Memory Response: ",fshow(ff_memory_response.first)))
-      `logLevel( ptwalk, 2, $format("PTW : For Request: ",fshow(ff_req_queue.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : Memory Response: ",fshow(ff_memory_response.first)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : For Request: ",fshow(ff_req_queue.first)))
 
       let response = ff_memory_response.first();
       ff_memory_response.deq;
@@ -195,7 +195,7 @@ package ptwalk_rv64;
       // D A G U X W R V
       TLB_permissions permissions = bits_to_permission(truncate(response.word));
       Bit#(2) priv = mprv == 0?wr_priv : mpp;
-      `logLevel( ptwalk, 2, $format("PTW : Permissions", fshow(permissions)))
+      `logTimeLevel( ptwalk, 2, $format("PTW : Permissions", fshow(permissions)))
       if (!permissions.v || (!permissions.r && permissions.w))begin // access fault generated while doing PTWALK
         fault = True;
       end
@@ -254,7 +254,7 @@ package ptwalk_rv64;
         else if(fault)
           cause = request.access == 3?`Inst_pagefault : 
                       request.access == 0?`Load_pagefault : `Store_pagefault;
-        `logLevel( ptwalk, 2, $format("PTW : Generated Error. Cause:%d",cause))
+        `logTimeLevel( ptwalk, 2, $format("PTW : Generated Error. Cause:%d",cause))
         if(request.access != 3)begin
           ff_memory_req.enq(gen_dcache_packet(request, False, True, cause));
         end
@@ -274,7 +274,7 @@ package ptwalk_rv64;
         rg_levels <= rg_levels - 1;
         rg_a<={response.word[53 : 10], 12'b0};
         rg_state <= GeneratePTE;
-        `logLevel( ptwalk, 2, $format("PTW : Pointer to NextLevel:%h Levels:%d", {response.word[53 : 10], 12'b0}, 
+        `logTimeLevel( ptwalk, 2, $format("PTW : Pointer to NextLevel:%h Levels:%d", {response.word[53 : 10], 12'b0}, 
                                       rg_levels))
       end
       else begin // Leaf PTE found
@@ -282,7 +282,7 @@ package ptwalk_rv64;
                                         levels  : rg_levels,
                                         trap    : trap,
                                         cause   : cause});
-        `logLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
+        `logTimeLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
                                       rg_levels))
 `ifndef iclass
         if(request.access != 3)

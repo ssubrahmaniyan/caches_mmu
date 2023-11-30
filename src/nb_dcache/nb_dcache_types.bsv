@@ -194,6 +194,7 @@ package nb_dcache_types;
     Bit#(2)           access; //00: Load, 01: Store, 10: Atomic, 11: Instruction
     Bool              ptwalk_trap;
     Bool              ptwalk_req;
+    Bool              prefetch_req;
     Bool              sfence;
   } Cache_DTLB_request# (numeric type addr) deriving(Bits, Eq, FShow);
 

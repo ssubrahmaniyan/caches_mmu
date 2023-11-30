@@ -92,6 +92,9 @@ package nb_dcache;
     method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
     `ifdef supervisor
       method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
+      `ifdef iclass
+        method Action ma_invalidate_tlb (Bit#(`vpnsize) evict_vpn, Bit#(TLog#(`varpages)) level);
+      `endif
     `endif
     `ifdef prefetch
       method Tuple3#(Bit#(1), Bit#(1), Bit#(TSub#(paddr, TAdd#(TLog#(wordsize), TLog#(linesize))))) fill_response_info(); // (paddr - 6) bits for line address
@@ -550,6 +553,7 @@ package nb_dcache;
                                                              access: access,
                                                              ptwalk_trap: core_req.ptwalk_trap,
                                                              ptwalk_req: (core_req.origin==PTW),
+                                                             prefetch_req: (core_req.origin == Store_buffer),
                                                              sfence: core_req.sfence };
       return dtlb_req;
     endfunction
@@ -2397,6 +2401,12 @@ package nb_dcache;
     method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       return dtlb.early_lookup(vaddr, is_store);
     endmethod
+
+  `ifdef iclass
+    method Action ma_invalidate_tlb (Bit#(`vpnsize) evict_vpn, Bit#(TLog#(`varpages)) level);
+      dtlb.invalidate(evict_vpn, level);
+    endmethod
+  `endif // iclass
 `endif // supervisor
 
 `ifdef prefetch
