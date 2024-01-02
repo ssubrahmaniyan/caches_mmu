@@ -2432,6 +2432,9 @@ package nb_dcache;
       lv_ctr.fill_request = wr_fill_request;
       lv_ctr.prefetch_mshr_allocated = wr_prefetch_mshr_allocated;
       lv_ctr.dtlb_miss = wr_dtlb_miss;
+    `ifdef iclass
+      lv_ctr.dtlb_invalidate_hit = dtlb.mv_perf_counters();
+    `endif
 
       return lv_ctr;
     endmethod
