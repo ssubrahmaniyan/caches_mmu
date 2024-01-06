@@ -285,6 +285,9 @@ package nb_dcache_types;
     Bit#(1) fill_request;
     Bit#(1) prefetch_mshr_allocated;
     Bit#(1) dtlb_miss;
+  `ifdef iclass
+    Bit#(1) dtlb_invalidate_hit;
+  `endif
   } DCACHE_cntrs deriving(Bits, Eq, FShow);
 `endif
 
