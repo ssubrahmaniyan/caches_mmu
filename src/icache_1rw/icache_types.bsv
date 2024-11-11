@@ -26,6 +26,7 @@ package icache_types;
     Bit#(data)    data;
     Bool          last;
     Bool          err;
+    Bool          io;
   } ICache_mem_readresp#(numeric type data) deriving(Bits, Eq, FShow);
 
 
