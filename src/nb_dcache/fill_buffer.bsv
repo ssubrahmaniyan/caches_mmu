@@ -16,10 +16,11 @@ TODO
 */
 package fill_buffer;
 
-  import nb_dcache_types::*;            
+  import Vector ::*;
   import BUtils::*;
   import DefaultValue :: *;
   import ConfigReg::*;
+  import nb_dcache_types::*;
   `include "Logger.bsv"           // for logging
 
   interface Ifc_fill_buffer#( numeric type paddr, numeric type data, numeric type buswidth,
@@ -32,7 +33,7 @@ package fill_buffer;
     method Bool can_release;
     method Tuple2#(Bit#(1), Bit#(linewidth)) data;
     (*always_ready, always_enabled*) method Bit#(TSub#(paddr, lineoffset)) line_addr;
-    `ifdef pref
+    `ifdef prefetch
       method Bool first_response_from_mem();
     `endif
   endinterface
@@ -40,8 +41,8 @@ package fill_buffer;
   //(* preempts= "rl_operation, rl_serve_remaining_mshr_requests" *)
   module mkfill_buffer (Ifc_fill_buffer#(paddr, data, buswidth, linewidth, lineoffset, wordsize, prf_index, rob_index))
          provisos(Log#(TDiv#(buswidth,8), busoffset),
-                   Log#(buswidth, buswidthbits),
-                   Div#(linewidth, buswidth, num_chunks),
+                  Log#(buswidth, buswidthbits),
+                  Div#(linewidth, buswidth, num_chunks),
                   Log#(num_chunks, num_chunksbits),
                   Mul#(a__, data, linewidth),
                   Add#(b__, data, linewidth),
@@ -57,6 +58,14 @@ package fill_buffer;
                   Add#(num_chunksbits, j__, lineoffset),//to find fb_index for first mem_response
                   Add#(k__, 16, data),
                   Add#(l__, 8, data)
+                  `ifdef iclass
+                  , Add#(m__, data, buswidth),
+                    Mul#(8, n__, buswidth),
+                    Mul#(16, o__, buswidth),
+                    Mul#(32, p__, buswidth),
+                    Mul#(data, q__, buswidth),
+                    Add#(buswidth, TAdd#(buswidth, buswidth), c__)
+                  `endif
                 );
 
     let paddr_val= valueOf(paddr);
@@ -65,6 +74,7 @@ package fill_buffer;
     let lineoffset_val= valueOf(lineoffset);
     let num_chunksbits_val= valueOf(num_chunksbits);
 
+  `ifndef iclass
     function Bit#(linewidth) generate_masked_data_bus(Bit#(linewidth) sram_data, Bit#(buswidth) bus_data, Bit#(TLog#(num_chunks)) chunk_addr);
       Bit#(buswidth) temp= '1;
       Bit#(linewidth) mask = zeroExtend(temp);
@@ -73,7 +83,24 @@ package fill_buffer;
       let writedata= (mask & duplicate(bus_data)) |(~mask & sram_data);
       return writedata;
     endfunction
+  `endif
 
+  `ifdef iclass
+    function Bit#(buswidth) generate_masked_data(Bit#(buswidth) sram_data, Bit#(data) core_data, Bit#(lineoffset) line_addr, Bit#(3) size);
+      Bit#(data) temp = size[1 : 0] == 0?'hFF : 
+                        size[1 : 0] == 1?'hFFFF : 
+                        size[1 : 0] == 2?'hFFFFFFFF : '1;
+
+      Bit#(buswidth) mask = zeroExtend(temp);
+      mask = mask << {line_addr[3:0], 3'd0};
+      Bit#(buswidth) data_to_mask= size=='d0? duplicate(core_data[7:0])  :
+                                   size=='d1? duplicate(core_data[15:0]) :
+                                   size=='d2? duplicate(core_data[31:0]) :
+                                              duplicate(core_data);
+      let writedata= (mask & data_to_mask) |(~mask & sram_data);
+      return writedata;
+    endfunction
+  `else
     //TODO Make a UniqueWrapper for this
     function Bit#(linewidth) generate_masked_data(Bit#(linewidth) sram_data, Bit#(data) core_data, Bit#(lineoffset) line_addr, Bit#(3) size);
       Bit#(data) temp = size[1 : 0] == 0?'hFF : 
@@ -89,7 +116,31 @@ package fill_buffer;
       let writedata= (mask & data_to_mask) |(~mask & sram_data);
       return writedata;
     endfunction
+  `endif
 
+  `ifdef iclass
+    function Bit#(datawidth) fn_extract_data(Bit#(buswidth) line, Bit#(lineoffset) line_offset, Bit#(3) size)
+      provisos(Add#(z__, datawidth, buswidth),
+              Add#(aa_, 8, datawidth),
+              Add#(bb_, 16, datawidth),
+              Add#(cc_, 32, datawidth));
+
+      line = line >> {line_offset[3:0], 3'd0};
+      Bit#(datawidth) readdata= truncate(line);
+      Bit#(datawidth) mask = size[1 : 0] == 0?'hFF : 
+                             size[1 : 0] == 1?'hFFFF : 
+                             size[1 : 0] == 2?'hFFFFFFFF : '1;
+      if(size[2]==0) begin
+        readdata = size[1 : 0] == 0? signExtend(readdata[7:0]): 
+                   size[1 : 0] == 1? signExtend(readdata[15:0]): 
+                   size[1 : 0] == 2? signExtend(readdata[31:0]) : readdata;
+      end
+      else begin
+        readdata = readdata & mask;
+      end
+      return readdata;
+    endfunction
+  `else
     function Bit#(datawidth) fn_extract_data(Bit#(linewidth) line, Bit#(lineoffset) line_offset, Bit#(3) size)
       provisos(Add#(z__, datawidth, linewidth),
               Add#(aa_, 8, datawidth),
@@ -111,8 +162,13 @@ package fill_buffer;
       end
       return readdata;
     endfunction
+  `endif
 
-    Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
+    `ifdef iclass
+      Vector#(4, Reg#(Bit#(buswidth))) rg_fill_buffer <- replicateM(mkReg(0));
+    `else
+      Reg#(Bit#(linewidth)) rg_fill_buffer <- mkConfigReg(0);
+    `endif
     Reg#(Bit#(num_chunks)) rg_valid <- mkConfigReg(0);
     Reg#(Bool) rg_can_release <- mkReg(False);
     Reg#(Bool) rg_first_resp <- mkReg(True);
@@ -168,6 +224,7 @@ package fill_buffer;
       else begin
         rg_index<= rg_index + 1;
         lv_index= rg_index;
+        `logTimeLevel( dcache, 1, $format("FB : Next response from Mem. FB index is %d.", lv_index))
       end
 
       //Bit#(buswidth) temp= '1;
@@ -177,7 +234,13 @@ package fill_buffer;
       //`logLevel( dcache, 1, $format("FB : Mask:%h data_from_mem: %h fb_data: %h ", mask, tpl_1(wr_data_from_mem), rg_fill_buffer))
       //Bit#(linewidth) write_linedata= (mask & duplicate(tpl_1(wr_data_from_mem))) | (~mask & rg_fill_buffer);
       //Mix the fill buffer and the data from memory response
-      Bit#(linewidth) write_linedata= generate_masked_data_bus(rg_fill_buffer, tpl_1(wr_data_from_mem), lv_index);
+      `ifdef iclass
+        Bit#(buswidth) write_linedata;
+        write_linedata = tpl_1(wr_data_from_mem);
+      `else
+        Bit#(linewidth) write_linedata;
+        write_linedata= generate_masked_data_bus(rg_fill_buffer, tpl_1(wr_data_from_mem), lv_index);
+      `endif
 
       Bit#(TLog#(num_chunks)) lv_store_index= req.addr[num_chunksbits_val + busoffset_val -1 : busoffset_val];
       //For a store commit combine the above data along with that of the request
@@ -185,39 +248,75 @@ package fill_buffer;
         `ifdef atomic && !req.is_atomic `endif ) begin
         rg_dirty<= 1;
         Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
-        write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
-        `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
-        rg_fill_buffer<= write_linedata;
+
+        `ifdef iclass
+          Bit#(buswidth) write_linedata2 = '0;
+          write_linedata2 = (lv_store_index == lv_index) ? write_linedata : rg_fill_buffer[lv_store_index];
+          write_linedata2 = generate_masked_data(write_linedata2, req.payload, write_reqaddr, req.access_size);
+          if (lv_store_index == lv_index) begin
+            rg_fill_buffer[lv_index] <= write_linedata2;
+          end
+          else begin
+            rg_fill_buffer[lv_index] <= write_linedata;
+            rg_fill_buffer[lv_store_index] <= write_linedata2;
+          end
+          `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h index %d store_index %d write_linedata: %h write_linedata2 %h", write_reqaddr, lv_index, lv_store_index, write_linedata, write_linedata2))
+        `else
+          rg_fill_buffer<= write_linedata;
+          write_linedata= generate_masked_data(write_linedata, req.payload, write_reqaddr, req.access_size);
+          `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
+        `endif
       end
       //When MSHR doesn't have any pending request, the defaultValue of req will have origin=Store_buffer
       //In which case this else statement gets executed.
       else begin
-        rg_fill_buffer<= write_linedata;
+        `ifdef iclass
+          rg_fill_buffer[lv_index] <= write_linedata;
+        `else
+          rg_fill_buffer<= write_linedata;
+        `endif
       end
       rg_valid[lv_index]<= 1'b1;
     endrule
 
     rule rl_disp;
-      `logTimeLevel( dcache, 1, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+      `ifdef iclass
+        `logTimeLevel( dcache, 1, $format("FB : Value: %h valid: %b", {rg_fill_buffer[3], rg_fill_buffer[2], rg_fill_buffer[1], rg_fill_buffer[0]}, rg_valid))
+      `else
+        `logTimeLevel( dcache, 1, $format("FB : Value: %h valid: %b", rg_fill_buffer, rg_valid))
+      `endif
     endrule
 
     rule rl_serve_remaining_mshr_requests(all_valid);
       let req= wr_req;
       if(req.origin==Store_commit && wr_can_perform_store) begin
+        Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
+        Bit#(2) lv_index = write_reqaddr[5:4];
         let store_data= req.payload;
         `ifdef atomic
           if(req.is_atomic) begin
-            let data_extracted= fn_extract_data(rg_fill_buffer, truncate(req.addr), req.access_size);
+            `ifdef iclass
+              let data_extracted= fn_extract_data(rg_fill_buffer[lv_index], truncate(req.addr), req.access_size);
+            `else
+              let data_extracted= fn_extract_data(rg_fill_buffer, truncate(req.addr), req.access_size);
+            `endif
             store_data= fn_atomic_op(req.atomic_fn, req.payload, data_extracted);
            //$display("cache_data: %h", data_extracted);
             `logTimeLevel( dcache, 1, $format("FB : Performing atomic op: %b cache_data: rs2: %h result: %h", req.atomic_fn, req.payload, store_data))
           end
         `endif
 
-        Bit#(lineoffset) write_reqaddr = req.addr[lineoffset_val-1:0];
-        Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
+        `ifdef iclass
+          Bit#(buswidth) write_linedata= generate_masked_data(rg_fill_buffer[lv_index], store_data, write_reqaddr, req.access_size);
+        `else
+          Bit#(linewidth) write_linedata= generate_masked_data(rg_fill_buffer, store_data, write_reqaddr, req.access_size);
+        `endif
         `logTimeLevel( dcache, 1, $format("FB : addr: 'h%h write_linedata: %h",write_reqaddr, write_linedata))
-        rg_fill_buffer<= write_linedata;
+        `ifdef iclass
+          rg_fill_buffer[lv_index] <= write_linedata;
+        `else
+          rg_fill_buffer<= write_linedata;
+        `endif
         rg_dirty<= 1;
       end
       else begin
@@ -238,7 +337,12 @@ package fill_buffer;
       wr_req<= req;
       if(rg_valid[valid_index]==1 && req.addr[paddr_val-1:lineoffset_val]==rg_fb_addr) begin
         wr_can_perform_store<= True;
-        return tagged Valid rg_fill_buffer;
+        `ifdef iclass
+          let lv_fill_buffer = {rg_fill_buffer[3], rg_fill_buffer[2], rg_fill_buffer[1], rg_fill_buffer[0]};
+          return tagged Valid lv_fill_buffer;
+        `else
+          return tagged Valid rg_fill_buffer;
+        `endif
       end
       else begin
         return tagged Invalid;
@@ -268,14 +372,18 @@ package fill_buffer;
     endmethod
 
     method Tuple2#(Bit#(1), Bit#(linewidth)) data;
-      return tuple2(rg_dirty, rg_fill_buffer);
+      `ifdef iclass
+        return tuple2(rg_dirty, {rg_fill_buffer[3], rg_fill_buffer[2], rg_fill_buffer[1], rg_fill_buffer[0]});
+      `else
+        return tuple2(rg_dirty, rg_fill_buffer);
+      `endif
     endmethod
 
     method Bit#(TSub#(paddr, lineoffset)) line_addr;
       return rg_fb_addr;
     endmethod
 
-    `ifdef pref
+    `ifdef prefetch
       method Bool first_response_from_mem();
         return rg_first_resp;
       endmethod

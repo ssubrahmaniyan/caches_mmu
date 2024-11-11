@@ -29,7 +29,7 @@ package nb_dcache_types;
     Origin origin;
     Bool ptwalk_trap;
     Bool sfence;
-                Bit#(lsq_index) lsq_id;
+    Bit#(lsq_index) lsq_id;
     Bit#(rob_index) rob;
     Bit#(prf_index) prf_index;
     DestType dest_type;
@@ -39,22 +39,22 @@ package nb_dcache_types;
     `endif
   } Req_from_core#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index, numeric type lsq_index) deriving (Bits, Eq, FShow);
   instance DefaultValue#(Req_from_core#(addr, data, rob_index, prf_index, lsq_index));
-    defaultValue= Req_from_core {  addr: 'd0,
-                              access_size: 'd3,
-                              data: 'd0,
-                              origin: defaultValue,
-                              ptwalk_trap: False,
-                              sfence: False,
-                                                                                                                        lsq_id: 'd0,
-                              rob: 'd0,
-                              prf_index: 'd0,
-                              dest_type: IntegerRF
-                              `ifdef atomic
-                              , is_atomic: False
-                              , atomic_fn: 'd0
-                              `endif
-                            }; 
-  endinstance
+    defaultValue= Req_from_core { addr: 'd0,
+                                  access_size: 'd3,
+                                  data: 'd0,
+                                  origin: defaultValue,
+                                  ptwalk_trap: False,
+                                  sfence: False,
+                                  lsq_id: 'd0,
+                                  rob: 'd0,
+                                  prf_index: 'd0,
+                                  dest_type: IntegerRF
+                                  `ifdef atomic
+                                  , is_atomic: False
+                                  , atomic_fn: 'd0
+                                  `endif
+                                }; 
+    endinstance
   
   typedef struct {
     Bit#(addr) addr;
@@ -70,7 +70,7 @@ package nb_dcache_types;
     `endif
   } Cache_req#(numeric type addr, numeric type data, numeric type rob_index, numeric type prf_index) deriving (Bits, Eq, FShow);
   
-  typedef enum {No_exception, Load_access_fault, Store_access_fault `ifdef supervisor , Load_page_fault, Store_page_fault `endif } DCache_exception deriving (Bits, Eq, FShow);  //TODO check if No_exception can be removed
+  typedef enum {No_exception, Load_access_fault, Store_access_fault `ifdef supervisor , Load_page_fault, Store_page_fault `endif } DCache_exception deriving (Bits, Eq, FShow);
   instance DefaultValue#(DCache_exception);
     defaultValue= No_exception;
   endinstance
@@ -80,11 +80,11 @@ package nb_dcache_types;
     Bit#(prf_index) prf_index;
     Bit#(rob_index) rob;
     DCache_exception exception;
-`ifdef atomic
-  `ifdef simulate
-    Bit#(data) atomic_result;
-  `endif
-`endif
+    `ifdef atomic
+      `ifdef commit_log
+        Bit#(data) atomic_result;
+      `endif
+    `endif
   } Resp_to_core#(numeric type data, numeric type prf_index, numeric type rob_index) deriving (Bits, Eq, FShow);
   instance DefaultValue#(Resp_to_core#(data, prf_index, rob_index));
     defaultValue= Resp_to_core {data: 0,
@@ -92,7 +92,7 @@ package nb_dcache_types;
                                 rob: 0,
                                 exception: defaultValue
                               `ifdef atomic
-                                `ifdef simulate
+                                `ifdef commit_log
                                 , atomic_result: 0
                                 `endif
                               `endif
@@ -194,6 +194,7 @@ package nb_dcache_types;
     Bit#(2)           access; //00: Load, 01: Store, 10: Atomic, 11: Instruction
     Bool              ptwalk_trap;
     Bool              ptwalk_req;
+    Bool              prefetch_req;
     Bool              sfence;
   } Cache_DTLB_request# (numeric type addr) deriving(Bits, Eq, FShow);
 
@@ -284,6 +285,9 @@ package nb_dcache_types;
     Bit#(1) fill_request;
     Bit#(1) prefetch_mshr_allocated;
     Bit#(1) dtlb_miss;
+  `ifdef iclass
+    Bit#(1) dtlb_invalidate_hit;
+  `endif
   } DCACHE_cntrs deriving(Bits, Eq, FShow);
 `endif
 
