@@ -1150,10 +1150,41 @@ package dcache_lib;
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkConfigReg(unpack(0)));
     Vector#(fbsize,Vector#(blocksize,ConfigReg#(Bit#(respwidth))))    v_fb_data     
                                                     <- replicateM(replicateM(mkConfigReg(unpack(0))));
+
+    //mav_allocate_line
+    Vector#(blocksize,Wire#(Bit#(respwidth)))    wr_v_fb_data_mav_allocate_line    
+                                                    <- replicateM(mkDWire(0));
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) v_fb_data_mav_allocate_line <- mkDWire(False);
+    
+    //ma_fill_from_memory
+    Wire#(Bit#(respwidth)) wr_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) v_fb_data_ma_fill_from_memory <- mkDWire(False);
+
+    //ma_from_storebuffer
+    Wire#(Bit#(respwidth)) wr_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bool) v_fb_data_ma_from_storebuffer <- mkDWire(False);
+
+
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
     /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkConfigReg(0));
+
+    //mav_allocate_line
+    Wire#(Bit#(1)) wr_v_fb_dirty_mav_allocate_line <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_dirty_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) v_fb_dirty_mav_allocate_line <- mkDWire(False);
+
+    //ma_from_storebuffer
+    Wire#(Bit#(1)) wr_v_fb_dirty_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_dirty_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bool) v_fb_dirty_ma_from_storebuffer <- mkDWire(False);
+
     /*doc: vec: vector of regisetrs to indicate if the entire line of the fillbuffer entry is
      * available or not*/
     Vector#(fbsize,ConfigReg#(Bool))                   v_fb_line_valid  <- replicateM(mkConfigReg(False));
@@ -1201,6 +1232,50 @@ package dcache_lib;
  fbheadvalid:%b", id, fb_full, fb_empty, rg_fbhead, rg_fbtail, v_fb_line_valid[rg_fbhead]))
     endrule
 
+    Rules re_v_fb_data = emptyRules;
+  for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+    Rules rg_connect_ena_data = emptyRules;
+    for (Integer j=0;j < valueOf(blocksize); j = j+1) begin
+    Rules rg_connect_ena_data_j = (rules
+      rule connect_v_fb_data((v_fb_data_mav_allocate_line  
+              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
+          ||  (v_fb_data_ma_fill_from_memory 
+              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j))) 
+          ||  (v_fb_data_ma_from_storebuffer 
+              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))
+              );
+        v_fb_data[i][j] <= (wr_v_fb_data_mav_allocate_line[j]
+                          | wr_v_fb_data_ma_fill_from_memory
+                          | wr_v_fb_data_ma_from_storebuffer
+                            );
+      endrule
+    endrules);
+    rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j,rg_connect_ena_data);
+    end
+    re_v_fb_data = rJoinConflictFree(rg_connect_ena_data, re_v_fb_data);
+  end
+
+  addRules(re_v_fb_data);
+
+  Rules re_v_fb_dirty = emptyRules;
+  for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+    Rules rg_connect_ena_data_dirty = (rules
+    rule connect_v_fb_dirty((v_fb_dirty_mav_allocate_line
+                              && (wr_fb_index_v_fb_dirty_mav_allocate_line == fromInteger(i)))
+                           || (v_fb_dirty_ma_from_storebuffer
+                              && (wr_fb_index_v_fb_dirty_ma_from_storebuffer == fromInteger(i) )));
+      v_fb_dirty[i] <= (wr_v_fb_dirty_mav_allocate_line | wr_v_fb_dirty_ma_from_storebuffer);
+    endrule
+    endrules);
+    re_v_fb_dirty = rJoinConflictFree(rg_connect_ena_data_dirty, re_v_fb_dirty);
+  end
+
+addRules(re_v_fb_dirty);
+
+
+
     method mv_fbfull = fb_full;
     method mv_fbempty = fb_empty;
     method mv_fbhead_valid = v_fb_line_valid[rg_fbhead];
@@ -1213,11 +1288,17 @@ package dcache_lib;
       Bit#(1) _temp = pack(from_ram);
       v_fb_addr_valid[rg_fbtail] <= True;
       v_fb_addr[rg_fbtail] <= address;
-      v_fb_dirty[rg_fbtail] <= _temp & dirty;
+      //v_fb_dirty[rg_fbtail] <= _temp & dirty;
+      wr_v_fb_dirty_mav_allocate_line <= _temp & dirty;
+      wr_fb_index_v_fb_dirty_mav_allocate_line <= rg_fbtail;
+      v_fb_dirty_mav_allocate_line <= True;
       v_fb_line_valid[rg_fbtail] <= from_ram;
       v_fb_err[rg_fbtail] <= 0;
+      v_fb_data_mav_allocate_line <= True;
+      wr_fb_index_v_fb_data_mav_allocate_line <= rg_fbtail;
       for (Integer i = 0; i< v_blocksize ; i = i + 1) begin
-        v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        //v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        wr_v_fb_data_mav_allocate_line[i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
       end
       if(rg_fbtail == fromInteger(v_fbsize -1))
         rg_fbtail <= 0;
@@ -1232,7 +1313,11 @@ package dcache_lib;
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
       Bit#(TMax#(1,TLog#(blocksize))) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
-      v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
+      //v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
+      wr_v_fb_data_ma_fill_from_memory <= mem_resp.data;
+      wr_fb_index_v_fb_data_ma_fill_from_memory <= fbindex;
+      wr_block_v_fb_data_ma_fill_from_memory <= lv_current_bank;
+      v_fb_data_ma_fill_from_memory <= True ;
       rg_next_bank <= lv_current_bank + ((v_blocksize>1)?1:0);
       if(mem_resp.last) begin
         v_fb_line_valid[fbindex] <= True;
@@ -1249,9 +1334,17 @@ package dcache_lib;
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
 
       Bit#(TMax#(1,blockbits)) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
-      v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) |
-                                         (mask & dataword);
-      v_fb_dirty[fbindex] <= 1;
+      //v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) | (mask & dataword);
+      wr_v_fb_data_ma_from_storebuffer <= (v_fb_data[fbindex][block_offset]& ~mask) | (mask & dataword);
+      wr_fb_index_v_fb_data_ma_from_storebuffer <= fbindex;
+      wr_block_v_fb_data_ma_from_storebuffer <= block_offset;
+      v_fb_data_ma_from_storebuffer <= True;
+
+      // v_fb_dirty[fbindex] <= 1;
+      wr_v_fb_dirty_ma_from_storebuffer <= 1;
+      wr_fb_index_v_fb_dirty_ma_from_storebuffer <= fbindex;
+      v_fb_dirty_ma_from_storebuffer <= True;
+
     endmethod
     method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
       Bit#(linewidth) lv_dataline=?;
@@ -1319,7 +1412,7 @@ package dcache_lib;
         Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         let _data = fn_ecc_correct(_chparity, _stparity, v_fb_data[fbindex][i]);
-        v_fb_data[fbindex][i] <= _data;
+        wr_v_fb_data[fbindex][i] <= _data;
       end
     endmethod
   `endif
@@ -1541,6 +1634,9 @@ package dcache_lib;
      * to the cache*/
     Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
                                                                     <- replicateM(mkReg(unpack(0)));
+    /*doc:reg: A vector of wires holding the head of stores being presented by the core
+     * to the cache*/
+     Wire#(Storebuffer#(addr,dataword,esize,TLog#(fbsize))) wr_sb_meta <- mkDWire(unpack(0));
 
     /*doc:reg: Register to point to the head of the store buffers. Points to the entry that needs to
      * be allotted to a new store request*/
@@ -1576,6 +1672,10 @@ package dcache_lib;
       `logLevel( dcache, 3, $format("[%2d]DCACHE: sb_full:%b sb_empty:%b sbhead:%d sbtail:%d", 
         id, sb_full, sb_empty, rg_head, rg_tail))
     endrule
+
+    rule assign_head;
+      wr_sb_meta <= v_sb_meta[rg_head];
+    endrule 
 
   `ifdef atomic
     /*doc:reg: */
@@ -1689,7 +1789,7 @@ package dcache_lib;
     endmethod: ma_increment_head
 
     method Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)) mv_sb_head;
-      return v_sb_meta[rg_head];
+      return wr_sb_meta;
     endmethod:mv_sb_head
 
     method mv_sb_busy = rg_sb_busy;
@@ -2149,7 +2249,7 @@ package dcache_lib;
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_fb_v2
-//  (*synthesize*)
+(*synthesize*)
   module mkstorebuffer#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
     let ifc();
     mk_storebuffer#(id) _temp(ifc);
