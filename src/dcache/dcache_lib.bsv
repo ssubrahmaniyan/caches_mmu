@@ -1084,15 +1084,15 @@ package dcache_lib;
   `endif
   endinterface : Ifc_fillbuffer_v2
 
-  (*conflict_free="ma_perform_release,mav_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
-  (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
-  (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
+ (*conflict_free="ma_perform_release,mav_allocate_line"*)
+ (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
+ (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
+ (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
+ (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
 `ifdef dcache_ecc
-  (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
-  (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
-  (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
+ (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
+ (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
+ (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
 `endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, respwidth))
@@ -1146,6 +1146,19 @@ package dcache_lib;
 
     /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
     Vector#(fbsize,ConfigReg#(Bool))                      v_fb_addr_valid    <- replicateM(mkConfigReg(False));
+    
+    //mav_allocate_line
+    Wire#(Bool) wr_v_fb_addr_valid_mav_allocate_line <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_addr_valid_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) v_fb_addr_valid_mav_allocate_line <- mkDWire(False);
+
+    //ma_perform_release
+    Wire#(Bool) wr_v_fb_addr_valid_ma_perform_release <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_addr_valid_ma_perform_release <- mkDWire(0);
+    Wire#(Bool) v_fb_addr_valid_ma_perform_release <- mkDWire(False);
+    
+    
+    
     /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkConfigReg(unpack(0)));
     Vector#(fbsize,Vector#(blocksize,ConfigReg#(Bit#(respwidth))))    v_fb_data     
@@ -1172,6 +1185,20 @@ package dcache_lib;
 
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
+
+    //mav_allocate_line
+    Wire#(Bit#(1)) wr_v_fb_err_mav_allocate_line <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_err_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) v_fb_err_mav_allocate_line <- mkDWire(False);
+    
+    
+    //ma_fill_from_memory
+    Wire#(Bit#(1)) wr_v_fb_err_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_err_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) v_fb_err_ma_fill_from_memory <- mkDWire(False);    
+
+
+
     /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkConfigReg(0));
 
@@ -1188,6 +1215,23 @@ package dcache_lib;
     /*doc: vec: vector of regisetrs to indicate if the entire line of the fillbuffer entry is
      * available or not*/
     Vector#(fbsize,ConfigReg#(Bool))                   v_fb_line_valid  <- replicateM(mkConfigReg(False));
+    
+    //mav_allocate_line
+    Wire#(Bool) wr_v_fb_line_valid_mav_allocate_line <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) v_fb_line_valid_mav_allocate_line <- mkDWire(False);
+
+    //ma_perform_release
+    Wire#(Bool) wr_v_fb_line_valid_ma_perform_release <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_ma_perform_release <- mkDWire(0);
+    Wire#(Bool) v_fb_line_valid_ma_perform_release <- mkDWire(False);
+    
+    
+    //ma_fill_from_memory
+    Wire#(Bool) wr_v_fb_line_valid_ma_fill_from_memory <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) v_fb_line_valid_ma_fill_from_memory <- mkDWire(False);
+    
     /*doc: reg: register to indicate how many bytes of the line have been filled by the
      bus*/
     ConfigReg#(Bit#(blocksize))                  rg_fb_enables    <- mkConfigReg(0);
@@ -1274,7 +1318,52 @@ package dcache_lib;
 
 addRules(re_v_fb_dirty);
 
+Rules re_v_fb_addr_valid = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_addr_valid = (rules
+  rule connect_v_fb_addr_valid((v_fb_addr_valid_mav_allocate_line
+                            && (wr_fb_index_v_fb_addr_valid_mav_allocate_line == fromInteger(i)))
+                         || (v_fb_addr_valid_ma_perform_release
+                            && (wr_fb_index_v_fb_addr_valid_ma_perform_release == fromInteger(i) )));
+    v_fb_addr_valid[i] <= (wr_v_fb_addr_valid_mav_allocate_line || wr_v_fb_addr_valid_ma_perform_release);
+  endrule
+  endrules);
+  re_v_fb_addr_valid = rJoinConflictFree(rg_connect_ena_data_addr_valid, re_v_fb_addr_valid);
+end
 
+addRules(re_v_fb_addr_valid);
+
+Rules re_v_fb_line_valid = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_line_valid = (rules
+  rule connect_v_fb_line_valid((v_fb_line_valid_mav_allocate_line
+                            && (wr_fb_index_v_fb_line_valid_mav_allocate_line == fromInteger(i)))
+                         || (v_fb_line_valid_ma_fill_from_memory
+                            && (wr_fb_index_v_fb_line_valid_ma_fill_from_memory == fromInteger(i) ))
+                        || (v_fb_line_valid_ma_perform_release
+                            && (wr_fb_index_v_fb_line_valid_ma_perform_release == fromInteger(i) )));
+    v_fb_line_valid[i] <= (wr_v_fb_line_valid_mav_allocate_line || wr_v_fb_line_valid_ma_fill_from_memory || wr_v_fb_line_valid_ma_perform_release);
+  endrule
+  endrules);
+  re_v_fb_line_valid = rJoinConflictFree(rg_connect_ena_data_line_valid, re_v_fb_line_valid);
+end
+
+addRules(re_v_fb_line_valid);
+
+Rules re_v_fb_err = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_err = (rules
+  rule connect_v_fb_err((v_fb_err_mav_allocate_line
+                            && (wr_fb_index_v_fb_err_mav_allocate_line == fromInteger(i)))
+                         || (v_fb_err_ma_fill_from_memory
+                            && (wr_fb_index_v_fb_err_ma_fill_from_memory == fromInteger(i) )));
+    v_fb_err[i] <= (wr_v_fb_err_mav_allocate_line | wr_v_fb_err_ma_fill_from_memory );
+  endrule
+  endrules);
+  re_v_fb_err = rJoinConflictFree(rg_connect_ena_data_err, re_v_fb_err);
+end
+
+addRules(re_v_fb_err);
 
     method mv_fbfull = fb_full;
     method mv_fbempty = fb_empty;
@@ -1286,14 +1375,30 @@ addRules(re_v_fb_dirty);
                                     Bit#(1)                                   dirty );
 
       Bit#(1) _temp = pack(from_ram);
-      v_fb_addr_valid[rg_fbtail] <= True;
+
+      // v_fb_addr_valid[rg_fbtail] <= True;
+      v_fb_addr_valid_mav_allocate_line <= True;
+      wr_fb_index_v_fb_addr_valid_mav_allocate_line <= rg_fbtail;
+      wr_v_fb_addr_valid_mav_allocate_line <= True;
+      
+      
       v_fb_addr[rg_fbtail] <= address;
-      //v_fb_dirty[rg_fbtail] <= _temp & dirty;
+
+      // v_fb_dirty[rg_fbtail] <= _temp & dirty;
       wr_v_fb_dirty_mav_allocate_line <= _temp & dirty;
       wr_fb_index_v_fb_dirty_mav_allocate_line <= rg_fbtail;
       v_fb_dirty_mav_allocate_line <= True;
-      v_fb_line_valid[rg_fbtail] <= from_ram;
-      v_fb_err[rg_fbtail] <= 0;
+
+      // v_fb_line_valid[rg_fbtail] <= from_ram;
+      v_fb_line_valid_mav_allocate_line <= True;
+      wr_fb_index_v_fb_line_valid_mav_allocate_line<=rg_fbtail;
+      wr_v_fb_line_valid_mav_allocate_line <= from_ram;
+
+      // v_fb_err[rg_fbtail] <= 0;
+      wr_v_fb_err_mav_allocate_line <= 0;
+      wr_fb_index_v_fb_err_mav_allocate_line <= rg_fbtail;
+      v_fb_err_mav_allocate_line <= True;
+      
       v_fb_data_mav_allocate_line <= True;
       wr_fb_index_v_fb_data_mav_allocate_line <= rg_fbtail;
       for (Integer i = 0; i< v_blocksize ; i = i + 1) begin
@@ -1320,12 +1425,20 @@ addRules(re_v_fb_dirty);
       v_fb_data_ma_fill_from_memory <= True ;
       rg_next_bank <= lv_current_bank + ((v_blocksize>1)?1:0);
       if(mem_resp.last) begin
-        v_fb_line_valid[fbindex] <= True;
+        // v_fb_line_valid[fbindex] <= True;
+        wr_v_fb_line_valid_ma_fill_from_memory <= True;
+        wr_fb_index_v_fb_line_valid_ma_fill_from_memory <= fbindex;
+        v_fb_line_valid_ma_fill_from_memory <= True;
         rg_fb_enables <= 0;
       end
       else
         rg_fb_enables[lv_current_bank] <= 1;
-      v_fb_err[fbindex] <= pack(mem_resp.err);
+
+      // v_fb_err[fbindex] <= pack(mem_resp.err);
+      wr_v_fb_err_ma_fill_from_memory <= pack(mem_resp.err);
+      wr_fb_index_v_fb_err_ma_fill_from_memory <= fbindex;
+      v_fb_err_ma_fill_from_memory <= True;
+
       `logLevel( dcache, 0, $format("[%2d]DCACHE: FB FILL MemResp :",id,fshow(mem_resp)))
       `logLevel(dcache , 0, $format("[%2d]DCACHE: FB FILL fbaddr:%h fbindex:%d initbank:%d currbank:%d fben:%b", id,
         v_fb_addr[fbindex], fbindex, init_bank, lv_current_bank, rg_fb_enables))
@@ -1360,8 +1473,16 @@ addRules(re_v_fb_dirty);
         rg_fbhead <= 0;
       else
         rg_fbhead <= rg_fbhead + 1;
-      v_fb_addr_valid[rg_fbhead] <= False;
-      v_fb_line_valid[rg_fbhead] <= False;
+
+      // v_fb_addr_valid[rg_fbhead] <= False;
+      v_fb_addr_valid_ma_perform_release <= True;
+      wr_v_fb_addr_valid_ma_perform_release <= False;
+      wr_fb_index_v_fb_addr_valid_ma_perform_release <= rg_fbhead;
+
+      // v_fb_line_valid[rg_fbhead] <= False;
+      wr_v_fb_line_valid_ma_perform_release <= False;
+      wr_fb_index_v_fb_line_valid_ma_perform_release <= rg_fbhead;
+      v_fb_line_valid_ma_perform_release <= True;
     endmethod
 
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
@@ -1627,6 +1748,17 @@ addRules(re_v_fb_dirty);
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
+    
+    // ma_allocate_entry
+    Wire#(Bool) wr_v_sb_valid_ma_allocate_entry <- mkDWire(False);
+    Wire#(Bit#(TLog#(sbsize))) wr_fb_index_v_sb_valid_ma_allocate_entry <- mkDWire(0);
+    Wire#(Bool) v_sb_valid_ma_allocate_entry <- mkDWire(False);
+
+    // ma_increment_head
+    Wire#(Bool) wr_v_sb_valid_ma_increment_head <- mkDWire(False);
+    Wire#(Bit#(TLog#(sbsize))) wr_fb_index_v_sb_valid_ma_increment_head <- mkDWire(0);
+    Wire#(Bool) v_sb_valid_ma_increment_head <- mkDWire(False);
+    
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, Array#(Reg#(Bool))) v_sb_commit <- replicateM(mkCReg(2,False));
@@ -1702,6 +1834,21 @@ addRules(re_v_fb_dirty);
     endrule
   `endif
 
+  Rules re_v_sb_valid = emptyRules;
+for(Integer i = 0; i < valueOf(sbsize); i = i+1) begin
+  Rules rg_connect_ena_data_err = (rules
+  rule connect_v_sb_valid((v_sb_valid_ma_allocate_entry
+                            && (wr_fb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
+                         || (v_sb_valid_ma_increment_head
+                            && (wr_fb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
+    v_sb_valid[i] <= (wr_v_sb_valid_ma_allocate_entry || wr_v_sb_valid_ma_increment_head );
+  endrule
+  endrules);
+  re_v_sb_valid = rJoinConflictFree(rg_connect_ena_data_err, re_v_sb_valid);
+end
+
+addRules(re_v_sb_valid);
+
     method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
       Vector#(sbsize, Bit#(dataword)) storemask;
@@ -1750,7 +1897,11 @@ addRules(re_v_fb_dirty);
     `ifdef ASSERT
       dynamicAssert(!v_sb_valid[rg_tail],"Valid SB Entry Allocated");
     `endif
-      v_sb_valid[rg_tail] <= True;
+      // v_sb_valid[rg_tail] <= True;
+      v_sb_valid_ma_allocate_entry <= True;
+      wr_v_sb_valid_ma_allocate_entry <= True;
+      wr_fb_index_v_sb_valid_ma_allocate_entry <= rg_tail;
+
       let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
                                       mask: storemask, size:truncate(size)};
       v_sb_meta[rg_tail] <= _s;
@@ -1779,7 +1930,11 @@ addRules(re_v_fb_dirty);
     endmethod:ma_commit_store
 
     method Action ma_increment_head;
-      v_sb_valid[rg_head] <= False;
+      // v_sb_valid[rg_head] <= False;
+      wr_v_sb_valid_ma_increment_head <= False;
+      wr_fb_index_v_sb_valid_ma_increment_head <= rg_head;
+      v_sb_valid_ma_increment_head <= True;
+
       v_sb_commit[rg_head][1] <= False;
       if (rg_head == fromInteger(v_sbsize-1))
         rg_head <= 0;
