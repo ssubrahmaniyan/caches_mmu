@@ -1114,7 +1114,8 @@ package dcache_lib;
           Mul#(respwidth, b__, linewidth),
           Add#(c__, respwidth, linewidth),
           Add#(d__, blockbits, paddr),
-          Add#(TAdd#(tagbits, setbits), e__, paddr)
+          Add#(TAdd#(tagbits, setbits), e__, paddr),
+          Add#(f__, 1, respwidth)
 
         `ifdef dcache_ecc
           , Add#(2, TLog#(TMul#(8,wordsize)), ecc_size)
@@ -1290,9 +1291,13 @@ package dcache_lib;
               && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
               && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))
               );
-        v_fb_data[i][j] <= (wr_v_fb_data_mav_allocate_line[j]
-                          | wr_v_fb_data_ma_fill_from_memory
-                          | wr_v_fb_data_ma_from_storebuffer
+        v_fb_data[i][j] <= ((wr_v_fb_data_mav_allocate_line[j] & signExtend(pack(v_fb_data_mav_allocate_line && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
+                          | (wr_v_fb_data_ma_fill_from_memory & signExtend(pack(v_fb_data_ma_fill_from_memory 
+                          && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+                          && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j)))))
+                          | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(v_fb_data_ma_from_storebuffer 
+                          && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+                          && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))))
                             );
       endrule
     endrules);
@@ -1310,7 +1315,10 @@ package dcache_lib;
                               && (wr_fb_index_v_fb_dirty_mav_allocate_line == fromInteger(i)))
                            || (v_fb_dirty_ma_from_storebuffer
                               && (wr_fb_index_v_fb_dirty_ma_from_storebuffer == fromInteger(i) )));
-      v_fb_dirty[i] <= (wr_v_fb_dirty_mav_allocate_line | wr_v_fb_dirty_ma_from_storebuffer);
+      v_fb_dirty[i] <= ((wr_v_fb_dirty_mav_allocate_line & signExtend(pack(v_fb_dirty_mav_allocate_line
+      && (wr_fb_index_v_fb_dirty_mav_allocate_line == fromInteger(i))))) 
+                      | (wr_v_fb_dirty_ma_from_storebuffer & signExtend(pack(v_fb_dirty_ma_from_storebuffer
+                      && (wr_fb_index_v_fb_dirty_ma_from_storebuffer == fromInteger(i) )))));
     endrule
     endrules);
     re_v_fb_dirty = rJoinConflictFree(rg_connect_ena_data_dirty, re_v_fb_dirty);
@@ -1325,7 +1333,10 @@ for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
                             && (wr_fb_index_v_fb_addr_valid_mav_allocate_line == fromInteger(i)))
                          || (v_fb_addr_valid_ma_perform_release
                             && (wr_fb_index_v_fb_addr_valid_ma_perform_release == fromInteger(i) )));
-    v_fb_addr_valid[i] <= (wr_v_fb_addr_valid_mav_allocate_line || wr_v_fb_addr_valid_ma_perform_release);
+    v_fb_addr_valid[i] <= ((wr_v_fb_addr_valid_mav_allocate_line && v_fb_addr_valid_mav_allocate_line
+    && (wr_fb_index_v_fb_addr_valid_mav_allocate_line == fromInteger(i))) 
+                        || (wr_v_fb_addr_valid_ma_perform_release && v_fb_addr_valid_ma_perform_release
+                        && (wr_fb_index_v_fb_addr_valid_ma_perform_release == fromInteger(i) )));
   endrule
   endrules);
   re_v_fb_addr_valid = rJoinConflictFree(rg_connect_ena_data_addr_valid, re_v_fb_addr_valid);
@@ -1342,7 +1353,12 @@ for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
                             && (wr_fb_index_v_fb_line_valid_ma_fill_from_memory == fromInteger(i) ))
                         || (v_fb_line_valid_ma_perform_release
                             && (wr_fb_index_v_fb_line_valid_ma_perform_release == fromInteger(i) )));
-    v_fb_line_valid[i] <= (wr_v_fb_line_valid_mav_allocate_line || wr_v_fb_line_valid_ma_fill_from_memory || wr_v_fb_line_valid_ma_perform_release);
+    v_fb_line_valid[i] <= ((wr_v_fb_line_valid_mav_allocate_line && v_fb_line_valid_mav_allocate_line
+    && (wr_fb_index_v_fb_line_valid_mav_allocate_line == fromInteger(i)) ) 
+                          || (wr_v_fb_line_valid_ma_fill_from_memory &&  v_fb_line_valid_ma_fill_from_memory
+                          && (wr_fb_index_v_fb_line_valid_ma_fill_from_memory == fromInteger(i) ) ) 
+                          || (wr_v_fb_line_valid_ma_perform_release && v_fb_line_valid_ma_perform_release
+                          && (wr_fb_index_v_fb_line_valid_ma_perform_release == fromInteger(i) ) ));
   endrule
   endrules);
   re_v_fb_line_valid = rJoinConflictFree(rg_connect_ena_data_line_valid, re_v_fb_line_valid);
@@ -1357,7 +1373,10 @@ for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
                             && (wr_fb_index_v_fb_err_mav_allocate_line == fromInteger(i)))
                          || (v_fb_err_ma_fill_from_memory
                             && (wr_fb_index_v_fb_err_ma_fill_from_memory == fromInteger(i) )));
-    v_fb_err[i] <= (wr_v_fb_err_mav_allocate_line | wr_v_fb_err_ma_fill_from_memory );
+    v_fb_err[i] <= ( (wr_v_fb_err_mav_allocate_line & signExtend(pack(v_fb_err_mav_allocate_line
+    && (wr_fb_index_v_fb_err_mav_allocate_line == fromInteger(i))) )) 
+                    | (wr_v_fb_err_ma_fill_from_memory & signExtend(pack(v_fb_err_ma_fill_from_memory
+                    && (wr_fb_index_v_fb_err_ma_fill_from_memory == fromInteger(i) ))) ) );
   endrule
   endrules);
   re_v_fb_err = rJoinConflictFree(rg_connect_ena_data_err, re_v_fb_err);
@@ -1751,12 +1770,12 @@ addRules(re_v_fb_err);
     
     // ma_allocate_entry
     Wire#(Bool) wr_v_sb_valid_ma_allocate_entry <- mkDWire(False);
-    Wire#(Bit#(TLog#(sbsize))) wr_fb_index_v_sb_valid_ma_allocate_entry <- mkDWire(0);
+    Wire#(Bit#(TLog#(sbsize))) wr_sb_index_v_sb_valid_ma_allocate_entry <- mkDWire(0);
     Wire#(Bool) v_sb_valid_ma_allocate_entry <- mkDWire(False);
 
     // ma_increment_head
     Wire#(Bool) wr_v_sb_valid_ma_increment_head <- mkDWire(False);
-    Wire#(Bit#(TLog#(sbsize))) wr_fb_index_v_sb_valid_ma_increment_head <- mkDWire(0);
+    Wire#(Bit#(TLog#(sbsize))) wr_sb_index_v_sb_valid_ma_increment_head <- mkDWire(0);
     Wire#(Bool) v_sb_valid_ma_increment_head <- mkDWire(False);
     
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
@@ -1836,15 +1855,16 @@ addRules(re_v_fb_err);
 
   Rules re_v_sb_valid = emptyRules;
 for(Integer i = 0; i < valueOf(sbsize); i = i+1) begin
-  Rules rg_connect_ena_data_err = (rules
+  Rules rg_connect_ena_data_valid = (rules
   rule connect_v_sb_valid((v_sb_valid_ma_allocate_entry
-                            && (wr_fb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
+                            && (wr_sb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
                          || (v_sb_valid_ma_increment_head
-                            && (wr_fb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
-    v_sb_valid[i] <= (wr_v_sb_valid_ma_allocate_entry || wr_v_sb_valid_ma_increment_head );
+                            && (wr_sb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
+    v_sb_valid[i] <= (  (wr_v_sb_valid_ma_allocate_entry && v_sb_valid_ma_allocate_entry && (wr_sb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
+                      || (wr_v_sb_valid_ma_increment_head && v_sb_valid_ma_increment_head && (wr_sb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
   endrule
   endrules);
-  re_v_sb_valid = rJoinConflictFree(rg_connect_ena_data_err, re_v_sb_valid);
+  re_v_sb_valid = rJoinConflictFree(rg_connect_ena_data_valid, re_v_sb_valid);
 end
 
 addRules(re_v_sb_valid);
@@ -1900,7 +1920,7 @@ addRules(re_v_sb_valid);
       // v_sb_valid[rg_tail] <= True;
       v_sb_valid_ma_allocate_entry <= True;
       wr_v_sb_valid_ma_allocate_entry <= True;
-      wr_fb_index_v_sb_valid_ma_allocate_entry <= rg_tail;
+      wr_sb_index_v_sb_valid_ma_allocate_entry <= rg_tail;
 
       let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
                                       mask: storemask, size:truncate(size)};
@@ -1932,7 +1952,7 @@ addRules(re_v_sb_valid);
     method Action ma_increment_head;
       // v_sb_valid[rg_head] <= False;
       wr_v_sb_valid_ma_increment_head <= False;
-      wr_fb_index_v_sb_valid_ma_increment_head <= rg_head;
+      wr_sb_index_v_sb_valid_ma_increment_head <= rg_head;
       v_sb_valid_ma_increment_head <= True;
 
       v_sb_commit[rg_head][1] <= False;
