@@ -1086,7 +1086,7 @@ package dcache_lib;
 
  (*conflict_free="ma_perform_release,mav_allocate_line"*)
  (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
- (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
+ //(*conflict_free="ma_fill_from_memory, ma_perform_release"*)
  (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
  (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
 `ifdef dcache_ecc
