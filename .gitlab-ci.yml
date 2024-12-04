@@ -6,6 +6,7 @@ version-update:
         - eval "$(pyenv virtualenv-init -)"
         - pyenv activate py310
         - pip install semver
+        - pip install python-gitlab
         - python /scratch/version-update.py
     only:
         - master
