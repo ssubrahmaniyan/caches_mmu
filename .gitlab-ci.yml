@@ -1,6 +1,12 @@
 version-update:
     script:
-        - python3 /scratch/version-update.py
+        - export PATH=/home/$USER/.pyenv/bin:$PATH
+        - eval "$(pyenv init -)"
+        - eval "$(pyenv init --path)"
+        - eval "$(pyenv virtualenv-init -)"
+        - pyenv activate py310
+        - pip install semver
+        - python /scratch/version-update.py
     only:
         - master
     tags:
