@@ -152,7 +152,7 @@ package dmem;
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
   `endif
     interface receive_core_req = interface Put
-      method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
+      method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r) if (dcache.mv_cache_available);
         `logLevel( dmem, 0, $format("DMEM: Req from Core:",fshow(r)))
       `ifdef supervisor
         if(r.ptwalk_req || (!r.sfence `ifdef hypervisor && !r.hfence `endif ))
