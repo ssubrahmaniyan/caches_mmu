@@ -535,7 +535,7 @@ package dcache1rw;
       _way[rg_fence_way] = 1;
       let lv_tag_resp = m_tag.mv_tag_select(rg_fence_way);
       let lv_data_resp <- m_data.mv_line_select(_way);
-      Bit#(`tagbits) tag = truncateLSB(lv_tag_resp);
+      Bit#(`tagbits) tag = truncateLSB(lv_tag_resp.tag);
       Bit#(`linewidth) dataline = lv_data_resp.line;
       Bit#(`paddr) final_address={tag, rg_fence_set, zeros};
     `ifdef dcache_ecc
@@ -1048,7 +1048,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
           _way[waynum] = 1;
           let lv_tag_resp = m_tag.mv_tag_select(waynum);
           let lv_data_resp <- m_data.mv_line_select(_way);
-          Bit#(`tagbits) tag = truncateLSB(lv_tag_resp);
+          Bit#(`tagbits) tag = truncateLSB(lv_tag_resp.tag);
           Bit#(`linewidth) dataline = lv_data_resp.line;
           Bit#(`paddr) lv_evict_address = {tag,set_index,zeros};
         `ifdef dcache_ecc
