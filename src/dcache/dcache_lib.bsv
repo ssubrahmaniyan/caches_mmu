@@ -113,7 +113,7 @@ package dcache_lib;
   `endif
   endinterface : Ifc_tagram1rw
 
-  module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram1rw#(wordsize, blocksize, sets, ways, paddr))
+  module mk_tagram1rw#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram1rw#(wordsize, blocksize, sets, ways, paddr))
     provisos(
           Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
@@ -139,10 +139,10 @@ package dcache_lib;
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
   `ifdef dcache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw_ecc(False));
+                                                        replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw(False));
+                                                        replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
     method Action ma_request( Bool read_write,
                               Bit#(TLog#(sets)) index,
@@ -348,7 +348,7 @@ package dcache_lib;
     let v_blocksize = valueOf(blocksize);
     let v_sets = valueOf(sets);
     let v_ways = valueOf(ways);
-    Vector#(ways, Ifc_mem_config1r1w#(sets, linewidth, 1)) v_data 
+    Vector#(ways, Ifc_mem_config1r1w#(sets, linewidth, blocksize)) v_data 
                                                  <- replicateM(mkmem_config1r1w(False, False));
     method Action ma_read_p1(Bit#(TLog#(sets)) index, Bit#(blocksize) banks);
       for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -362,7 +362,7 @@ package dcache_lib;
 
       `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d data:%h",
                                      id, index, way, dataline))
-      v_data[way].write(1, index, dataline, '1);
+      v_data[way].write(1, index, dataline, banks);
     endmethod
 
     method DataWordResponse#(blocksize, wordsize) mv_wordselect_p1( Bit#(TLog#(blocksize)) blocknum,
@@ -578,7 +578,7 @@ package dcache_lib;
   `endif
   endinterface : Ifc_dataram1rw
 
-  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
+  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot `ifdef testmode ,Bool test_mode `endif )
       (Ifc_dataram1rw#(wordsize, blocksize, sets, ways))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -612,10 +612,10 @@ package dcache_lib;
     let v_ways = valueOf(ways);
   `ifdef dcache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
-                                                      <- replicateM(mkmem_config1rw_ecc(False));
+                                                      <- replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
-    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, 1)) v_data
-                                                      <- replicateM(mkmem_config1rw(False));
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
+                                                      <- replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
   `ifdef dcache_zbus
     Vector#(TAdd#(ways,1), ZBusDualIFC#(Bit#(linewidth))) v_zbus <- replicateM(mkZBusBuffer);
@@ -634,10 +634,10 @@ package dcache_lib;
 
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          v_data[i].request(0, index, dataline, '1);
+          v_data[i].request(0, index, dataline, banks);
         end
       else
-        v_data[way].request(1, index, dataline, '1);
+        v_data[way].request(1, index, dataline, banks);
     endmethod
     method ActionValue#(DataLineResponse#(blocksize,wordsize)) mv_line_select(Bit#(ways) wayselect );
     `ifdef ASSERT
@@ -2439,16 +2439,24 @@ addRules(re_v_sb_valid);
     return (ifc);
   endmodule: mkstorebuffer
 `else
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkdcache_tag#(parameter Bit#(32) id)(Ifc_tagram1rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
+`endif
+  module mkdcache_tag#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram1rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
-    mk_tagram1rw _temp(id,ifc);
+    mk_tagram1rw _temp(id `ifdef testmode ,test_mode `endif ,ifc );
     return (ifc);
   endmodule : mkdcache_tag
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkdcache_data#(parameter Bit#(32) id)(Ifc_dataram1rw#(`dwords, `dblocks, `dsets, `dways));
+`endif
+  module mkdcache_data#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_dataram1rw#(`dwords, `dblocks, `dsets, `dways));
     let ifc();
-    mk_dataram1rw#(id,unpack(`dcache_onehot)) _temp(ifc);
+    mk_dataram1rw#(id,unpack(`dcache_onehot) `ifdef testmode ,test_mode `endif ) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_data
   (*synthesize*)

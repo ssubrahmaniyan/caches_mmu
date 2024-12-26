@@ -102,13 +102,17 @@ package imem;
   endfunction
 `endif
 
+  `ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkimem#(parameter Bit#(32) id
     `ifdef pmp ,
         Vector#(`pmpentries, Bit#(8)) pmp_cfg , 
         Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
-    )(Ifc_imem);
-    let icache <- mkicache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
+        `ifdef testmode ,Bool test_mode `endif )(Ifc_imem);
+    let icache <- mkicache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif  `ifdef testmode ,test_mode `endif );
   `ifdef supervisor
     `ifndef iclass
       Ifc_fa_itlb itlb <- mkfa_itlb(id);

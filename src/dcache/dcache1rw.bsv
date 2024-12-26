@@ -251,12 +251,16 @@ package dcache1rw;
   (*conflict_free="rl_response_to_core, rl_io_response"*)
   /*(*conflict_free="m_storebuffer_ma_allocate_entry, m_storebuffer_ma_increment_head"*)
   (*conflict_free="m_storebuffer_ma_commit_store, m_storebuffer_ma_increment_head"*)*/
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkdcache#( parameter Bit#(32) id
     `ifdef pmp ,
         Vector#(`pmpentries, Bit#(8)) pmp_cfg, 
         Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
-    )(Ifc_dcache);
+        `ifdef testmode ,Bool test_mode `endif )(Ifc_dcache);
 
     String dcache = "";
     let v_sets=valueOf(`dsets);
@@ -274,8 +278,8 @@ package dcache1rw;
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`deccsize);
 
-    let m_data <- mkdcache_data(id);
-    let m_tag <- mkdcache_tag(id);
+    let m_data <- mkdcache_data(id `ifdef testmode ,test_mode `endif );
+    let m_tag <- mkdcache_tag(id `ifdef testmode ,test_mode `endif );
     let m_fillbuffer <- mkdcache_fb_v2(id);
     let m_storebuffer <- mkstorebuffer(id);
     let m_iobuffer <- mkiobuffer(id);
@@ -1186,7 +1190,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
 		  endcase;
       ff_mem_io_resp.deq;
       Bit#(`causesize) lv_cause = io_entry.access == 0?`Load_access_fault:`Store_access_fault;
-      let lv_response = DMem_core_response{word:mem_response.error?truncate(io_entry.vaddr): 
+      let lv_response = DMem_core_response{word:mem_response.error? `ifdef supervisor truncate(io_entry.vaddr) `else  zeroExtend(io_entry.address)  `endif: 
                                          `ifdef atomic (io_entry.access == 2)? rg_atomic_rd_data: `endif mem_response.data, 
                                           trap: mem_response.error,
                                           entry_alloc: False,

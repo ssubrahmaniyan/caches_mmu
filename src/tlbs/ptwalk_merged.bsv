@@ -22,6 +22,7 @@ package ptwalk_merged;
   import common_tlb_types :: * ;
   `include "dcache.defines"
   `include "Logger.bsv"	
+  `include "common_tlb.defines"
 
 
   interface Ifc_ptwalk#(numeric type asid_width);
@@ -73,7 +74,7 @@ package ptwalk_merged;
     Bit#(1) mprv = wr_mstatus[17];
 
     // register to hold the level number
-    Reg#(Bit#(2)) rg_levels <- mkReg(`varpages - 1);	//1-sv32  2-sv39  3-sv48
+    Reg#(Bit#(TLog#(`varpages))) rg_levels <- mkReg(fromInteger(valueOf(`varpages) -1));	//1-sv32  2-sv39  3-sv48
 
     // this register is named "a" to keep coherence with the algorithem provided in the spec.
     Reg#(Bit#(TAdd#(`ppnsize , 12))) rg_a <- mkReg(0);	//Page size is 12
@@ -173,7 +174,7 @@ package ptwalk_merged;
       Bit#(`subvpn) ppn0 = response.word[10 + `subvpn - 1 : 10];	//10bits-rv32, 9bits-rv64
       
       `ifdef RV32
-      Bit#(`lastppnsize) ppn1 = response.word[10 + `subvpn + lastppnsize - 1 : 10 + `subvpn];
+      Bit#(`lastppnsize) ppn1 = response.word[10 + `subvpn + `lastppnsize - 1 : 10 + `subvpn];
       `elsif RV64
       Bit#(`subvpn) ppn1 = response.word[10 + 2*`subvpn - 1 : 10 + `subvpn];
       Bit#(`subvpn) ppn2 = response.word[10 + 3*`subvpn - 1 : 10 + 2*`subvpn];
