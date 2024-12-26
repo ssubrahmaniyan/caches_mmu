@@ -1190,7 +1190,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
 		  endcase;
       ff_mem_io_resp.deq;
       Bit#(`causesize) lv_cause = io_entry.access == 0?`Load_access_fault:`Store_access_fault;
-      let lv_response = DMem_core_response{word:mem_response.error? `ifdef supervisor truncate(io_entry.vaddr) `else  zeroExtend(io_entry.address)  `endif: 
+      let lv_response = DMem_core_response{word:mem_response.error? `ifdef supervisor truncate(io_entry.vaddr) `else  zeroExtend(io_entry.address)  `endif : 
                                          `ifdef atomic (io_entry.access == 2)? rg_atomic_rd_data: `endif mem_response.data, 
                                           trap: mem_response.error,
                                           entry_alloc: False,
