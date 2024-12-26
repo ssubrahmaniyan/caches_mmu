@@ -2459,13 +2459,21 @@ addRules(re_v_sb_valid);
     mk_dataram1rw#(id,unpack(`dcache_onehot) `ifdef testmode ,test_mode `endif ) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_data
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_fb_v2
+  `ifdef core_clkgate
+  (*synthesize,gate_all_clocks*)
+  `else
 (*synthesize*)
+  `endif
   module mkstorebuffer#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
     let ifc();
     mk_storebuffer#(id) _temp(ifc);
