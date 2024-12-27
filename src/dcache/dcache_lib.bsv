@@ -348,7 +348,7 @@ package dcache_lib;
     let v_blocksize = valueOf(blocksize);
     let v_sets = valueOf(sets);
     let v_ways = valueOf(ways);
-    Vector#(ways, Ifc_mem_config1r1w#(sets, linewidth, blocksize)) v_data 
+    Vector#(ways, Ifc_mem_config1r1w#(sets, linewidth, 1)) v_data 
                                                  <- replicateM(mkmem_config1r1w(False, False));
     method Action ma_read_p1(Bit#(TLog#(sets)) index, Bit#(blocksize) banks);
       for (Integer i = 0; i< v_ways; i = i + 1) begin
@@ -362,7 +362,7 @@ package dcache_lib;
 
       `logLevel( dcache, 0, $format("[%2d]DCACHE: DATAs: Req: rw:%b ind:%d data:%h",
                                      id, index, way, dataline))
-      v_data[way].write(1, index, dataline, banks);
+      v_data[way].write(1, index, dataline, '1);
     endmethod
 
     method DataWordResponse#(blocksize, wordsize) mv_wordselect_p1( Bit#(TLog#(blocksize)) blocknum,
