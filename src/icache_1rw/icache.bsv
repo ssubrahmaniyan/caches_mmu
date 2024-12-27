@@ -231,12 +231,16 @@ package icache;
 `ifdef icache_ecc
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
 `endif
+  `ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkicache#( parameter Bit#(32) id
     `ifdef pmp ,
         Vector#(`pmpentries, Bit#(8)) pmp_cfg, 
         Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
-    )(Ifc_icache);
+        `ifdef testmode ,Bool test_mode `endif )(Ifc_icache);
 
     String icache = "";
     let v_sets=valueOf(`isets);
@@ -254,8 +258,8 @@ package icache;
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`ieccsize);
 
-    let m_data <- mkicache_data(id);
-    let m_tag <- mkicache_tag(id);
+    let m_data <- mkicache_data(id `ifdef testmode ,test_mode `endif );
+    let m_tag <- mkicache_tag(id `ifdef testmode ,test_mode `endif );
     let m_fillbuffer <- mkicache_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the in-coming request from the core.*/
