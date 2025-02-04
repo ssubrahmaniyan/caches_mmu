@@ -12,8 +12,11 @@ package common_tlb_types;
   `include "common_tlb.defines"
   import FIFO :: * ;
   import FIFOF :: * ;
-  import SpecialFIFOs :: * ;
-
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif
   function String access2str (Bit#(2) access);
     case(access)
       0: return "Load";
