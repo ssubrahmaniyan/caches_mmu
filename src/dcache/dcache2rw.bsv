@@ -11,7 +11,11 @@ package dcache2rw;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
-  import SpecialFIFOs :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import BRAMCore :: * ;
   import Vector :: * ;
   import GetPut :: * ;

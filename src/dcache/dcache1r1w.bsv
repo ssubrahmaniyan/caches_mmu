@@ -7,8 +7,11 @@ Created on: Friday 23 July 2021 11:58:53 AM
 package dcache1r1w;
   import FIFOF        :: * ;
   import Vector       :: * ;
-  import SpecialFIFOs :: * ;
-  import FIFOF        :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif
   import GetPut       :: * ;
   import Assert       :: * ;
   import OInt         :: * ;

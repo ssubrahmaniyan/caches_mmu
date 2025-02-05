@@ -9,7 +9,11 @@ Details:
 */
 package replacement_dcache;
   import Vector::*;
-  import LFSR::*;
+  `ifdef async_rst
+import LFSR_Modified::*;
+`else
+import LFSR :: * ;
+`endif
   import Assert::*;
 
   interface Ifc_replace#(numeric type sets, numeric type ways);

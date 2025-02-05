@@ -12,7 +12,11 @@ package fa_dtlb_hypervisor;
   `include "common_tlb.defines"
   import FIFO :: * ;
   import FIFOF :: * ;
-  import SpecialFIFOs :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import Vector :: * ;
   import common_tlb_types:: * ;
   import GetPut :: * ;

@@ -9,8 +9,12 @@ Details:
 */
 package null_icache;
   import FIFOF :: *;
-  import SpecialFIFOs :: *;
-  import GetPut :: *;
+  `ifdef async_rst
+  import SpecialFIFOs_Modified :: * ;
+  `else
+  import SpecialFIFOs :: * ;
+  `endif
+ import GetPut :: *;
 
   import icache_types::*;
   import common_tlb_types :: * ;
