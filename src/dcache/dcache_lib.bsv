@@ -14,7 +14,7 @@ package dcache_lib;
 `ifdef async_rst
 import SpecialFIFOs_Modified :: * ;
 `else
-import SpecialFIFOs :: * ;
+  import SpecialFIFOs :: * ;
 `endif  
   import Vector :: * ;
   import GetPut :: * ;
@@ -1625,19 +1625,30 @@ addRules(re_v_fb_err);
   endinterface:Ifc_iobuffer
 
   /*doc:module: */
-  (*conflict_free="ma_allocate_io, ma_increment_head"*)
-  (*conflict_free="ma_commit_io, ma_allocate_io"*)
+  // (*conflict_free="ma_allocate_io, ma_increment_head"*)
+  //(*conflict_free="ma_commit_io, ma_allocate_io"*)
   module mk_iobuffer#(parameter Bit#(32) id)(Ifc_iobuffer#(addr, wordsize, iosize, esize));
    
     let v_iosize = valueOf(iosize);
     Vector#( iosize, Reg#(IoEntry#(addr, wordsize, esize)) ) v_iobuffer <- replicateM(mkRegA(unpack(0)));
+    
     Vector#( iosize, Reg#(Bool))                      v_iobuff_valid <- replicateM(mkRegA(False));
+    //ma_allocate_io
+    Wire#(Bool) wr_valid_v_iobuff_valid_ma_allocate_io <- mkDWire(False);
+    Wire#(Bit#(TLog#(iosize))) wr_io_index_v_iobuff_valid_ma_allocate_io <- mkDWire(0);
+    //ma_increment_head
+    Wire#(Bool) wr_valid_v_iobuff_valid_ma_increment_head <- mkDWire(False);
+    Wire#(Bit#(TLog#(iosize))) wr_io_index_v_iobuff_valid_ma_increment_head <- mkDWire(0);
+
     Vector#( iosize, Reg#(Bool))                      v_iobuff_commit <- replicateM(mkRegA(False));
 
     /*doc:reg: */
     Reg#(Bit#(TLog#(iosize))) rg_head <- mkRegA(0);
     /*doc:reg: */
     Reg#(Bit#(TLog#(iosize))) rg_tail <- mkRegA(0);
+
+    Wire#(IoEntry#(addr, wordsize, esize)) wr_mv_io_head <- mkWire();
+
     /*doc:var: variable to indicate that the storebuffer is full*/
     Bool iobuff_full = (all(isTrue, readVReg(v_iobuff_valid)));
     /*dov:var: variable to indicate that the storebuffer is empty*/
@@ -1646,6 +1657,25 @@ addRules(re_v_fb_err);
       `logLevel( dcache, 3, $format("[%2d]DCACHE: io_full:%b io_empty:%b iohead:%d iotail:%d", 
         id, iobuff_full, iobuff_empty, rg_head, rg_tail))
     endrule
+
+    rule assign_wr_mv_io_head;
+      wr_mv_io_head <= v_iobuffer[rg_head];
+    endrule
+
+    Rules re_v_iobuff_valid = emptyRules;
+    for(Integer i = 0; i < valueOf(iosize); i = i+1) begin
+      Rules rg_connect_ena_data_iobuff = (rules
+      rule connect_v_iobuff_valid((wr_valid_v_iobuff_valid_ma_allocate_io
+                                && (wr_io_index_v_iobuff_valid_ma_allocate_io == fromInteger(i)))
+                             || (wr_valid_v_iobuff_valid_ma_increment_head
+                                && (wr_io_index_v_iobuff_valid_ma_increment_head == fromInteger(i))));
+        v_iobuff_valid[i] <= (wr_valid_v_iobuff_valid_ma_allocate_io && (wr_io_index_v_iobuff_valid_ma_allocate_io == fromInteger(i)));
+      endrule
+      endrules);
+      re_v_iobuff_valid = rJoinConflictFree(rg_connect_ena_data_iobuff, re_v_iobuff_valid);
+    end
+
+    addRules(re_v_iobuff_valid);
 
   `ifdef sva_assert
     property headOverflow();
@@ -1671,7 +1701,9 @@ addRules(re_v_fb_err);
       dynamicAssert(!v_iobuff_valid[rg_tail],"Valid IO Entry Allocated");
     `endif
       v_iobuffer[rg_tail] <= entry;
-      v_iobuff_valid[rg_tail] <= True;
+      //v_iobuff_valid[rg_tail] <= True;
+      wr_valid_v_iobuff_valid_ma_allocate_io <= True;
+      wr_io_index_v_iobuff_valid_ma_allocate_io <= rg_tail;
       if(rg_tail == fromInteger(v_iosize -1))
         rg_tail <= 0;
       else
@@ -1687,14 +1719,16 @@ addRules(re_v_fb_err);
     endmethod: ma_allocate_io
 
     method Action ma_increment_head;
-      v_iobuff_valid[rg_head] <= False;
+      //v_iobuff_valid[rg_head] <= False;
+      wr_valid_v_iobuff_valid_ma_increment_head <= True;
+      wr_io_index_v_iobuff_valid_ma_increment_head <= rg_head;
       if (rg_head == fromInteger(v_iosize-1))
         rg_head <= 0;
       else
         rg_head <= rg_head + 1;
     endmethod: ma_increment_head
 
-    method mv_io_head = v_iobuffer[rg_head];
+    method mv_io_head = wr_mv_io_head;
     method Action ma_commit_io;
       v_iobuff_commit[rg_head]<=True;
     endmethod:ma_commit_io
