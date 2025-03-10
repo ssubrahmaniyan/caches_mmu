@@ -2518,7 +2518,11 @@ addRules(re_v_sb_valid);
     return (ifc);
   endmodule: mkstorebuffer
 `endif
-  (*synthesize*)
+  `ifdef core_clkgate
+  (*synthesize,gate_all_clocks*)
+  `else
+(*synthesize*)
+  `endif
   module mkiobuffer#(parameter Bit#(32) id)(Ifc_iobuffer#(`paddr, `dwords, `dibsize, `desize));
     let ifc();
     mk_iobuffer#(id) _temp(ifc);
