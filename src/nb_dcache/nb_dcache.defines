@@ -11,7 +11,7 @@ see LICENSE.iitm
 `define Vaddr           `vaddr
 `define Dsram           `ddram_width
 `define Tsram           `dtram_width
-`define Id_bits         `axi4_id_bits
+`define Id_bits         `id_width // axi4 id width
 `define Mshrsize        `dmshr_size
 `define Mshrfifo_depth  `dmshr_depth
 `define Buswidth        `dbuswidth
