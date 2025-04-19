@@ -11,7 +11,11 @@ package dmem;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
-  import SpecialFIFOs::*;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import BRAMCore::*;
   import FIFO::*;
   import GetPut::*;
@@ -49,10 +53,14 @@ package dmem;
     interface Get#(DCache_io_req#(`paddr, `dbuswidth)) send_mem_io_req;
     interface Put#(DCache_io_response#(`dbuswidth)) receive_mem_io_resp;
 
+  `ifndef core_clkgate
     (*always_ready,always_enabled*)
+  `endif
     method Action ma_curr_priv (Bit#(2) c);
     method Action ma_commit_io(Bit#(`desize) currepoch);
+    `ifndef core_clkgate
     (*always_ready*)
+  `endif
     method Bool mv_dmem_available;
 
   `ifdef dcache
@@ -66,7 +74,9 @@ package dmem;
     //method Action ma_commit_store(Bit#(`desize ) currepoch);
     method Action ma_commit_store(Tuple2#(Bit#(`desize), Bit#(TLog#(`dsbsize))) storecommit);
     method Action ma_cache_enable(Bool c);
+    `ifndef core_clkgate
     (*always_ready*)
+  `endif
     method Bool mv_storebuffer_empty;
   `endif
       // ---------------------------------------------------------//
@@ -139,20 +149,24 @@ package dmem;
   endfunction
 `endif
 
+ `ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkdmem#(parameter Bit#(32) id
     `ifdef pmp ,
         Vector#(`pmpentries, Bit#(8)) pmp_cfg, 
         Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
-    )(Ifc_dmem);
+        `ifdef testmode ,Bool test_mode `endif )(Ifc_dmem);
 
-    let dcache <- mkdcache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif );
+    let dcache <- mkdcache(id `ifdef pmp ,pmp_cfg, pmp_addr `endif  `ifdef testmode ,test_mode `endif );
   `ifdef supervisor
     Ifc_fa_dtlb dtlb <- mkfa_dtlb(id);
     mkConnection(dtlb.get_core_response, dcache.put_pa_from_tlb);
   `endif
     interface receive_core_req = interface Put
-      method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r);
+      method Action put (DMem_request#(`vaddr, TMul#( `dwords, 8),`desize ) r) if (dcache.mv_cache_available);
         `logLevel( dmem, 0, $format("DMEM: Req from Core:",fshow(r)))
       `ifdef supervisor
         if(r.ptwalk_req || (!r.sfence `ifdef hypervisor && !r.hfence `endif ))
@@ -182,8 +196,10 @@ package dmem;
     method mv_storebuffer_empty  =dcache.mv_storebuffer_empty;
     method Action ma_curr_priv (Bit#(2) c);
       dcache.ma_curr_priv(c);
+    `ifdef supervisor
       `ifndef hypervisor
 	      dtlb.ma_curr_priv(c);
+      `endif
       `endif
     endmethod
   `ifdef supervisor

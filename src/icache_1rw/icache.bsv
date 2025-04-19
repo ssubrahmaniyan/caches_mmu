@@ -130,7 +130,11 @@ package icache;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
-  import SpecialFIFOs :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import BRAMCore :: * ;
   import Vector :: * ;
   import GetPut :: * ;
@@ -158,10 +162,8 @@ package icache;
   typedef struct{
     Bit#(TLog#(blocks)) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
-    Bool io_request;
   } Pending_req#(numeric type fbsize, numeric type blocks)
                 deriving(Bits, Eq, FShow);
-
 
   interface Ifc_icache;
     /*doc:subifc: A Put method to receive the core request. A request should be lateched into this
@@ -233,12 +235,16 @@ package icache;
 `ifdef icache_ecc
   (*preempts="ma_ram_request,rl_release_from_fillbuffer"*)
 `endif
+  `ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkicache#( parameter Bit#(32) id
     `ifdef pmp ,
         Vector#(`pmpentries, Bit#(8)) pmp_cfg, 
         Vector#(`pmpentries, Bit#(`paddr)) pmp_addr `endif
-    )(Ifc_icache);
+        `ifdef testmode ,Bool test_mode `endif )(Ifc_icache);
 
     String icache = "";
     let v_sets=valueOf(`isets);
@@ -256,8 +262,8 @@ package icache;
     let v_tagbits = valueOf(`tagbits);
     let v_ecc_size = valueOf(`ieccsize);
 
-    let m_data <- mkicache_data(id);
-    let m_tag <- mkicache_tag(id);
+    let m_data <- mkicache_data(id `ifdef testmode ,test_mode `endif );
+    let m_tag <- mkicache_tag(id `ifdef testmode ,test_mode `endif );
     let m_fillbuffer <- mkicache_fb_v2(id);
     // ----------------------- FIFOs to interact with interface of the design -------------------//
     /*doc:fifo: This fifo stores the in-coming request from the core.*/
@@ -275,8 +281,11 @@ package icache;
   `endif
 
     // ------------------------ FIFOs for internal state-maintenance ---------------------------//
-    /*doc:fifo: This fifo holds meta information of the miss/io request that was made by the core*/
+    /*doc:fifo: This fifo holds meta information of the miss request that was made by the core*/
     FIFOF#(Pending_req#(`ifbsize, `iblocks)) ff_pending_req <- mkUGSizedFIFOF(2);
+
+    /*doc:fifo: This fifo holds meta information of the io request that was made by the core*/
+    FIFOF#(Pending_req#(`ifbsize, `iblocks)) ff_pending_io_req <- mkUGSizedFIFOF(2);
     
     // -------------------- Register declarations ----------------------------------------------//
 
@@ -528,8 +537,7 @@ package icache;
 
     /*doc:rule: This rule performs a check on the fill-buffer for a given core-request. The address
      from the core is looked up in the fill-buffer in a fully-associative fashion. In case of a
-     hit, the requested word is extracted from the hit line. This rule will also check if the
-     request is an IO request.
+     hit, the requested word is extracted from the hit line.
     */
     rule rl_fillbuffer_check(!ff_core_request.first.fence);
       let req = ff_core_request.first;
@@ -543,10 +551,10 @@ package icache;
       Bit#(`causesize) lv_cause = `Inst_access_fault;
 
       let lv_polling_resp <- m_fillbuffer.mav_polling_response(phyaddr, ff_pending_req.notEmpty, 
-                ff_pending_req.first.fbindex);
+                ff_pending_req.first.fbindex); // fill buffer won't have io requests
       `logLevel( icache, 0, $format("[%2d]ICACHE: FB: Polling Response:",id, 
                                     fshow(lv_polling_resp)))
-      let lv_io_req = isIO(phyaddr, wr_cache_enable);
+      //let lv_io_req = isIO(phyaddr, wr_cache_enable);
 
       let lv_response_word = lv_polling_resp.word ;
       let lv_hitmask = lv_polling_resp.waymask;
@@ -654,7 +662,7 @@ package icache;
     be a miss in both the SRAMs and the FB and thus need to be checked only here. 
     This rule will set the rg_miss_handling to prevent further requests from the core being served*/
     rule rl_send_memory_request(wr_ram_state == Miss && wr_fb_state == Miss && !fb_full &&
-        !wr_fault && ! ff_core_request.first.fence && ff_pending_req.notFull);
+        !wr_fault && ! ff_core_request.first.fence && ff_pending_req.notFull && ff_pending_io_req.notFull ); // Both pending and pending_io has  chance to be filled
       let req = ff_core_request.first;
     `ifdef supervisor
       let pa_response = ff_from_tlb.first;
@@ -686,9 +694,12 @@ package icache;
         lv_alotted_fb <- m_fillbuffer.mav_allocate_line(False, ?, phyaddr);
         `logLevel( icache, 0, $format("[%2d]ICACHE: MemReq: Allocating Fbindex:%d",id, lv_alotted_fb))
       end
-      let pend_req = Pending_req{init_bank: lv_blocknum,io_request: lv_io_req, 
+      let pend_req = Pending_req{init_bank: lv_blocknum,
                                 fbindex: lv_alotted_fb};
-      ff_pending_req.enq(pend_req);
+      if(lv_io_req)
+        ff_pending_io_req.enq(pend_req);
+      else 
+        ff_pending_req.enq(pend_req);
       if(lv_io_req) begin
         `logLevel( icache, 0, $format("[%2d]ICACHE: MemReq: Sending NC Request for Addr:%h",id,phyaddr))
       `ifdef perfmonitors
@@ -711,7 +722,7 @@ package icache;
     /*doc:rule: this rule will fill up the FB with the response from the memory, Once the last word
     has been received the entire line and tag are written in to the BRAM and the fill buffer is
     released in the next cycle*/
-    rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_pending_req.first.io_request);
+    rule rl_fill_from_memory(ff_pending_req.notEmpty && !ff_read_mem_response.first.io);
       let pending_req = ff_pending_req.first;
       let response = ff_read_mem_response.first;
       ff_read_mem_response.deq;
@@ -721,7 +732,7 @@ package icache;
         ff_pending_req.deq;
     endrule
     /*doc:rule: this rule is responsible for capturing the memory response for an IO request.*/
-    rule rl_capture_io_response(ff_pending_req.notEmpty && ff_pending_req.first.io_request);
+    rule rl_capture_io_response(ff_pending_io_req.notEmpty && ff_read_mem_response.first.io);
       let response = ff_read_mem_response.first;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault ;
@@ -736,7 +747,7 @@ package icache;
       wr_nc_response <= lv_response;
       wr_nc_state <= Hit;
       ff_read_mem_response.deq;
-      ff_pending_req.deq;
+      ff_pending_io_req.deq;
       `logLevel( icache, 2, $format("[%2d]ICACHE: NC Response from Memory: ",id,fshow(response)))
     endrule
     /*doc:rule: This rule fires when a replay of the last core-request is required because a release

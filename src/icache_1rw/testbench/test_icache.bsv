@@ -11,7 +11,11 @@ package test_icache;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
-  import SpecialFIFOs::*;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import BRAMCore::*;
   import FIFO::*;
   import BUtils::*;

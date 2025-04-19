@@ -11,7 +11,11 @@ package dcache_lib;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
   import SpecialFIFOs :: * ;
+`endif  
   import Vector :: * ;
   import GetPut :: * ;
   import Assert  :: * ;
@@ -41,6 +45,14 @@ package dcache_lib;
   `endif
     Bit#(ways)    waymask;
   } TagResponse#(numeric type ways) deriving(Bits, Eq, FShow);
+
+  typedef struct{
+    `ifdef dcache_ecc
+      Bit#(ways) sed;
+      Bit#(ways) ded;
+    `endif
+    Bit#(paddr) tag;
+  } TagSelectResponse#(numeric type ways, numeric type paddr) deriving(Bits, Eq, FShow);
 
   typedef struct{
   `ifdef dcache_ecc
@@ -99,13 +111,13 @@ package dcache_lib;
      * and respond with a hit-vector indicating which way was a hit. Also responds if there was a
      * single-error or double-error detected while performing the read across all the ways. */
     method TagResponse#(ways) mv_tagmatch_resp(Bit#(paddr) address_in);
-    method Bit#(paddr) mv_tag_select(Bit#(TLog#(ways)) wayselect );
+    method TagSelectResponse#(ways,paddr) mv_tag_select(Bit#(TLog#(ways)) wayselect );
   `ifdef dcache_ecc
     method Bit#(paddr) mv_sideband_read (Bit#(TLog#(ways)) way);
   `endif
   endinterface : Ifc_tagram1rw
 
-  module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram1rw#(wordsize, blocksize, sets, ways, paddr))
+  module mk_tagram1rw#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram1rw#(wordsize, blocksize, sets, ways, paddr))
     provisos(
           Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
@@ -131,10 +143,10 @@ package dcache_lib;
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
   `ifdef dcache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw_ecc(False));
+                                                        replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw(False));
+                                                        replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
     method Action ma_request( Bool read_write,
                               Bit#(TLog#(sets)) index,
@@ -150,14 +162,32 @@ package dcache_lib;
       `logLevel( dcache, 0, $format("[%2d]DCACHE: TagRAM: Tag:%h RW:%b Way:%d set:%d",id,tag,
       read_write, way, index))
     endmethod
-    method Bit#(paddr) mv_tag_select(Bit#(TLog#(ways)) wayselect );
+    method TagSelectResponse#(ways,paddr) mv_tag_select(Bit#(TLog#(ways)) wayselect );
 
       Vector#(ways, Bit#(tagbits)) lv_tags;
+    `ifdef dcache_ecc
+      Bit#(ways) sed = 0;
+      Bit#(ways) ded = 0;
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_chparity;
+      Vector#(ways,Bit#(TAdd#(2,TLog#(tagbits)))) lv_stparity;
+    `endif
       for (Integer i = 0; i<v_ways; i = i + 1) begin
         lv_tags[i] = v_tags[i].read_response;
+      `ifdef dcache_ecc
+        sed[i] = v_tags[i].read_sed;
+        ded[i] = v_tags[i].read_ded;
+        lv_chparity[i] = v_tags[i].check_parity;
+        lv_stparity[i] = v_tags[i].stored_parity;
+      `endif
       end
+      `ifdef dcache_ecc
+      for (Integer i = 0; i< v_ways; i = i + 1) begin
+        Bit#(maxsize) _t = zeroExtend(lv_tags[i]);
+        lv_tags[i] = truncate(fn_ecc_correct(lv_chparity[i], lv_stparity[i], _t));
+      end
+    `endif
       Bit#(paddr)  lv_tag = {lv_tags[wayselect],'d0};
-      return  lv_tag ;
+      return  TagSelectResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif tag:lv_tag}  ;
     endmethod
 
     method TagResponse#(ways) mv_tagmatch_resp(Bit#(paddr) address_in);
@@ -267,7 +297,7 @@ package dcache_lib;
       end
       `logLevel( dcache, 0, $format("TAGS: tag_in:%h",tag_in,fshow(lv_tags)))
       `logLevel( dcache, 0, $format("TAGS: hitvector:%b",lv_hitvector))
-      return TagResponse{`ifdef dcache_ecc sed: sed, ded: ded, `endif 
+      return TagResponse{  // `ifdef dcache_ecc sed: sed, ded: ded, `endif 
                           waymask: lv_hitvector};
     endmethod:mv_tagmatch_p1
     method ActionValue#(Bit#(TSub#(paddr,TAdd#(TLog#(blocksize),TAdd#(TLog#(wordsize), TLog#(sets)))))) mv_select_p1(Bit#(ways) wayselect);
@@ -363,14 +393,7 @@ package dcache_lib;
         lv_hit_selected_line = lv_lines[wayindex];
       end
 
-      Bit#(1) lv_word_ded = `ifdef dcache_ecc lv_line_ded[blocknum] `else 0 `endif ;
-      Bit#(1) lv_word_sed = `ifdef dcache_ecc lv_line_sed[blocknum] `else 0 `endif ;
-
-      return DataWordResponse{`ifdef dcache_ecc 
-                            word_sed: lv_word_sed, word_ded:lv_word_ded,  
-                            line_sed: lv_line_sed, line_ded:lv_line_ded, 
-                            stored_parity: lv_stored_parity, check_parity: lv_check_parity,
-                          `endif 
+      return DataWordResponse{
                           //replline: lv_repl_selected_line, 
                           word: lv_selected_word
                           ,line: lv_hit_selected_line};
@@ -389,14 +412,7 @@ package dcache_lib;
       else 
         lv_selected_line = lv_lines[fromOInt(unpack(wayselect))];
 
-      Bit#(1) lv_word_ded = `ifdef dcache_ecc lv_line_ded[blocknum] `else 0 `endif ;
-      Bit#(1) lv_word_sed = `ifdef dcache_ecc lv_line_sed[blocknum] `else 0 `endif ;
-
-      return DataLineResponse{`ifdef dcache_ecc 
-                            word_sed: lv_word_sed, word_ded:lv_word_ded,  
-                            line_sed: lv_line_sed, line_ded:lv_line_ded, 
-                            stored_parity: lv_stored_parity, check_parity: lv_check_parity,
-                          `endif line: lv_selected_line};
+      return DataLineResponse{  line: lv_selected_line};
 
     endmethod
   endmodule : mk_dataram1r1w
@@ -566,7 +582,7 @@ package dcache_lib;
   `endif
   endinterface : Ifc_dataram1rw
 
-  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
+  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot `ifdef testmode ,Bool test_mode `endif )
       (Ifc_dataram1rw#(wordsize, blocksize, sets, ways))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -580,15 +596,17 @@ package dcache_lib;
           Add#(1, c__, TLog#(TAdd#(1, ways))), // ways should be atleast 1
           Add#(a__, respwidth, linewidth), // since the response is truncated version of line
           Mul#(TDiv#(linewidth, blocksize), blocksize, linewidth), // from mem_config
-          Add#(a__, TDiv#(linewidth, blocksize), linewidth), // from mem_config
+          Add#(d__, TDiv#(linewidth, blocksize), linewidth), // from mem_config
           Add#(f__, TMul#(wordsize, 8), linewidth),
           Add#(1, b__, ways)
 
         `ifdef dcache_ecc
-          ,Add#(b__, 2, TMul#(2, blocksize)),
-          Add#(TLog#(TDiv#(linewidth, blocksize)), c__, 6),
-          Add#(d__, TDiv#(linewidth, blocksize), 64),
+          ,Add#(g__, 2, TMul#(2, blocksize)),
+          Add#(TLog#(TDiv#(linewidth, blocksize)), h__, 6),
+          Add#(i__, TDiv#(linewidth, blocksize), 64),
           Add#(e__, TAdd#(2, TLog#(TDiv#(linewidth, blocksize))), TMul#(blocksize,
+                                                    TAdd#(2, TLog#(TDiv#(linewidth, blocksize))))),
+          Mul#(blocksize, TAdd#(2, TLog#(TMul#(8, wordsize))), TMul#(blocksize,
                                                     TAdd#(2, TLog#(TDiv#(linewidth, blocksize)))))
         `endif
       );
@@ -598,10 +616,10 @@ package dcache_lib;
     let v_ways = valueOf(ways);
   `ifdef dcache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
-                                                      <- replicateM(mkmem_config1rw_ecc(False));
+                                                      <- replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
-    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, 1)) v_data
-                                                      <- replicateM(mkmem_config1rw(False));
+    Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
+                                                      <- replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
   `ifdef dcache_zbus
     Vector#(TAdd#(ways,1), ZBusDualIFC#(Bit#(linewidth))) v_zbus <- replicateM(mkZBusBuffer);
@@ -620,10 +638,10 @@ package dcache_lib;
 
       if(!read_write)
         for (Integer i = 0; i< v_ways; i = i + 1) begin
-          v_data[i].request(0, index, dataline, '1);
+          v_data[i].request(0, index, dataline, banks);
         end
       else
-        v_data[way].request(1, index, dataline, '1);
+        v_data[way].request(1, index, dataline, banks);
     endmethod
     method ActionValue#(DataLineResponse#(blocksize,wordsize)) mv_line_select(Bit#(ways) wayselect );
     `ifdef ASSERT
@@ -975,8 +993,8 @@ package dcache_lib;
         end
       end
 
-      Bit#(1) lv_word_ded = `ifdef dcache_ecc lv_line_ded[blocknum] `else 0 `endif ;
-      Bit#(1) lv_word_sed = `ifdef dcache_ecc lv_line_sed[blocknum] `else 0 `endif ;
+      Bit#(1) lv_word_ded = 0 ;
+      Bit#(1) lv_word_sed = 0 ;
 
       return DataLineResponse{`ifdef dcache_ecc 
                             word_sed: lv_word_sed, word_ded:lv_word_ded,  
@@ -1084,15 +1102,15 @@ package dcache_lib;
   `endif
   endinterface : Ifc_fillbuffer_v2
 
-  (*conflict_free="ma_perform_release,mav_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
-  (*conflict_free="ma_fill_from_memory, ma_perform_release"*)
-  (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
-  (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
+ (*conflict_free="ma_perform_release,mav_allocate_line"*)
+ (*conflict_free="ma_fill_from_memory, mav_allocate_line"*)
+ //(*conflict_free="ma_fill_from_memory, ma_perform_release"*)
+ (*conflict_free="mav_allocate_line, ma_from_storebuffer"*)
+ (*conflict_free="ma_fill_from_memory, ma_from_storebuffer"*)
 `ifdef dcache_ecc
-  (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
-  (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
-  (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
+ (*conflict_free="ma_fill_from_memory, mav_perform_sec"*)
+ (*mutually_exclusive="mav_allocate_line, mav_perform_sec"*)
+ (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
 `endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
       (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, respwidth))
@@ -1114,7 +1132,8 @@ package dcache_lib;
           Mul#(respwidth, b__, linewidth),
           Add#(c__, respwidth, linewidth),
           Add#(d__, blockbits, paddr),
-          Add#(TAdd#(tagbits, setbits), e__, paddr)
+          Add#(TAdd#(tagbits, setbits), e__, paddr),
+          Add#(f__, 1, respwidth)
 
         `ifdef dcache_ecc
           , Add#(2, TLog#(TMul#(8,wordsize)), ecc_size)
@@ -1146,17 +1165,99 @@ package dcache_lib;
 
     /*doc: vec: vector of registers to maintain the valid bit for fill-buffers*/
     Vector#(fbsize,ConfigReg#(Bool))                      v_fb_addr_valid    <- replicateM(mkConfigReg(False));
+    
+    //mav_allocate_line
+    Wire#(Bool) wr_v_fb_addr_valid_mav_allocate_line <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_addr_valid_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_addr_valid_mav_allocate_line <- mkDWire(False);
+
+    //ma_perform_release
+    Wire#(Bool) wr_v_fb_addr_valid_ma_perform_release <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_addr_valid_ma_perform_release <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_addr_valid_ma_perform_release <- mkDWire(False);
+    
+    
+    
     /*doc: vec: vector of registers to hold the dataline for fill-buffers.*/
     //Vector#(fbsize,Reg#(Bit#(linewidth)))           v_fb_data     <- replicateM(mkConfigReg(unpack(0)));
     Vector#(fbsize,Vector#(blocksize,ConfigReg#(Bit#(respwidth))))    v_fb_data     
                                                     <- replicateM(replicateM(mkConfigReg(unpack(0))));
+
+    //mav_allocate_line
+    Vector#(blocksize,Wire#(Bit#(respwidth)))    wr_v_fb_data_mav_allocate_line    
+                                                    <- replicateM(mkDWire(0));
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_data_mav_allocate_line <- mkDWire(False);
+    
+    //ma_fill_from_memory
+    Wire#(Bit#(respwidth)) wr_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_data_ma_fill_from_memory <- mkDWire(False);
+
+    //ma_from_storebuffer
+    Wire#(Bit#(respwidth)) wr_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_data_ma_from_storebuffer <- mkDWire(False);
+
+    `ifdef dcache_ecc
+    //mav_perform_sec
+    Vector#(blocksize,Wire#(Bit#(respwidth)))    wr_v_fb_data_mav_perform_sec    
+                                                    <- replicateM(mkDWire(0));
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_mav_perform_sec <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_data_mav_perform_sec <- mkDWire(False);
+    `endif
+
     /*doc: vec: vector of registers to indicate that the line fill faced a bus-error*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_err      <- replicateM(mkConfigReg(0));
+
+    //mav_allocate_line
+    Wire#(Bit#(1)) wr_v_fb_err_mav_allocate_line <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_err_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_err_mav_allocate_line <- mkDWire(False);
+    
+    
+    //ma_fill_from_memory
+    Wire#(Bit#(1)) wr_v_fb_err_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_err_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_err_ma_fill_from_memory <- mkDWire(False);    
+
+
+
     /*doc: vec: vector of registers to indicate that the line in the fill-buffer is dirty*/
     Vector#(fbsize,ConfigReg#(Bit#(1)))                   v_fb_dirty    <- replicateM(mkConfigReg(0));
+
+    //mav_allocate_line
+    Wire#(Bit#(1)) wr_v_fb_dirty_mav_allocate_line <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_dirty_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_dirty_mav_allocate_line <- mkDWire(False);
+
+    //ma_from_storebuffer
+    Wire#(Bit#(1)) wr_v_fb_dirty_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_dirty_ma_from_storebuffer <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_dirty_ma_from_storebuffer <- mkDWire(False);
+
     /*doc: vec: vector of regisetrs to indicate if the entire line of the fillbuffer entry is
      * available or not*/
     Vector#(fbsize,ConfigReg#(Bool))                   v_fb_line_valid  <- replicateM(mkConfigReg(False));
+    
+    //mav_allocate_line
+    Wire#(Bool) wr_v_fb_line_valid_mav_allocate_line <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_mav_allocate_line <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_line_valid_mav_allocate_line <- mkDWire(False);
+
+    //ma_perform_release
+    Wire#(Bool) wr_v_fb_line_valid_ma_perform_release <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_ma_perform_release <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_line_valid_ma_perform_release <- mkDWire(False);
+    
+    
+    //ma_fill_from_memory
+    Wire#(Bool) wr_v_fb_line_valid_ma_fill_from_memory <- mkDWire(False);
+    Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_line_valid_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_fb_line_valid_ma_fill_from_memory <- mkDWire(False);
+    
     /*doc: reg: register to indicate how many bytes of the line have been filled by the
      bus*/
     ConfigReg#(Bit#(blocksize))                  rg_fb_enables    <- mkConfigReg(0);
@@ -1201,6 +1302,122 @@ package dcache_lib;
  fbheadvalid:%b", id, fb_full, fb_empty, rg_fbhead, rg_fbtail, v_fb_line_valid[rg_fbhead]))
     endrule
 
+    Rules re_v_fb_data = emptyRules;
+  for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+    Rules rg_connect_ena_data = emptyRules;
+    for (Integer j=0;j < valueOf(blocksize); j = j+1) begin
+    Rules rg_connect_ena_data_j = (rules
+      rule connect_v_fb_data((wr_valid_v_fb_data_mav_allocate_line  
+              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
+          ||  (wr_valid_v_fb_data_ma_fill_from_memory 
+              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j))) 
+        `ifdef dcache_ecc
+          || (wr_valid_v_fb_data_mav_perform_sec  
+              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
+        `endif
+          ||  (wr_valid_v_fb_data_ma_from_storebuffer 
+              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))
+              );
+        v_fb_data[i][j] <= ((wr_v_fb_data_mav_allocate_line[j] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
+                              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
+                          | (wr_v_fb_data_ma_fill_from_memory & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
+                              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+                              && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j)))))
+                        `ifdef dcache_ecc
+                          | (wr_v_fb_data_mav_perform_sec[j] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
+                              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
+                        `endif
+                          | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
+                              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))))
+                            );
+      endrule
+    endrules);
+    rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j,rg_connect_ena_data);
+    end
+    re_v_fb_data = rJoinConflictFree(rg_connect_ena_data, re_v_fb_data);
+  end
+
+  addRules(re_v_fb_data);
+
+  Rules re_v_fb_dirty = emptyRules;
+  for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+    Rules rg_connect_ena_data_dirty = (rules
+    rule connect_v_fb_dirty((wr_valid_v_fb_dirty_mav_allocate_line
+                              && (wr_fb_index_v_fb_dirty_mav_allocate_line == fromInteger(i)))
+                           || (wr_valid_v_fb_dirty_ma_from_storebuffer
+                              && (wr_fb_index_v_fb_dirty_ma_from_storebuffer == fromInteger(i) )));
+      v_fb_dirty[i] <= ((wr_v_fb_dirty_mav_allocate_line & signExtend(pack(wr_valid_v_fb_dirty_mav_allocate_line
+      && (wr_fb_index_v_fb_dirty_mav_allocate_line == fromInteger(i))))) 
+                      | (wr_v_fb_dirty_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_dirty_ma_from_storebuffer
+                      && (wr_fb_index_v_fb_dirty_ma_from_storebuffer == fromInteger(i) )))));
+    endrule
+    endrules);
+    re_v_fb_dirty = rJoinConflictFree(rg_connect_ena_data_dirty, re_v_fb_dirty);
+  end
+
+addRules(re_v_fb_dirty);
+
+Rules re_v_fb_addr_valid = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_addr_valid = (rules
+  rule connect_v_fb_addr_valid((wr_valid_v_fb_addr_valid_mav_allocate_line
+                            && (wr_fb_index_v_fb_addr_valid_mav_allocate_line == fromInteger(i)))
+                         || (wr_valid_v_fb_addr_valid_ma_perform_release
+                            && (wr_fb_index_v_fb_addr_valid_ma_perform_release == fromInteger(i) )));
+    v_fb_addr_valid[i] <= ((wr_v_fb_addr_valid_mav_allocate_line && wr_valid_v_fb_addr_valid_mav_allocate_line
+    && (wr_fb_index_v_fb_addr_valid_mav_allocate_line == fromInteger(i))) 
+                        || (wr_v_fb_addr_valid_ma_perform_release && wr_valid_v_fb_addr_valid_ma_perform_release
+                        && (wr_fb_index_v_fb_addr_valid_ma_perform_release == fromInteger(i) )));
+  endrule
+  endrules);
+  re_v_fb_addr_valid = rJoinConflictFree(rg_connect_ena_data_addr_valid, re_v_fb_addr_valid);
+end
+
+addRules(re_v_fb_addr_valid);
+
+Rules re_v_fb_line_valid = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_line_valid = (rules
+  rule connect_v_fb_line_valid((wr_valid_v_fb_line_valid_mav_allocate_line
+                            && (wr_fb_index_v_fb_line_valid_mav_allocate_line == fromInteger(i)))
+                         || (wr_valid_v_fb_line_valid_ma_fill_from_memory
+                            && (wr_fb_index_v_fb_line_valid_ma_fill_from_memory == fromInteger(i) ))
+                        || (wr_valid_v_fb_line_valid_ma_perform_release
+                            && (wr_fb_index_v_fb_line_valid_ma_perform_release == fromInteger(i) )));
+    v_fb_line_valid[i] <= ((wr_v_fb_line_valid_mav_allocate_line && wr_valid_v_fb_line_valid_mav_allocate_line
+    && (wr_fb_index_v_fb_line_valid_mav_allocate_line == fromInteger(i)) ) 
+                          || (wr_v_fb_line_valid_ma_fill_from_memory &&  wr_valid_v_fb_line_valid_ma_fill_from_memory
+                          && (wr_fb_index_v_fb_line_valid_ma_fill_from_memory == fromInteger(i) ) ) 
+                          || (wr_v_fb_line_valid_ma_perform_release && wr_valid_v_fb_line_valid_ma_perform_release
+                          && (wr_fb_index_v_fb_line_valid_ma_perform_release == fromInteger(i) ) ));
+  endrule
+  endrules);
+  re_v_fb_line_valid = rJoinConflictFree(rg_connect_ena_data_line_valid, re_v_fb_line_valid);
+end
+
+addRules(re_v_fb_line_valid);
+
+Rules re_v_fb_err = emptyRules;
+for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
+  Rules rg_connect_ena_data_err = (rules
+  rule connect_v_fb_err((wr_valid_v_fb_err_mav_allocate_line
+                            && (wr_fb_index_v_fb_err_mav_allocate_line == fromInteger(i)))
+                         || (wr_valid_v_fb_err_ma_fill_from_memory
+                            && (wr_fb_index_v_fb_err_ma_fill_from_memory == fromInteger(i) )));
+    v_fb_err[i] <= ( (wr_v_fb_err_mav_allocate_line & signExtend(pack(wr_valid_v_fb_err_mav_allocate_line
+    && (wr_fb_index_v_fb_err_mav_allocate_line == fromInteger(i))) )) 
+                    | (wr_v_fb_err_ma_fill_from_memory & signExtend(pack(wr_valid_v_fb_err_ma_fill_from_memory
+                    && (wr_fb_index_v_fb_err_ma_fill_from_memory == fromInteger(i) ))) ) );
+  endrule
+  endrules);
+  re_v_fb_err = rJoinConflictFree(rg_connect_ena_data_err, re_v_fb_err);
+end
+
+addRules(re_v_fb_err);
+
     method mv_fbfull = fb_full;
     method mv_fbempty = fb_empty;
     method mv_fbhead_valid = v_fb_line_valid[rg_fbhead];
@@ -1211,13 +1428,35 @@ package dcache_lib;
                                     Bit#(1)                                   dirty );
 
       Bit#(1) _temp = pack(from_ram);
-      v_fb_addr_valid[rg_fbtail] <= True;
+
+      // v_fb_addr_valid[rg_fbtail] <= True;
+      wr_valid_v_fb_addr_valid_mav_allocate_line <= True;
+      wr_fb_index_v_fb_addr_valid_mav_allocate_line <= rg_fbtail;
+      wr_v_fb_addr_valid_mav_allocate_line <= True;
+      
+      
       v_fb_addr[rg_fbtail] <= address;
-      v_fb_dirty[rg_fbtail] <= _temp & dirty;
-      v_fb_line_valid[rg_fbtail] <= from_ram;
-      v_fb_err[rg_fbtail] <= 0;
+
+      // v_fb_dirty[rg_fbtail] <= _temp & dirty;
+      wr_v_fb_dirty_mav_allocate_line <= _temp & dirty;
+      wr_fb_index_v_fb_dirty_mav_allocate_line <= rg_fbtail;
+      wr_valid_v_fb_dirty_mav_allocate_line <= True;
+
+      // v_fb_line_valid[rg_fbtail] <= from_ram;
+      wr_valid_v_fb_line_valid_mav_allocate_line <= True;
+      wr_fb_index_v_fb_line_valid_mav_allocate_line<=rg_fbtail;
+      wr_v_fb_line_valid_mav_allocate_line <= from_ram;
+
+      // v_fb_err[rg_fbtail] <= 0;
+      wr_v_fb_err_mav_allocate_line <= 0;
+      wr_fb_index_v_fb_err_mav_allocate_line <= rg_fbtail;
+      wr_valid_v_fb_err_mav_allocate_line <= True;
+      
+      wr_valid_v_fb_data_mav_allocate_line <= True;
+      wr_fb_index_v_fb_data_mav_allocate_line <= rg_fbtail;
       for (Integer i = 0; i< v_blocksize ; i = i + 1) begin
-        v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        //v_fb_data[rg_fbtail][i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
+        wr_v_fb_data_mav_allocate_line[i] <= dataline[i*v_respwidth+v_respwidth-1:i*v_respwidth];
       end
       if(rg_fbtail == fromInteger(v_fbsize -1))
         rg_fbtail <= 0;
@@ -1232,15 +1471,27 @@ package dcache_lib;
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
       Bit#(TMax#(1,TLog#(blocksize))) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
-      v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
+      //v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
+      wr_v_fb_data_ma_fill_from_memory <= mem_resp.data;
+      wr_fb_index_v_fb_data_ma_fill_from_memory <= fbindex;
+      wr_block_v_fb_data_ma_fill_from_memory <= lv_current_bank;
+      wr_valid_v_fb_data_ma_fill_from_memory <= True ;
       rg_next_bank <= lv_current_bank + ((v_blocksize>1)?1:0);
       if(mem_resp.last) begin
-        v_fb_line_valid[fbindex] <= True;
+        // v_fb_line_valid[fbindex] <= True;
+        wr_v_fb_line_valid_ma_fill_from_memory <= True;
+        wr_fb_index_v_fb_line_valid_ma_fill_from_memory <= fbindex;
+        wr_valid_v_fb_line_valid_ma_fill_from_memory <= True;
         rg_fb_enables <= 0;
       end
       else
         rg_fb_enables[lv_current_bank] <= 1;
-      v_fb_err[fbindex] <= pack(mem_resp.err);
+
+      // v_fb_err[fbindex] <= pack(mem_resp.err);
+      wr_v_fb_err_ma_fill_from_memory <= pack(mem_resp.err);
+      wr_fb_index_v_fb_err_ma_fill_from_memory <= fbindex;
+      wr_valid_v_fb_err_ma_fill_from_memory <= True;
+
       `logLevel( dcache, 0, $format("[%2d]DCACHE: FB FILL MemResp :",id,fshow(mem_resp)))
       `logLevel(dcache , 0, $format("[%2d]DCACHE: FB FILL fbaddr:%h fbindex:%d initbank:%d currbank:%d fben:%b", id,
         v_fb_addr[fbindex], fbindex, init_bank, lv_current_bank, rg_fb_enables))
@@ -1249,9 +1500,17 @@ package dcache_lib;
                                       Bit#(TLog#(fbsize)) fbindex, Bit#(paddr) address);
 
       Bit#(TMax#(1,blockbits)) block_offset = {address[v_blockbits+v_wordbits-1:v_wordbits]};
-      v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) |
-                                         (mask & dataword);
-      v_fb_dirty[fbindex] <= 1;
+      //v_fb_data[fbindex][block_offset] <= (v_fb_data[fbindex][block_offset]& ~mask) | (mask & dataword);
+      wr_v_fb_data_ma_from_storebuffer <= (v_fb_data[fbindex][block_offset]& ~mask) | (mask & dataword);
+      wr_fb_index_v_fb_data_ma_from_storebuffer <= fbindex;
+      wr_block_v_fb_data_ma_from_storebuffer <= block_offset;
+      wr_valid_v_fb_data_ma_from_storebuffer <= True;
+
+      // v_fb_dirty[fbindex] <= 1;
+      wr_v_fb_dirty_ma_from_storebuffer <= 1;
+      wr_fb_index_v_fb_dirty_ma_from_storebuffer <= fbindex;
+      wr_valid_v_fb_dirty_ma_from_storebuffer <= True;
+
     endmethod
     method ReleaseInfo#(TMul#(blocksize,TMul#(wordsize,8)), paddr) mv_release_info;
       Bit#(linewidth) lv_dataline=?;
@@ -1267,8 +1526,16 @@ package dcache_lib;
         rg_fbhead <= 0;
       else
         rg_fbhead <= rg_fbhead + 1;
-      v_fb_addr_valid[rg_fbhead] <= False;
-      v_fb_line_valid[rg_fbhead] <= False;
+
+      // v_fb_addr_valid[rg_fbhead] <= False;
+      wr_valid_v_fb_addr_valid_ma_perform_release <= True;
+      wr_v_fb_addr_valid_ma_perform_release <= False;
+      wr_fb_index_v_fb_addr_valid_ma_perform_release <= rg_fbhead;
+
+      // v_fb_line_valid[rg_fbhead] <= False;
+      wr_v_fb_line_valid_ma_perform_release <= False;
+      wr_fb_index_v_fb_line_valid_ma_perform_release <= rg_fbhead;
+      wr_valid_v_fb_line_valid_ma_perform_release <= True;
     endmethod
 
     method ActionValue#(PollingResponse#(wordsize,fbsize)) mav_polling_response(
@@ -1315,11 +1582,14 @@ package dcache_lib;
                         Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) stored_parity,
                         Bit#(TMul#(blocksize,TAdd#(2,TLog#(TMul#(8,wordsize))))) check_parity);
 
+      wr_valid_v_fb_data_mav_perform_sec <= True;
+      wr_fb_index_v_fb_data_mav_perform_sec <= fbindex;
       for (Integer i = 0; i< v_blocksize; i = i + 1) begin
         Bit#(ecc_size) _stparity = stored_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         Bit#(ecc_size) _chparity = check_parity[i*v_ecc_size+v_ecc_size-1:i*v_ecc_size];
         let _data = fn_ecc_correct(_chparity, _stparity, v_fb_data[fbindex][i]);
-        v_fb_data[fbindex][i] <= _data;
+        // v_fb_data[fbindex][i] <= _data;
+        wr_v_fb_data_mav_perform_sec[i] <= _data;
       end
     endmethod
   `endif
@@ -1355,19 +1625,30 @@ package dcache_lib;
   endinterface:Ifc_iobuffer
 
   /*doc:module: */
-  (*conflict_free="ma_allocate_io, ma_increment_head"*)
-  (*conflict_free="ma_commit_io, ma_allocate_io"*)
+  // (*conflict_free="ma_allocate_io, ma_increment_head"*)
+  //(*conflict_free="ma_commit_io, ma_allocate_io"*)
   module mk_iobuffer#(parameter Bit#(32) id)(Ifc_iobuffer#(addr, wordsize, iosize, esize));
    
     let v_iosize = valueOf(iosize);
     Vector#( iosize, Reg#(IoEntry#(addr, wordsize, esize)) ) v_iobuffer <- replicateM(mkRegA(unpack(0)));
+    
     Vector#( iosize, Reg#(Bool))                      v_iobuff_valid <- replicateM(mkRegA(False));
+    //ma_allocate_io
+    Wire#(Bool) wr_valid_v_iobuff_valid_ma_allocate_io <- mkDWire(False);
+    Wire#(Bit#(TLog#(iosize))) wr_io_index_v_iobuff_valid_ma_allocate_io <- mkDWire(0);
+    //ma_increment_head
+    Wire#(Bool) wr_valid_v_iobuff_valid_ma_increment_head <- mkDWire(False);
+    Wire#(Bit#(TLog#(iosize))) wr_io_index_v_iobuff_valid_ma_increment_head <- mkDWire(0);
+
     Vector#( iosize, Reg#(Bool))                      v_iobuff_commit <- replicateM(mkRegA(False));
 
     /*doc:reg: */
     Reg#(Bit#(TLog#(iosize))) rg_head <- mkRegA(0);
     /*doc:reg: */
     Reg#(Bit#(TLog#(iosize))) rg_tail <- mkRegA(0);
+
+    Wire#(IoEntry#(addr, wordsize, esize)) wr_mv_io_head <- mkWire();
+
     /*doc:var: variable to indicate that the storebuffer is full*/
     Bool iobuff_full = (all(isTrue, readVReg(v_iobuff_valid)));
     /*dov:var: variable to indicate that the storebuffer is empty*/
@@ -1376,6 +1657,25 @@ package dcache_lib;
       `logLevel( dcache, 3, $format("[%2d]DCACHE: io_full:%b io_empty:%b iohead:%d iotail:%d", 
         id, iobuff_full, iobuff_empty, rg_head, rg_tail))
     endrule
+
+    rule assign_wr_mv_io_head;
+      wr_mv_io_head <= v_iobuffer[rg_head];
+    endrule
+
+    Rules re_v_iobuff_valid = emptyRules;
+    for(Integer i = 0; i < valueOf(iosize); i = i+1) begin
+      Rules rg_connect_ena_data_iobuff = (rules
+      rule connect_v_iobuff_valid((wr_valid_v_iobuff_valid_ma_allocate_io
+                                && (wr_io_index_v_iobuff_valid_ma_allocate_io == fromInteger(i)))
+                             || (wr_valid_v_iobuff_valid_ma_increment_head
+                                && (wr_io_index_v_iobuff_valid_ma_increment_head == fromInteger(i))));
+        v_iobuff_valid[i] <= (wr_valid_v_iobuff_valid_ma_allocate_io && (wr_io_index_v_iobuff_valid_ma_allocate_io == fromInteger(i)));
+      endrule
+      endrules);
+      re_v_iobuff_valid = rJoinConflictFree(rg_connect_ena_data_iobuff, re_v_iobuff_valid);
+    end
+
+    addRules(re_v_iobuff_valid);
 
   `ifdef sva_assert
     property headOverflow();
@@ -1401,7 +1701,9 @@ package dcache_lib;
       dynamicAssert(!v_iobuff_valid[rg_tail],"Valid IO Entry Allocated");
     `endif
       v_iobuffer[rg_tail] <= entry;
-      v_iobuff_valid[rg_tail] <= True;
+      //v_iobuff_valid[rg_tail] <= True;
+      wr_valid_v_iobuff_valid_ma_allocate_io <= True;
+      wr_io_index_v_iobuff_valid_ma_allocate_io <= rg_tail;
       if(rg_tail == fromInteger(v_iosize -1))
         rg_tail <= 0;
       else
@@ -1417,14 +1719,16 @@ package dcache_lib;
     endmethod: ma_allocate_io
 
     method Action ma_increment_head;
-      v_iobuff_valid[rg_head] <= False;
+      //v_iobuff_valid[rg_head] <= False;
+      wr_valid_v_iobuff_valid_ma_increment_head <= True;
+      wr_io_index_v_iobuff_valid_ma_increment_head <= rg_head;
       if (rg_head == fromInteger(v_iosize-1))
         rg_head <= 0;
       else
         rg_head <= rg_head + 1;
     endmethod: ma_increment_head
 
-    method mv_io_head = v_iobuffer[rg_head];
+    method mv_io_head = wr_mv_io_head;
     method Action ma_commit_io;
       v_iobuff_commit[rg_head]<=True;
     endmethod:ma_commit_io
@@ -1534,6 +1838,17 @@ package dcache_lib;
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, ConfigReg#(Bool)) v_sb_valid <- replicateM(mkConfigReg(False));
+    
+    // ma_allocate_entry
+    Wire#(Bool) wr_v_sb_valid_ma_allocate_entry <- mkDWire(False);
+    Wire#(Bit#(TLog#(sbsize))) wr_sb_index_v_sb_valid_ma_allocate_entry <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_sb_valid_ma_allocate_entry <- mkDWire(False);
+
+    // ma_increment_head
+    Wire#(Bool) wr_v_sb_valid_ma_increment_head <- mkDWire(False);
+    Wire#(Bit#(TLog#(sbsize))) wr_sb_index_v_sb_valid_ma_increment_head <- mkDWire(0);
+    Wire#(Bool) wr_valid_v_sb_valid_ma_increment_head <- mkDWire(False);
+    
     /*doc:reg: A vector of registers indicating if the particular store buffer entry is valid or
      not*/
     Vector#(sbsize, Array#(Reg#(Bool))) v_sb_commit <- replicateM(mkCReg(2,False));
@@ -1541,6 +1856,9 @@ package dcache_lib;
      * to the cache*/
     Vector#(sbsize, Reg#(Storebuffer#(addr,dataword,esize,TLog#(fbsize)))) v_sb_meta 
                                                                     <- replicateM(mkReg(unpack(0)));
+    /*doc:reg: A vector of wires holding the head of stores being presented by the core
+     * to the cache*/
+     Wire#(Storebuffer#(addr,dataword,esize,TLog#(fbsize))) wr_sb_meta <- mkDWire(unpack(0));
 
     /*doc:reg: Register to point to the head of the store buffers. Points to the entry that needs to
      * be allotted to a new store request*/
@@ -1577,6 +1895,10 @@ package dcache_lib;
         id, sb_full, sb_empty, rg_head, rg_tail))
     endrule
 
+    rule assign_head;
+      wr_sb_meta <= v_sb_meta[rg_head];
+    endrule 
+
   `ifdef atomic
     /*doc:reg: */
     Reg#(Bit#(dataword)) rg_atomic_readword <- mkReg(0);
@@ -1601,6 +1923,22 @@ package dcache_lib;
         id, rg_atomic_op, _s.data, rg_atomic_readword, _newdata))
     endrule
   `endif
+
+  Rules re_v_sb_valid = emptyRules;
+for(Integer i = 0; i < valueOf(sbsize); i = i+1) begin
+  Rules rg_connect_ena_data_valid = (rules
+  rule connect_v_sb_valid((wr_valid_v_sb_valid_ma_allocate_entry
+                            && (wr_sb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
+                         || (wr_valid_v_sb_valid_ma_increment_head
+                            && (wr_sb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
+    v_sb_valid[i] <= (  (wr_v_sb_valid_ma_allocate_entry && wr_valid_v_sb_valid_ma_allocate_entry && (wr_sb_index_v_sb_valid_ma_allocate_entry == fromInteger(i)))
+                      || (wr_v_sb_valid_ma_increment_head && wr_valid_v_sb_valid_ma_increment_head && (wr_sb_index_v_sb_valid_ma_increment_head == fromInteger(i) )));
+  endrule
+  endrules);
+  re_v_sb_valid = rJoinConflictFree(rg_connect_ena_data_valid, re_v_sb_valid);
+end
+
+addRules(re_v_sb_valid);
 
     method ActionValue#(Tuple2#(Bit#(dataword),Bit#(dataword))) mav_check_sb_hit (Bit#(addr) phyaddr);
 
@@ -1650,7 +1988,11 @@ package dcache_lib;
     `ifdef ASSERT
       dynamicAssert(!v_sb_valid[rg_tail],"Valid SB Entry Allocated");
     `endif
-      v_sb_valid[rg_tail] <= True;
+      // v_sb_valid[rg_tail] <= True;
+      wr_valid_v_sb_valid_ma_allocate_entry <= True;
+      wr_v_sb_valid_ma_allocate_entry <= True;
+      wr_sb_index_v_sb_valid_ma_allocate_entry <= rg_tail;
+
       let _s = Storebuffer{addr:address, data: data, epoch: epochs, fbindex: fbindex,
                                       mask: storemask, size:truncate(size)};
       v_sb_meta[rg_tail] <= _s;
@@ -1679,7 +2021,11 @@ package dcache_lib;
     endmethod:ma_commit_store
 
     method Action ma_increment_head;
-      v_sb_valid[rg_head] <= False;
+      // v_sb_valid[rg_head] <= False;
+      wr_v_sb_valid_ma_increment_head <= False;
+      wr_sb_index_v_sb_valid_ma_increment_head <= rg_head;
+      wr_valid_v_sb_valid_ma_increment_head <= True;
+
       v_sb_commit[rg_head][1] <= False;
       if (rg_head == fromInteger(v_sbsize-1))
         rg_head <= 0;
@@ -1689,7 +2035,7 @@ package dcache_lib;
     endmethod: ma_increment_head
 
     method Storebuffer#(addr, TMul#(wordsize,8), esize, TLog#(fbsize)) mv_sb_head;
-      return v_sb_meta[rg_head];
+      return wr_sb_meta;
     endmethod:mv_sb_head
 
     method mv_sb_busy = rg_sb_busy;
@@ -2131,32 +2477,52 @@ package dcache_lib;
     return (ifc);
   endmodule: mkstorebuffer
 `else
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkdcache_tag#(parameter Bit#(32) id)(Ifc_tagram1rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
+`endif
+  module mkdcache_tag#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram1rw#(`dwords, `dblocks, `dsets, `dways, `paddr));
     let ifc();
-    mk_tagram1rw _temp(id,ifc);
+    mk_tagram1rw _temp(id `ifdef testmode ,test_mode `endif ,ifc );
     return (ifc);
   endmodule : mkdcache_tag
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkdcache_data#(parameter Bit#(32) id)(Ifc_dataram1rw#(`dwords, `dblocks, `dsets, `dways));
+`endif
+  module mkdcache_data#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_dataram1rw#(`dwords, `dblocks, `dsets, `dways));
     let ifc();
-    mk_dataram1rw#(id,unpack(`dcache_onehot)) _temp(ifc);
+    mk_dataram1rw#(id,unpack(`dcache_onehot) `ifdef testmode ,test_mode `endif ) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_data
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
+`endif
   module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
   endmodule : mkdcache_fb_v2
-//  (*synthesize*)
+  `ifdef core_clkgate
+  (*synthesize,gate_all_clocks*)
+  `else
+(*synthesize*)
+  `endif
   module mkstorebuffer#(parameter Bit#(32) id)(Ifc_storebuffer#(`paddr, `dwords, `desize, `dsbsize, `dfbsize));
     let ifc();
     mk_storebuffer#(id) _temp(ifc);
     return (ifc);
   endmodule: mkstorebuffer
 `endif
-  (*synthesize*)
+  `ifdef core_clkgate
+  (*synthesize,gate_all_clocks*)
+  `else
+(*synthesize*)
+  `endif
   module mkiobuffer#(parameter Bit#(32) id)(Ifc_iobuffer#(`paddr, `dwords, `dibsize, `desize));
     let ifc();
     mk_iobuffer#(id) _temp(ifc);

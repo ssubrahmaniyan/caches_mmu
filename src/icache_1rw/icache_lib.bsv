@@ -11,7 +11,11 @@ package icache_lib;
   `include "Logger.bsv"
   import FIFO :: * ;
   import FIFOF :: * ;
-  import SpecialFIFOs :: * ;
+`ifdef async_rst
+import SpecialFIFOs_Modified :: * ;
+`else
+import SpecialFIFOs :: * ;
+`endif  
   import Vector :: * ;
   import GetPut :: * ;
   import Assert  :: * ;
@@ -81,7 +85,7 @@ package icache_lib;
   `endif
   endinterface
 
-  module mk_tagram1rw#(parameter Bit#(32) id)(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
+  module mk_tagram1rw#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram#(wordsize, blocksize, sets, ways, paddr))
     provisos(
           Log#(wordsize,wordbits),      // wordbits is no. of bits to index a byte in a word
           Log#(blocksize, blockbits),   // blockbits is no. of bits to index a word in a block
@@ -107,10 +111,10 @@ package icache_lib;
     /*doc:ram: This the tag array which is dual ported has 'way' number of rams*/
   `ifdef icache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw_ecc(False));
+                                                        replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
     Vector#(ways, Ifc_mem_config1rw#(sets, tagbits, 1)) v_tags <-
-                                                        replicateM(mkmem_config1rw(False));
+                                                        replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
     method Action ma_request( Bool read_write,
                               Bit#(TLog#(sets)) index,
@@ -181,7 +185,7 @@ package icache_lib;
   `endif
   endinterface
 
-  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot)
+  module mk_dataram1rw#(parameter Bit#(32) id, parameter Bool onehot `ifdef testmode ,Bool test_mode `endif )
       (Ifc_dataram#(wordsize, blocksize, sets, ways))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
@@ -210,10 +214,10 @@ package icache_lib;
     let v_ways = valueOf(ways);
   `ifdef icache_ecc
     Vector#(ways, Ifc_mem_config1rw_ecc#(sets, linewidth, blocksize)) v_data
-                                                      <- replicateM(mkmem_config1rw_ecc(False));
+                                                      <- replicateM(mkmem_config1rw_ecc(False `ifdef testmode ,test_mode `endif ));
   `else
     Vector#(ways, Ifc_mem_config1rw#(sets, linewidth, blocksize)) v_data
-                                                      <- replicateM(mkmem_config1rw(False));
+                                                      <- replicateM(mkmem_config1rw(False `ifdef testmode ,test_mode `endif ));
   `endif
     method Action ma_request( Bool read_write,
                               Bit#(TLog#(sets)) index,
@@ -538,16 +542,24 @@ package icache_lib;
                              line_hit: unpack(|lv_hitvector), word_hit: lv_wordhit};
     endmethod
   endmodule
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkicache_tag#(parameter Bit#(32) id)(Ifc_tagram#(`iwords, `iblocks, `isets, `iways, `paddr));
+`endif
+  module mkicache_tag#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_tagram#(`iwords, `iblocks, `isets, `iways, `paddr));
     let ifc();
-    mk_tagram1rw _temp(id,ifc);
+    mk_tagram1rw _temp(id `ifdef testmode ,test_mode `endif ,ifc);
     return (ifc);
   endmodule
+`ifdef core_clkgate
+(*synthesize,gate_all_clocks*)
+`else
   (*synthesize*)
-  module mkicache_data#(parameter Bit#(32) id)(Ifc_dataram#(`iwords, `iblocks, `isets, `iways));
+`endif
+  module mkicache_data#(parameter Bit#(32) id `ifdef testmode ,Bool test_mode `endif )(Ifc_dataram#(`iwords, `iblocks, `isets, `iways));
     let ifc();
-    mk_dataram1rw#(id,unpack(`icache_onehot)) _temp(ifc);
+    mk_dataram1rw#(id,unpack(`icache_onehot) `ifdef testmode ,test_mode `endif ) _temp(ifc);
     return (ifc);
   endmodule
   (*synthesize*)
