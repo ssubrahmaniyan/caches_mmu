@@ -572,8 +572,8 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
       if( writeback_condition) begin
         let lv_req = DCache_mem_writereq{address   : final_address,
-                                         burst_len  : fromInteger(valueOf(`dblocks) - 1),
-                                         burst_size : fromInteger(valueOf(TLog#(`dwords))),
+                                         burst_len  : fromInteger(((`dblocks * `dwords * 8) / `dbuswidth)  - 1 ),
+                                         burst_size : fromInteger(valueOf(TLog#(TDiv#(`dbuswidth,8)))),
                                          data       : dataline
                                           };
         ff_mem_wr_request.enq(lv_req);
@@ -978,12 +978,12 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     `endif
       let shift_amount = valueOf(TLog#(TDiv#(`dbuswidth,8)));
       Bit#(`paddr) blockmask = '1 << shift_amount;
-      Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits];
+      Bit#(`blockbits) lv_blocknum = {phyaddr[v_blockbits+v_wordbits-1:v_wordbits+1],1'b0};
       // allocate a pending req which points to the new fb entry that is allotted.
       // align the address to be line-address aligned
       phyaddr = phyaddr & blockmask;
       ff_mem_rd_request.enq(DCache_mem_readreq{ address   : phyaddr,
-          burst_len  : fromInteger((v_blocksize/valueOf(TDiv#(`dbuswidth,`respwidth)))-1),
+          burst_len:fromInteger(((`dblocks * `dwords * 8) / `dbuswidth)  - 1 ),
           burst_size : fromInteger(valueOf(TLog#(TDiv#(`dbuswidth,8))))
          });
       rg_handling_miss <= True;
@@ -1082,8 +1082,8 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
 
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set:%d tag:%h data:%h", id,lv_evict_address,set_index,tag,dataline))
             ff_mem_wr_request.enq(DCache_mem_writereq{address:lv_evict_address,
-                                                  burst_len:fromInteger(valueOf(`dblocks)-1),
-                                                  burst_size:fromInteger(valueOf(TLog#(`dwords))),
+                                                  burst_len:fromInteger(((`dblocks * `dwords * 8) / `dbuswidth)  - 1 ),
+                                                  burst_size:fromInteger(valueOf(TLog#(TDiv#(`dbuswidth,8)))),
                                                   data: truncateLSB(dataline)
                                               });
           `ifdef perfmonitors
@@ -1142,7 +1142,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     rule rl_initiate_io(m_iobuffer.mv_io_head_valid && !io_empty && !rg_io_busy);
       let io_entry = m_iobuffer.mv_io_head;
       rg_io_busy <= True;
-      ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: io_entry.data,
+      ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: duplicate(io_entry.data),
                                       size: io_entry.size, read_write: io_entry.access == 1});
       `logLevel( dcache, 0, $format("DCACHE[%2d]: Initiating IO request: ",id,fshow(io_entry)))
     endrule:rl_initiate_io
@@ -1181,7 +1181,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       let io_entry = m_iobuffer.mv_io_head;
       let mem_response = ff_mem_io_resp.first();
       `logLevel( dcache, 0, $format("[%2d]DCACHE: IO Response from Bus",id,fshow(mem_response)))
-	    Bit#(`wordbits) offset = truncate(io_entry.address);
+	    Bit#(4) offset = truncate(io_entry.address);
 	    mem_response.data = mem_response.data >> {offset,3'b0};
 		  mem_response.data = case(io_entry.size)
 		    'b000: signExtend(mem_response.data[7:0]);
@@ -1195,7 +1195,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       ff_mem_io_resp.deq;
       Bit#(`causesize) lv_cause = io_entry.access == 0?`Load_access_fault:`Store_access_fault;
       let lv_response = DMem_core_response{word:mem_response.error? `ifdef supervisor truncate(io_entry.vaddr) `else  zeroExtend(io_entry.address)  `endif : 
-                                         `ifdef atomic (io_entry.access == 2)? rg_atomic_rd_data: `endif mem_response.data, 
+                                         `ifdef atomic (io_entry.access == 2)? rg_atomic_rd_data: `endif truncate(mem_response.data), 
                                           trap: mem_response.error,
                                           entry_alloc: False,
                                           is_io: False, cause: lv_cause, epochs: io_entry.epoch};
@@ -1209,10 +1209,12 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     `endif
     `ifdef atomic
       if (io_entry.access==2 && !rg_io_atomic_done && !mem_response.error) begin
-        let _new_store = fn_atomic_io_op(io_entry.atomic_op, io_entry.data, mem_response.data);
+        Bit#(64) lv_mem_response_data = truncate(mem_response.data);
+        Bit#(64) lv_io_entry_data = truncate(io_entry.data);
+        let _new_store = fn_atomic_io_op(io_entry.atomic_op, lv_io_entry_data, lv_mem_response_data);
         rg_io_atomic_done <= True;
-        rg_atomic_rd_data <= mem_response.data;
-        ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: _new_store,
+        rg_atomic_rd_data <= truncate(mem_response.data);
+        ff_mem_io_request.enq(DCache_io_req{address: io_entry.address, data: duplicate(_new_store),
                                       size: io_entry.size, read_write: True});
         `logLevel( dcache, 0, $format("DACCHE[%2d]: IO Atomic Rd phase Done. NewSt:%h",id, _new_store))
       end
