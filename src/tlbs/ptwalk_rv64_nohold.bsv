@@ -1,13 +1,13 @@
 /* 
 see LICENSE.iitm
 
-Author : Neel Gala
-Email id : neelgala@gmail.com
-Details : Page Table Walker for rv64 (with 'hold' support for missing request)
+Author : Neel Gala, Nitya Ranganathan
+Email id : neelgala@gmail.com, nitya.ranganathan@gmail.com
+Details : Page Table Walker for rv64 (without 'hold' support for missing request)
 
 --------------------------------------------------------------------------------------------------
 */
-package ptwalk_rv64;
+package ptwalk_rv64_nohold;
   import Vector::*;
   import FIFOF::*;
   import DReg::*;
@@ -25,7 +25,7 @@ package ptwalk_rv64;
   `include "dcache.defines"
   `include "Logger.bsv"
 
-  interface Ifc_ptwalk_rv64#(numeric type asid_width);
+  interface Ifc_ptwalk_rv64_nohold#(numeric type asid_width);
     interface Put#(PTWalk_tlb_request#(64)) from_tlb;
     interface Get#(PTWalk_tlb_response#(54, 3)) to_tlb;
     interface Get#(DMem_request#(64, 64, `desize )) request_to_cache;
@@ -40,9 +40,9 @@ package ptwalk_rv64;
     method Action ma_curr_priv (Bit#(2) curr_priv);
   endinterface
 
-  typedef enum {ReSendReq, WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
+  typedef enum {WaitForMemory, GeneratePTE} State deriving(Bits, Eq, FShow);
 
-  module mkptwalk_rv64(Ifc_ptwalk_rv64#(asid_width));
+  module mkptwalk_rv64_nohold(Ifc_ptwalk_rv64_nohold#(asid_width));
     String ptwalk="";
     let v_asid_width = valueOf(asid_width);
     let pagesize = 12;
@@ -51,8 +51,6 @@ package ptwalk_rv64;
     FIFOF#(PTWalk_tlb_response#(54, 3)) ff_response <- mkSizedFIFOF(2);
     FIFOF#(DMem_request#(64, 64, `desize )) ff_memory_req <- mkSizedFIFOF(2);
     FIFOF#(DMem_core_response#(TMul#(`dwords, 8),`desize)) ff_memory_response <- mkSizedFIFOF(2);
-    FIFOF#(DCache_core_request#(64, 64, `desize)) ff_hold_req <- mkFIFOF1();
-    Reg#(Bit#(`desize)) rg_hold_epoch <- mkReg(0);
 
     // wire which hold the inputs from csr
     Wire#(Bit#(64)) wr_satp <- mkWire();
@@ -75,12 +73,10 @@ package ptwalk_rv64;
 
     Reg#(State) rg_state <- mkReg(GeneratePTE);
 
-    Wire#(Bool) wr_deq_holding_ff <- mkWire();
-
     function DMem_request#(64, 64, `desize) gen_dcache_packet (PTWalk_tlb_request#(64) req, 
                                                    Bool reqtype, Bool trap, Bit#(`causesize) cause);
       return DMem_request{address     : req.address,
-                          epochs      : rg_hold_epoch,
+                          epochs      : 0,
                           size        : 3,
                           access      : 0,
                           fence       : False,
@@ -93,30 +89,20 @@ package ptwalk_rv64;
                           ptwalk_trap : trap};
     endfunction
 
-    rule resend_core_req_to_cache(rg_state == ReSendReq);
-      `logLevel( ptwalk, 2, $format("PTW : Resending Core request back to DCache: ", 
-                                    fshow(ff_hold_req.first)))
-      let request = ff_req_queue.first;
-      let hold_req = ff_hold_req.first;
-      ff_memory_req.enq(DMem_request{address    : hold_req.address,
-                                     epochs     : hold_req.epochs,
-                                     size       : hold_req.size,
-                                     fence      : False,
-                                     access     : hold_req.access,
-                                     writedata  : hold_req.data,
-                                   `ifdef atomic
-                                     atomic_op  : hold_req.atomic_op,
-                                   `endif
-                                     sfence     : False,
-                                     ptwalk_req : False,
-                                     ptwalk_trap : False});
-      ff_req_queue.deq();
-      rg_state <= GeneratePTE;
-      wr_deq_holding_ff <= True;
+    rule rl_display_fifo_corereq;
+      `logTimeLevel( ptwalk, 2, $format("PTW : core req_queue ", fshow(ff_req_queue.first)))
     endrule
 
-    rule deq_holding_fifo(wr_deq_holding_ff);
-      ff_hold_req.deq;
+    rule rl_display_fifo_memreq;
+      `logTimeLevel( ptwalk, 2, $format("PTW : mem req_queue ", fshow(ff_memory_req.first)))
+    endrule
+
+    rule rl_displayfifo_memresp;
+      `logTimeLevel( ptwalk, 2, $format("PTW : mem response first ", fshow(ff_memory_response.first)))
+    endrule
+
+    rule rl_display_ptw_state;
+      `logTimeLevel( ptwalk, 2, $format("PTW : Status: state %h rg_a %h levels %h ", rg_state, rg_a, rg_levels))
     endrule
 
     rule generate_pte(rg_state == GeneratePTE);
@@ -230,8 +216,6 @@ package ptwalk_rv64;
                                         levels  : rg_levels,
                                         trap    : trap,
                                         cause   : cause});
-        if(request.access != 3)
-           wr_deq_holding_ff <= True;
         ff_req_queue.deq();
         rg_state <= GeneratePTE;
         rg_levels <= satp_mode == 8?2 : 3;
@@ -250,12 +234,8 @@ package ptwalk_rv64;
                                         cause   : cause});
         `logTimeLevel( ptwalk, 2, $format("PTW : Found Leaf PTE:%h levels: %d", response.word,
                                       rg_levels))
-        if(request.access != 3)
-          rg_state <= ReSendReq;
-        else begin
-          rg_state <= GeneratePTE;
-          ff_req_queue.deq;
-        end
+        rg_state <= GeneratePTE;
+        ff_req_queue.deq;
         rg_levels <= satp_mode == 8?2 : 3;
       end
     endrule
@@ -263,13 +243,6 @@ package ptwalk_rv64;
     interface from_tlb            = toPut(ff_req_queue);
 
     interface to_tlb              = toGet(ff_response);
-
-    interface hold_req            = interface Put
-      method Action put(DCache_core_request#(64, 64, `desize) req);
-        rg_hold_epoch<=req.epochs;
-        ff_hold_req.enq(req);
-      endmethod
-    endinterface;
 
     interface request_to_cache    = toGet(ff_memory_req);
 
@@ -290,9 +263,9 @@ package ptwalk_rv64;
   endmodule
 
   (*synthesize*)
-  module mkinstance(Ifc_ptwalk_rv64#(9));
+  module mkptwalk_rv64_instance(Ifc_ptwalk_rv64_nohold#(`asidwidth));
     let ifc();
-    mkptwalk_rv64 _temp(ifc);
+    mkptwalk_rv64_nohold _temp(ifc);
     return (ifc);
   endmodule
 endpackage

@@ -468,15 +468,7 @@ import SpecialFIFOs :: * ;
       let lv_data_resp = m_data.mv_read_response(lv_blocknum,lv_hitmask);
       `logLevel( icache, 0, $format("[%2d]ICACHE: lv_data_resp:",id,fshow(lv_data_resp)))
 
-    `ifndef iclass
       let response_word = lv_data_resp.word >> {word_offset,3'b0};
-    `else
-      Bit#(TAdd#(TAdd#(`wordbits,`blockbits),3)) lv_shift_amt = 0;
-      Bit#(`linewidth) lv_response_line = 0;
-      lv_shift_amt = phyaddr[v_blockbits+v_wordbits+2:0] << 3;  // -1+3
-      lv_response_line = lv_data_resp.line >> lv_shift_amt;
-      let response_word = lv_response_line[v_respwidth-1:0];
-    `endif
 
     `ifdef icache_ecc
 
@@ -640,11 +632,7 @@ import SpecialFIFOs :: * ;
         `logLevel( icache, 0, $format("[%2d]ICACHE: Response: Hit from NC",id))
       end
 
-    `ifndef iclass
       lv_response.word = lv_response.trap?truncateLSB(req.address):lv_response.word;
-    `else
-      lv_response.word = lv_response.trap ? zeroExtend(req.address) : lv_response.word; // 128 bits
-    `endif
 
       ff_core_request.deq;
     `ifdef supervisor
@@ -737,11 +725,7 @@ import SpecialFIFOs :: * ;
       let req = ff_core_request.first;
       Bit#(`causesize) lv_cause = `Inst_access_fault ;
       Bit#(TLog#(TDiv#(`ibuswidth,8))) word_offset = truncate(req.address);
-      `ifndef iclass
-        let response_word = response.data >> {word_offset,3'b0};
-      `else
-        let response_word = response.data;
-      `endif
+      let response_word = response.data >> {word_offset,3'b0};
       let lv_response = IMem_core_response{word:truncate(response_word), trap: response.err,
                                           cause: lv_cause, epochs: req.epochs};
       wr_nc_response <= lv_response;
@@ -842,15 +826,7 @@ import SpecialFIFOs :: * ;
     interface put_read_mem_resp = toPut(ff_read_mem_response);
     interface get_core_resp = toGet(ff_core_response);
   `ifdef supervisor
-    `ifndef iclass
-      interface put_pa_from_tlb = toPut(ff_from_tlb);
-    `else
-      interface put_pa_from_tlb = interface Put
-        method Action put(ITLB_core_response#(`paddr) resp);
-          ff_from_tlb.enq(resp);
-        endmethod
-      endinterface;
-    `endif // iclass
+    interface put_pa_from_tlb = toPut(ff_from_tlb);
   `endif
     `ifdef perfmonitors
       method mv_perf_counters = {wr_total_read_access, wr_total_io_reads ,wr_total_read_miss ,
