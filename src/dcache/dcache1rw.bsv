@@ -978,7 +978,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     `endif
       let shift_amount = valueOf(TLog#(TDiv#(`dbuswidth,8)));
       Bit#(`paddr) blockmask = '1 << shift_amount;
-      Bit#(`blockbits) lv_blocknum = {phyaddr[v_blockbits+v_wordbits-1:v_wordbits+1],1'b0};
+      Bit#(`blockbits) lv_blocknum = phyaddr[v_blockbits+v_wordbits-1:v_wordbits] & blockmask[v_blockbits+v_wordbits-1:v_wordbits];
       // allocate a pending req which points to the new fb entry that is allotted.
       // align the address to be line-address aligned
       phyaddr = phyaddr & blockmask;
@@ -1181,7 +1181,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
       let io_entry = m_iobuffer.mv_io_head;
       let mem_response = ff_mem_io_resp.first();
       `logLevel( dcache, 0, $format("[%2d]DCACHE: IO Response from Bus",id,fshow(mem_response)))
-	    Bit#(4) offset = truncate(io_entry.address);
+	    Bit#(TLog#(TDiv#(`dbuswidth,8))) offset = truncate(io_entry.address);
 	    mem_response.data = mem_response.data >> {offset,3'b0};
 		  mem_response.data = case(io_entry.size)
 		    'b000: signExtend(mem_response.data[7:0]);
@@ -1209,8 +1209,8 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     `endif
     `ifdef atomic
       if (io_entry.access==2 && !rg_io_atomic_done && !mem_response.error) begin
-        Bit#(64) lv_mem_response_data = truncate(mem_response.data);
-        Bit#(64) lv_io_entry_data = truncate(io_entry.data);
+        Bit#(`respwidth) lv_mem_response_data = truncate(mem_response.data);
+        Bit#(`respwidth) lv_io_entry_data = truncate(io_entry.data);
         let _new_store = fn_atomic_io_op(io_entry.atomic_op, lv_io_entry_data, lv_mem_response_data);
         rg_io_atomic_done <= True;
         rg_atomic_rd_data <= truncate(mem_response.data);

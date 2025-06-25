@@ -1152,6 +1152,8 @@ import SpecialFIFOs_Modified :: * ;
     let v_fbsize = valueOf(fbsize);
     let v_respwidth = valueOf(respwidth);
     let v_buswidth = valueOf(buswidth);
+    let v_fb_one_write_size = valueOf(TDiv#(buswidth,respwidth));
+    let v_fb_no_of_writes = valueOf(TDiv#(blocksize,TDiv#(buswidth,respwidth)));    
   `ifdef dcache_ecc
     let v_ecc_size = valueOf(ecc_size);
   `endif
@@ -1197,8 +1199,8 @@ import SpecialFIFOs_Modified :: * ;
     //ma_fill_from_memory
     Wire#(Bit#(buswidth)) wr_v_fb_data_ma_fill_from_memory <- mkDWire(0);
     Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_fill_from_memory <- mkDWire(0);
-    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory1 <- mkDWire(0);
-    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory2 <- mkDWire(0);
+    Vector#(TDiv#(buswidth,respwidth),Wire#(Bit#(TMax#(1,blockbits)))) wr_block_v_fb_data_ma_fill_from_memory <- replicateM(mkDWire(0));
+   // Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory2 <- mkDWire(0);
     Wire#(Bool) wr_valid_v_fb_data_ma_fill_from_memory <- mkDWire(False);
 
     //ma_from_storebuffer
@@ -1311,75 +1313,41 @@ import SpecialFIFOs_Modified :: * ;
     Rules re_v_fb_data = emptyRules;
   for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
     Rules rg_connect_ena_data = emptyRules;
-    
-    for (Integer j=0;j < valueOf(blocksize)/2; j = j+1) begin
-    Rules rg_connect_ena_data_j1 = (rules
-      rule connect_v_fb_data1((wr_valid_v_fb_data_mav_allocate_line  
-              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
-          ||  (wr_valid_v_fb_data_ma_fill_from_memory 
-              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_fill_from_memory1 == fromInteger(j*2))) 
-        `ifdef dcache_ecc
-          || (wr_valid_v_fb_data_mav_perform_sec  
-              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
-        `endif
-          ||  (wr_valid_v_fb_data_ma_from_storebuffer 
-              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*2)))
-              );
-        v_fb_data[i][j*2] <= ((wr_v_fb_data_mav_allocate_line[j*2] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
-                              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
-                          | (truncate(wr_v_fb_data_ma_fill_from_memory[63:0]) & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
-                              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_fill_from_memory1 == fromInteger(j*2)))))
-                        `ifdef dcache_ecc
-                          | (wr_v_fb_data_mav_perform_sec[j*2] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
-                              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
-                        `endif
-                          | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
-                              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*2)))))
-                            );
-      endrule
-    endrules);
-      
-     rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j1,rg_connect_ena_data);
-     end
-     
-     for (Integer j=0;j < valueOf(blocksize)/2; j = j+1) begin
-    Rules rg_connect_ena_data_j2 = (rules
-      rule connect_v_fb_data2((wr_valid_v_fb_data_mav_allocate_line  
-              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
-          ||  (wr_valid_v_fb_data_ma_fill_from_memory 
-              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_fill_from_memory2 == fromInteger(j*2+1))) 
-        `ifdef dcache_ecc
-          || (wr_valid_v_fb_data_mav_perform_sec  
-              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
-        `endif
-          ||  (wr_valid_v_fb_data_ma_from_storebuffer 
-              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*2+1)))
-              );
-        v_fb_data[i][j*2+1] <= ((wr_v_fb_data_mav_allocate_line[j*2+1] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
-                              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
-                          | truncate(wr_v_fb_data_ma_fill_from_memory[127:64] & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
-                              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_fill_from_memory2 == fromInteger(j*2+1)))))
-                        `ifdef dcache_ecc
-                          | (wr_v_fb_data_mav_perform_sec[j*2+1] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
-                              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
-                        `endif
-                          | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
-                              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*2+1)))))
-                            );
-      endrule
-    endrules);
-     
    
-    rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j2,rg_connect_ena_data);
-    end
+ for (Integer k=0;k < v_fb_one_write_size ; k = k+1) begin
+    for (Integer j=0;j < v_fb_no_of_writes ; j = j+1) begin
+    Rules rg_connect_ena_data_j = (rules
+      rule connect_v_fb_data((wr_valid_v_fb_data_mav_allocate_line  
+              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
+          ||  (wr_valid_v_fb_data_ma_fill_from_memory 
+              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_one_write_size+k))) 
+        `ifdef dcache_ecc
+          || (wr_valid_v_fb_data_mav_perform_sec  
+              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
+        `endif
+          ||  (wr_valid_v_fb_data_ma_from_storebuffer 
+              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_one_write_size+k)))
+              );
+        v_fb_data[i][j*v_fb_one_write_size+k] <= ((wr_v_fb_data_mav_allocate_line[j*v_fb_one_write_size+k] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
+                              && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
+                          | (wr_v_fb_data_ma_fill_from_memory[k*v_respwidth+v_respwidth-1:k*v_respwidth] & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
+                              && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
+                              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_one_write_size+k)))))
+                        `ifdef dcache_ecc
+                          | (wr_v_fb_data_mav_perform_sec[j*v_fb_one_write_size+k] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
+                              && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
+                        `endif
+                          | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
+                              && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
+                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_one_write_size+k)))))
+                            );
+      endrule
+    endrules);    
+    rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j,rg_connect_ena_data);
+  end
+end
     re_v_fb_data = rJoinConflictFree(rg_connect_ena_data, re_v_fb_data);
   end
 
@@ -1517,11 +1485,11 @@ addRules(re_v_fb_err);
       //v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
       wr_v_fb_data_ma_fill_from_memory <= mem_resp.data;
       wr_fb_index_v_fb_data_ma_fill_from_memory <= fbindex;
-      wr_block_v_fb_data_ma_fill_from_memory1 <= lv_current_bank;
-      wr_block_v_fb_data_ma_fill_from_memory2 <= lv_current_bank + 1;
+      for (Integer k=0;k < v_fb_one_write_size ; k = k+1) begin
+        wr_block_v_fb_data_ma_fill_from_memory[k] <= lv_current_bank + fromInteger(k) ;
+        end 
       wr_valid_v_fb_data_ma_fill_from_memory <= True ;
-      Bit#(blocksize) _enables = rg_fb_enables;
-      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?2:0); 
+      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?fromInteger(v_fb_one_write_size):0); 
       if(mem_resp.last) begin
         // v_fb_line_valid[fbindex] <= True;
         wr_v_fb_line_valid_ma_fill_from_memory <= True;
