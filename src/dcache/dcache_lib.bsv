@@ -37,6 +37,7 @@ import SpecialFIFOs_Modified :: * ;
 
   import mem_config :: * ;
   import dcache_types :: * ;
+    `include "dcache.defines"
 
   typedef struct{
   `ifdef dcache_ecc
@@ -1071,6 +1072,7 @@ import SpecialFIFOs_Modified :: * ;
                             numeric type blocksize,
                             numeric type sets,
                             numeric type paddr,
+                            numeric type buswidth,
                             numeric type respwidth);
     (*always_ready*)
     method Bool mv_fbfull ;
@@ -1084,7 +1086,7 @@ import SpecialFIFOs_Modified :: * ;
                                     Bit#(paddr)                               address,
                                     Bit#(1)                                   dirty );
 
-    method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
+    method Action ma_fill_from_memory(DCache_mem_readresp#(buswidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
 
@@ -1113,7 +1115,7 @@ import SpecialFIFOs_Modified :: * ;
  (*conflict_free="mav_perform_sec, ma_from_storebuffer"*)
 `endif
   module mk_fillbuffer_v2#(parameter Bit#(32) id, parameter Bool onehot)
-      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, respwidth))
+      (Ifc_fillbuffer_v2#(fbsize, wordsize, blocksize, sets, paddr, buswidth, respwidth ))
       provisos(
           Mul#(TMul#(wordsize,8),blocksize,linewidth),
           Log#(wordsize, wordbits),
@@ -1133,7 +1135,9 @@ import SpecialFIFOs_Modified :: * ;
           Add#(c__, respwidth, linewidth),
           Add#(d__, blockbits, paddr),
           Add#(TAdd#(tagbits, setbits), e__, paddr),
-          Add#(f__, 1, respwidth)
+          Add#(f__, respwidth, 64),
+          Add#(g__, 1, respwidth)
+         
 
         `ifdef dcache_ecc
           , Add#(2, TLog#(TMul#(8,wordsize)), ecc_size)
@@ -1147,6 +1151,9 @@ import SpecialFIFOs_Modified :: * ;
     let v_blockbits = valueOf(blockbits);
     let v_fbsize = valueOf(fbsize);
     let v_respwidth = valueOf(respwidth);
+    let v_buswidth = valueOf(buswidth);
+    let v_fb_no_of_segments = valueOf(TDiv#(buswidth,respwidth));
+    let v_fb_no_of_writes = valueOf(TDiv#(blocksize,TDiv#(buswidth,respwidth)));    
   `ifdef dcache_ecc
     let v_ecc_size = valueOf(ecc_size);
   `endif
@@ -1190,9 +1197,10 @@ import SpecialFIFOs_Modified :: * ;
     Wire#(Bool) wr_valid_v_fb_data_mav_allocate_line <- mkDWire(False);
     
     //ma_fill_from_memory
-    Wire#(Bit#(respwidth)) wr_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Wire#(Bit#(buswidth)) wr_v_fb_data_ma_fill_from_memory <- mkDWire(0);
     Wire#(Bit#(TLog#(fbsize))) wr_fb_index_v_fb_data_ma_fill_from_memory <- mkDWire(0);
-    Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory <- mkDWire(0);
+    Vector#(TDiv#(buswidth,respwidth),Wire#(Bit#(TMax#(1,blockbits)))) wr_block_v_fb_data_ma_fill_from_memory <- replicateM(mkDWire(0));
+   // Wire#(Bit#(TMax#(1,blockbits))) wr_block_v_fb_data_ma_fill_from_memory2 <- mkDWire(0);
     Wire#(Bool) wr_valid_v_fb_data_ma_fill_from_memory <- mkDWire(False);
 
     //ma_from_storebuffer
@@ -1305,38 +1313,41 @@ import SpecialFIFOs_Modified :: * ;
     Rules re_v_fb_data = emptyRules;
   for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
     Rules rg_connect_ena_data = emptyRules;
-    for (Integer j=0;j < valueOf(blocksize); j = j+1) begin
+   
+ for (Integer k=0;k < v_fb_no_of_segments ; k = k+1) begin
+    for (Integer j=0;j < v_fb_no_of_writes ; j = j+1) begin
     Rules rg_connect_ena_data_j = (rules
       rule connect_v_fb_data((wr_valid_v_fb_data_mav_allocate_line  
               && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
           ||  (wr_valid_v_fb_data_ma_fill_from_memory 
               && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j))) 
+              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_no_of_segments+k))) 
         `ifdef dcache_ecc
           || (wr_valid_v_fb_data_mav_perform_sec  
               && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
         `endif
           ||  (wr_valid_v_fb_data_ma_from_storebuffer 
               && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))
+              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_no_of_segments+k)))
               );
-        v_fb_data[i][j] <= ((wr_v_fb_data_mav_allocate_line[j] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
+        v_fb_data[i][j*v_fb_no_of_segments+k] <= ((wr_v_fb_data_mav_allocate_line[j*v_fb_no_of_segments+k] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
                               && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
-                          | (wr_v_fb_data_ma_fill_from_memory & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
+                          | (wr_v_fb_data_ma_fill_from_memory[k*v_respwidth+v_respwidth-1:k*v_respwidth] & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
                               && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_fill_from_memory == fromInteger(j)))))
+                              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_no_of_segments+k)))))
                         `ifdef dcache_ecc
-                          | (wr_v_fb_data_mav_perform_sec[j] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
+                          | (wr_v_fb_data_mav_perform_sec[j*v_fb_no_of_segments+k] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
                               && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
                         `endif
                           | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
                               && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j)))))
+                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_no_of_segments+k)))))
                             );
       endrule
-    endrules);
+    endrules);    
     rg_connect_ena_data = rJoinConflictFree(rg_connect_ena_data_j,rg_connect_ena_data);
-    end
+  end
+end
     re_v_fb_data = rJoinConflictFree(rg_connect_ena_data, re_v_fb_data);
   end
 
@@ -1467,16 +1478,18 @@ addRules(re_v_fb_err);
       `logLevel( dcache, 0, $format("[%2d]DCACHE: FB: Allocating fbindex:%d", id, rg_fbtail))
       return rg_fbtail;
     endmethod
-    method Action ma_fill_from_memory(DCache_mem_readresp#(respwidth) mem_resp,
+    method Action ma_fill_from_memory(DCache_mem_readresp#(buswidth) mem_resp,
                                       Bit#(TLog#(fbsize))             fbindex,
                                       Bit#(TMax#(1,TLog#(blocksize)))              init_bank);
       Bit#(TMax#(1,TLog#(blocksize))) lv_current_bank = rg_fb_enables == 0? init_bank: rg_next_bank;
       //v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
       wr_v_fb_data_ma_fill_from_memory <= mem_resp.data;
       wr_fb_index_v_fb_data_ma_fill_from_memory <= fbindex;
-      wr_block_v_fb_data_ma_fill_from_memory <= lv_current_bank;
+      for (Integer k=0;k < v_fb_no_of_segments ; k = k+1) begin
+        wr_block_v_fb_data_ma_fill_from_memory[k] <= lv_current_bank + fromInteger(k) ;
+        end 
       wr_valid_v_fb_data_ma_fill_from_memory <= True ;
-      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?1:0);
+      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?fromInteger(v_fb_no_of_segments):0); 
       if(mem_resp.last) begin
         // v_fb_line_valid[fbindex] <= True;
         wr_v_fb_line_valid_ma_fill_from_memory <= True;
@@ -2446,7 +2459,7 @@ addRules(re_v_sb_valid);
     return (ifc);
   endmodule : mkdcache_data
   (*synthesize*)
-  module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
+  module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth, `respwidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
@@ -2502,7 +2515,7 @@ addRules(re_v_sb_valid);
 `else
   (*synthesize*)
 `endif
-  module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth));
+  module mkdcache_fb_v2#(parameter Bit#(32) id)(Ifc_fillbuffer_v2#(`dfbsize, `dwords, `dblocks, `dsets, `paddr,  `dbuswidth, `respwidth));
     let ifc();
     mk_fillbuffer_v2#(id,unpack(`dcache_onehot)) _temp(ifc);
     return (ifc);
