@@ -1152,7 +1152,7 @@ import SpecialFIFOs_Modified :: * ;
     let v_fbsize = valueOf(fbsize);
     let v_respwidth = valueOf(respwidth);
     let v_buswidth = valueOf(buswidth);
-    let v_fb_one_write_size = valueOf(TDiv#(buswidth,respwidth));
+    let v_fb_no_of_segments = valueOf(TDiv#(buswidth,respwidth));
     let v_fb_no_of_writes = valueOf(TDiv#(blocksize,TDiv#(buswidth,respwidth)));    
   `ifdef dcache_ecc
     let v_ecc_size = valueOf(ecc_size);
@@ -1314,34 +1314,34 @@ import SpecialFIFOs_Modified :: * ;
   for(Integer i = 0; i < valueOf(fbsize); i = i+1) begin
     Rules rg_connect_ena_data = emptyRules;
    
- for (Integer k=0;k < v_fb_one_write_size ; k = k+1) begin
+ for (Integer k=0;k < v_fb_no_of_segments ; k = k+1) begin
     for (Integer j=0;j < v_fb_no_of_writes ; j = j+1) begin
     Rules rg_connect_ena_data_j = (rules
       rule connect_v_fb_data((wr_valid_v_fb_data_mav_allocate_line  
               && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i))) 
           ||  (wr_valid_v_fb_data_ma_fill_from_memory 
               && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_one_write_size+k))) 
+              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_no_of_segments+k))) 
         `ifdef dcache_ecc
           || (wr_valid_v_fb_data_mav_perform_sec  
               && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))
         `endif
           ||  (wr_valid_v_fb_data_ma_from_storebuffer 
               && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_one_write_size+k)))
+              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_no_of_segments+k)))
               );
-        v_fb_data[i][j*v_fb_one_write_size+k] <= ((wr_v_fb_data_mav_allocate_line[j*v_fb_one_write_size+k] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
+        v_fb_data[i][j*v_fb_no_of_segments+k] <= ((wr_v_fb_data_mav_allocate_line[j*v_fb_no_of_segments+k] & signExtend(pack(wr_valid_v_fb_data_mav_allocate_line 
                               && (wr_fb_index_v_fb_data_mav_allocate_line == fromInteger(i)))))
                           | (wr_v_fb_data_ma_fill_from_memory[k*v_respwidth+v_respwidth-1:k*v_respwidth] & signExtend(pack(wr_valid_v_fb_data_ma_fill_from_memory 
                               && (wr_fb_index_v_fb_data_ma_fill_from_memory == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_one_write_size+k)))))
+                              && (wr_block_v_fb_data_ma_fill_from_memory[k] == fromInteger(j*v_fb_no_of_segments+k)))))
                         `ifdef dcache_ecc
-                          | (wr_v_fb_data_mav_perform_sec[j*v_fb_one_write_size+k] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
+                          | (wr_v_fb_data_mav_perform_sec[j*v_fb_no_of_segments+k] & signExtend(pack(wr_valid_v_fb_data_mav_perform_sec 
                               && (wr_fb_index_v_fb_data_mav_perform_sec == fromInteger(i)))))
                         `endif
                           | (wr_v_fb_data_ma_from_storebuffer & signExtend(pack(wr_valid_v_fb_data_ma_from_storebuffer 
                               && (wr_fb_index_v_fb_data_ma_from_storebuffer == fromInteger(i)) 
-                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_one_write_size+k)))))
+                              && (wr_block_v_fb_data_ma_from_storebuffer == fromInteger(j*v_fb_no_of_segments+k)))))
                             );
       endrule
     endrules);    
@@ -1485,11 +1485,11 @@ addRules(re_v_fb_err);
       //v_fb_data[fbindex][lv_current_bank] <= mem_resp.data;
       wr_v_fb_data_ma_fill_from_memory <= mem_resp.data;
       wr_fb_index_v_fb_data_ma_fill_from_memory <= fbindex;
-      for (Integer k=0;k < v_fb_one_write_size ; k = k+1) begin
+      for (Integer k=0;k < v_fb_no_of_segments ; k = k+1) begin
         wr_block_v_fb_data_ma_fill_from_memory[k] <= lv_current_bank + fromInteger(k) ;
         end 
       wr_valid_v_fb_data_ma_fill_from_memory <= True ;
-      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?fromInteger(v_fb_one_write_size):0); 
+      rg_next_bank <= lv_current_bank + ((v_blocksize>1)?fromInteger(v_fb_no_of_segments):0); 
       if(mem_resp.last) begin
         // v_fb_line_valid[fbindex] <= True;
         wr_v_fb_line_valid_ma_fill_from_memory <= True;
