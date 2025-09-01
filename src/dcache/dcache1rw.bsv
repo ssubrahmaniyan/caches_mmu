@@ -1336,7 +1336,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     method mv_ded_data = wr_ded_data_log;
     method mv_sed_data = wr_sed_data_log;
     method mv_ded_tag = wr_ded_tag_log;
-    method mv_sed_tag = wr_ded_tag_log;
+    method mv_sed_tag = wr_sed_tag_log;
     method Action ma_ram_request(DRamAccess access)if(!rg_fence_stall && !rg_performing_replay);
       Bit#(blocksize) _banks = 0;
       _banks[access.banks] = 1;
