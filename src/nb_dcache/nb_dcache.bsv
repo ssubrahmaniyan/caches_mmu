@@ -2453,7 +2453,7 @@ package nb_dcache;
   endmodule
 
   (*synthesize*)
-  module mkdcache(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `ifdef split_prf TAdd#(1,TLog#(`num_prfs_max)) `else TLog#(`num_prfs) `endif , `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TAdd#(TLog#(`rob_size), 1), TLog#(`L_buf_size)));
+  module mknb_dcache_instance(Ifc_nbdcache#(`Wordsize, `Linesize, `Setsize, `Ways, `Paddr, `Vaddr, `Dsram, `Tsram, `ifdef split_prf TAdd#(1,TLog#(`num_prfs_max)) `else TLog#(`num_prfs) `endif , `Id_bits, `Mshrsize, `Mshrfifo_depth, `Buswidth, TAdd#(TLog#(`rob_size), 1), TLog#(`L_buf_size)));
     let ifc();
     mknb_dcache#("PLRU") _temp(ifc);
     return (ifc);
