@@ -145,7 +145,7 @@ package dcache_types;
     function Fmt fshow(DCache_mem_writereq#(addr, data) value);
       Fmt result = $format("{pa:%h, data:\n",value.address);
       for (Integer i = 0; i<valueOf(data)/`dbuswidth; i = i + 1) begin
-        Bit#(64) _data = value.data[i*`dbuswidth+`dbuswidth-1:i*`dbuswidth];
+        Bit#(`dbuswidth) _data = value.data[i*`dbuswidth+`dbuswidth-1:i*`dbuswidth];
         result = result + $format(" \t\t\t\t\t- %h\n",_data);
       end
       return result + $format("}");
