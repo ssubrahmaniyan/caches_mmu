@@ -91,7 +91,7 @@ package nb_dcache;
     method Bool cache_busy;
     method Tuple3#(Bit#(1), Bit#(1), Bit#(prf_index)) mv_stage1_info();
     `ifdef supervisor
-      method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
+      method Tuple4#(Bit#(1), Bit#(1), Bit#(1), Bit#(paddr)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       `ifdef iclass
         method Action ma_invalidate_tlb (Bit#(`vpnsize) evict_vpn, Bit#(TLog#(`varpages)) level);
       `endif
@@ -217,7 +217,8 @@ package nb_dcache;
         Mul#(32, k__, buswidth),
         Mul#(datawidth, c__, buswidth),
         Add#(z__, datawidth, buswidth),
-        Add#(aa__, buswidth, 128)
+        Add#(aa__, buswidth, 128),
+        Add#(ab__, paddr, datawidth)
     `endif
     //----------------------//
     );
@@ -781,9 +782,10 @@ package nb_dcache;
             // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
             `ifdef store_early_ack
               if (!is_IO_access && (req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
-                `logTimeLevel( dcache, 1, $format("DCACHE : Regular store, sending early response: rob: %h prf: %h", req.rob, req.prf_index))
+                `logTimeLevel( dcache, 1, $format("DCACHE : Regular store, sending early response: rob: %d prf: %d paddr %h", req.rob, req.prf_index, resp_from_tlb.address))
                 wr_early_resp_to_core_valid <= 1;
-                wr_early_resp_to_core <= Resp_to_core { data: '0,
+                wr_early_resp_to_core <= Resp_to_core { //data: '0,
+                                                        data: zeroExtend(resp_from_tlb.address),
                                                         prf_index: req.prf_index,
                                                         rob: req.rob,
                                                         exception: No_exception
@@ -2398,7 +2400,7 @@ package nb_dcache;
     endmethod
 
 `ifdef supervisor
-    method Tuple3#(Bit#(1), Bit#(1), Bit#(1)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
+    method Tuple4#(Bit#(1), Bit#(1), Bit#(1), Bit#(paddr)) dtlb_early_lookup(Bit#(vaddr) vaddr, Bit#(1) is_store);
       return dtlb.early_lookup(vaddr, is_store);
     endmethod
 
