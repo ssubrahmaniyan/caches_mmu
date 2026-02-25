@@ -632,7 +632,7 @@ package nb_dcache;
     endrule
 
     `ifdef iclass
-    Bool stall_for_fence = core_req.sfence && (wr_ff_first_stage_not_empty || mshr.not_empty); // conservative fence (no fence fb): first stage and MSHR should be empty
+    Bool stall_for_fence = (core_req.fence || core_req.sfence) && (wr_ff_first_stage_not_empty || mshr.not_empty); // conservative fence (no fence fb): first stage and MSHR should be empty
     `endif
 `ifdef supervisor
     // cache busy only for lsu/prefetcher
@@ -657,7 +657,7 @@ package nb_dcache;
         rg_prev_req_info<= tuple2(is_actual_store, truncateLSB(core_req.addr));
         Bit#(setbits) set_index;
         //For a fence instruction, start from cache index 0.
-        if(core_req.sfence) begin
+        if(core_req.fence || core_req.sfence) begin
           set_index= rg_fence_set_index;
           `ifdef ASSERT
             dynamicAssert(rg_fence_set_index==0,"Fence starting with index!=0");
@@ -673,23 +673,27 @@ package nb_dcache;
           tag_arr[i].read(set_index);
         end
 
-        `ifdef dcache_side_prefetch
-            if (core_req.origin != Store_buffer) begin
+        if (!core_req.fence) begin
+          `ifdef dcache_side_prefetch
+              if (core_req.origin != Store_buffer) begin
+                resp_from_tlb <- dtlb.translate(convert_core_to_tlb_req(core_req));
+              end
+              else begin  // prefetcher sends physical addr
+                resp_from_tlb = (DTLB_Cache_response{address: truncate(core_req.addr),
+                                                     trap: False,
+                                                     exception: No_exception,
+                                                     tlbmiss: False});
+              end
+          `else
               resp_from_tlb <- dtlb.translate(convert_core_to_tlb_req(core_req));
-            end
-            else begin  // prefetcher sends physical addr
-              resp_from_tlb = (DTLB_Cache_response{address: truncate(core_req.addr),
-                                                   trap: False,
-                                                   exception: No_exception,
-                                                   tlbmiss: False});
-            end
-        `else
-            resp_from_tlb <- dtlb.translate(convert_core_to_tlb_req(core_req));
-        `endif
+          `endif
+        end // regular fence check
+
         Req_from_core#(paddr, datawidth, rob_index, prf_index, lsq_index) req= Req_from_core{ addr: resp_from_tlb.address,
                                                                                               access_size: core_req.access_size,
                                                                                               data: core_req.data,
                                                                                               origin: core_req.origin,
+                                                                                              fence: core_req.fence,
                                                                                               sfence: core_req.sfence,
                                                                                               ptwalk_trap: core_req.ptwalk_trap,
                                                                                               lsq_id: core_req.lsq_id,
@@ -702,7 +706,7 @@ package nb_dcache;
                                                                                               `endif };
         Bool is_IO_access= isIO(resp_from_tlb.address[`paddr-1:0], True);
 
-        if(core_req.sfence) begin
+        if(core_req.fence || core_req.sfence) begin
           `ifndef iclass
             mshr.fence;
           `endif
@@ -781,7 +785,7 @@ package nb_dcache;
 
             // Send early response for cacheable (regular) stores if 1) TLB hit 2) permissions are fine
             `ifdef store_early_ack
-              if (!is_IO_access && (req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+              if (!is_IO_access && (req.origin == Store_commit) && !req.fence && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
                 `logTimeLevel( dcache, 1, $format("DCACHE : Regular store, sending early response: rob: %d prf: %d paddr %h", req.rob, req.prf_index, resp_from_tlb.address))
                 wr_early_resp_to_core_valid <= 1;
                 wr_early_resp_to_core <= Resp_to_core { //data: '0,
@@ -1000,7 +1004,7 @@ package nb_dcache;
           `endif
 
           `ifdef store_early_ack
-            if ((req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+            if ((req.origin == Store_commit) && !req.fence && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
               send_resp = False;
             end
           `endif // store_early_ack
@@ -1158,7 +1162,7 @@ package nb_dcache;
         Bool send_resp= req.origin!=Store_buffer;
 
         `ifdef store_early_ack
-          if ((req.origin == Store_commit) && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
+          if ((req.origin == Store_commit) && !req.fence && !req.sfence `ifdef atomic && !req.is_atomic `endif ) begin
             send_resp = False;
           end
         `endif // store_early_ack
@@ -1975,7 +1979,11 @@ package nb_dcache;
           Bit#(lineoffset) some_zeros= 0;
           Bit#(tagbits) evict_tag= truncate(tag[evict_index]);
           Bit#(paddr) evict_lineaddr= {evict_tag, rg_fence_set_index, some_zeros};
-          Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+          `ifdef iclass
+            Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b0, 1'b1, evict_tag};
+          `else
+            Bit#(TAdd#(tagbits,2)) lv_dirty_valid_tag= {1'b1, 1'b0, evict_tag};
+          `endif
 
           //Updating only the valid bit of the SRAM in order to save power.
           tag_arr[evict_index].write(rg_fence_set_index, lv_dirty_valid_tag);
@@ -2011,9 +2019,11 @@ package nb_dcache;
           end
         end
         else begin  //Nothing to evict. Hence, increment fence index and clear the valid bit of all ways in this set
-          for(Integer i = 0; i<ways_val; i = i+1) begin
-            tag_arr[i].write(rg_fence_set_index, 0);
-          end
+          `ifndef iclass
+            for(Integer i = 0; i<ways_val; i = i+1) begin
+              tag_arr[i].write(rg_fence_set_index, 0);
+            end
+          `endif
           // increment set and go back to state 0 for next read
           rg_fence_set_index <= rg_fence_set_index + 1;
           rg_fence_state <= 0;

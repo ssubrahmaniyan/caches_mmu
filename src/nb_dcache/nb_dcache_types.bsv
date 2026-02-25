@@ -28,6 +28,7 @@ package nb_dcache_types;
     Bit#(data) data;
     Origin origin;
     Bool ptwalk_trap;
+    Bool fence;
     Bool sfence;
     Bit#(lsq_index) lsq_id;
     Bit#(rob_index) rob;
@@ -44,6 +45,7 @@ package nb_dcache_types;
                                   data: 'd0,
                                   origin: defaultValue,
                                   ptwalk_trap: False,
+                                  fence: False,
                                   sfence: False,
                                   lsq_id: 'd0,
                                   rob: 'd0,
