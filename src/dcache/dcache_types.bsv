@@ -70,6 +70,7 @@ package dcache_types;
     Bit#(esize)   epochs;
     Bit#(2)       access;
     Bit#(3)       size;
+    Bit#(2)       priv;
     Bit#(data)    data;
   `ifdef atomic
     Bit#(5)       atomic_op;

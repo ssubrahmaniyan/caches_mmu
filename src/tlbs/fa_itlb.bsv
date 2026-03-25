@@ -120,7 +120,7 @@ import SpecialFIFOs :: * ;
           Bool page_fault = False;
           Bit#(TSub#(`vaddr, `maxvaddr)) unused_va = req.address[`vaddr - 1 : `maxvaddr];
           // transparent translation
-          if(satp_mode == 0 || wr_priv == 3)begin
+          if(satp_mode == 0 || req.prv == 3)begin
             Bit#(`paddr) coreresp = truncate(req.address);
             Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
             Bool trap = |upper_bits == 1;
@@ -162,10 +162,10 @@ import SpecialFIFOs :: * ;
             else if(!permissions.a)
               page_fault = True;
             // pte.u == 0 for user mode
-            else if(!permissions.u && wr_priv == 0)
+            else if(!permissions.u && req.prv  == 0)
               page_fault = True;
             // pte.u = 1 for supervisor
-            else if(permissions.u && wr_priv == 1)
+            else if(permissions.u && req.prv == 1)
               page_fault = True;
             `logLevel( itlb, 0, $format("[%2d]ITLB: Sending PA:%h Trap:%b", hartid,physicaladdress, page_fault))
             ff_core_respone.enq(ITLB_core_response{address  : truncate(physicaladdress),
@@ -180,7 +180,7 @@ import SpecialFIFOs :: * ;
             wr_count_misses <= 1;
           `endif
             rg_miss_queue <= req.address;
-            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3 });
+            ff_request_to_ptw.enq(PTWalk_tlb_request{address : req.address, access : 3, prv : req.prv});
           end
         end
       endmethod

@@ -13,6 +13,7 @@ package icache_types;
     Bit#(addr)    address;
     Bool          fence;
     Bit#(esize)   epochs;
+    Bit#(2)       priv;
   } ICache_core_request#( numeric type addr,
                           numeric type esize) deriving (Bits, Eq, FShow);
   typedef struct{
@@ -34,6 +35,7 @@ package icache_types;
   typedef struct{
     Bit#(addr)    address;
     Bit#(esize)   epochs;
+    Bit#(2)       priv;
   `ifdef ifence
     Bool          fence;
   `endif

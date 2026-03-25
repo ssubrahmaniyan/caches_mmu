@@ -654,7 +654,7 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     `ifdef pmp
       Bit#(2) pmp_access = req.access == 0 ? 0 : 1;
       let pmpreq = PMPReq{ address: phyaddr, access_type:pmp_access};
-      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(req.priv),
                                               pmp_cfg, pmp_addr);
       if (!lv_access_fault && pmp_err)begin
         lv_access_fault = True;

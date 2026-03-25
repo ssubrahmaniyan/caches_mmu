@@ -44,6 +44,7 @@ import SpecialFIFOs :: * ;
   typedef struct{
     Bit#(addr)        address;
     Bool              sfence;
+    Bit#(2)           prv;
   `ifdef hypervisor
     Bool              hfence;
   `endif
