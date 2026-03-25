@@ -87,13 +87,16 @@ import SpecialFIFOs :: * ;
                                     (IMem_core_request#(`vaddr, `iesize) req);
           return ICache_core_request{ address   : req.address,
                                       fence     : req.fence,
-                                    epochs    : req.epochs};
+                                    epochs    : req.epochs,
+                                    priv      : req.priv
+                                    };
   endfunction
 `ifdef supervisor
   function ITLB_core_request#(`vaddr) get_tlb_packet
                                     (IMem_core_request#(`vaddr, `iesize) req);
           return ITLB_core_request{   address   : req.address,
-                                      sfence    : req.sfence
+                                      sfence    : req.sfence,
+                                      prv      : req.priv
                                     `ifdef hypervisor
                                       , hfence    : req.hfence
                                     `endif

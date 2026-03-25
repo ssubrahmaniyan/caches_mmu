@@ -122,7 +122,8 @@ import SpecialFIFOs :: * ;
                                       epochs    : req.epochs,
                                       access    : req.access,
                                       size      : req.size,
-                                      data      : req.writedata
+                                      data      : req.writedata,
+                                      priv      : req.prv
                                     `ifdef atomic
                                       ,atomic_op : req.atomic_op
                                     `endif

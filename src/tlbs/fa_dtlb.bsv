@@ -36,6 +36,7 @@ import SpecialFIFOs :: * ;
     Bool tlbmiss;
     Bool translation_done;
     Bit#(`vaddr) va;
+    Bit#(2) priv;
     VPNTag pte;
     Bit#(2) access;
   } LookUpResult deriving(Bits, FShow, Eq);
@@ -127,7 +128,7 @@ import SpecialFIFOs :: * ;
       ff_lookup_result.deq;
       Bit#(12) page_offset = lookup.va[11 : 0];
       Bit#(`vpnsize) fullvpn = truncate(lookup.va >> 12);
-      Bit#(2) priv = mprv == 0?wr_priv : mpp;
+      Bit#(2) priv = mprv == 0?lookup.priv : mpp;
       `logLevel( dtlb, 1, $format("[%2d]DTLB: LookupResult: ",hartid,fshow(lookup)))
       if(lookup.translation_done)begin
         ff_core_response.enq(DTLB_core_response{address: truncate(lookup.va),
@@ -184,7 +185,7 @@ import SpecialFIFOs :: * ;
         end
         if(lookup.tlbmiss)begin
           rg_miss_queue <= lookup.va;
-          ff_request_to_ptw.enq(PTWalk_tlb_request{address : lookup.va, access : lookup.access });
+          ff_request_to_ptw.enq(PTWalk_tlb_request{address : lookup.va, access : lookup.access, prv : lookup.priv });
           ff_core_response.enq(DTLB_core_response{address  : ?,
                                                  trap     : False,
                                                  cause    : ?,
@@ -223,7 +224,7 @@ import SpecialFIFOs :: * ;
         Bool tlbmiss = !isValid(hit_entry);
         VPNTag pte = fromMaybe(?,hit_entry);
         Bit#(TSub#(`vaddr, `paddr)) upper_bits = truncateLSB(req.address);
-        Bit#(2) priv = mprv == 0?wr_priv : mpp;
+        Bit#(2) priv = mprv == 0?req.prv : mpp;
         translation_done = (satp_mode == 0 || priv == 3 || req.ptwalk_req || req.ptwalk_trap);
         if(!trap && translation_done)begin
            trap = |upper_bits == 1;
@@ -234,7 +235,7 @@ import SpecialFIFOs :: * ;
           rg_sfence <= True;
         end
         else begin
-          ff_lookup_result.enq(LookUpResult{va: va, trap: trap, cause: cause,
+          ff_lookup_result.enq(LookUpResult{va: va, trap: trap, cause: cause, priv: req.prv,
                                             translation_done: translation_done,
                                             tlbmiss: tlbmiss, pte: pte, access: req.access});
         end

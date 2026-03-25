@@ -95,6 +95,7 @@ import SpecialFIFOs :: * ;
                           access      : 0,
                           fence       : False,
                           writedata   : zeroExtend(cause),
+                          prv         : req.prv,
                         `ifdef atomic
                           atomic_op   : ?,
                         `endif
@@ -115,6 +116,7 @@ import SpecialFIFOs :: * ;
                                      fence      : False,
                                      access     : hold_req.access,
                                      writedata  : hold_req.data,
+                                      prv        : hold_req.priv,
       `ifdef atomic
                                      atomic_op  : hold_req.atomic_op,
       `endif
@@ -196,7 +198,7 @@ import SpecialFIFOs :: * ;
       // 7 6 5 4 3 2 1 0
       // D A G U X W R V
       TLB_permissions permissions=bits_to_permission(truncate(response.word));
-      Bit#(2) priv = mprv==0?wr_priv:mpp;
+      Bit#(2) priv = mprv==0?request.prv:mpp;
       `logLevel( ptwalk, 2, $format("PTW : Permissions", fshow(permissions)))
       if (!permissions.v || (!permissions.r && permissions.w)) begin // access fault generated while doing PTWALK
         fault=True;
@@ -212,9 +214,9 @@ import SpecialFIFOs :: * ;
         // for execute access
         if(request.access == 3  && !permissions.x)
           fault=True;
-        if(request.access == 3  && permissions.x && permissions.u && wr_priv==1)
+        if(request.access == 3  && permissions.x && permissions.u && request.prv==1)
           fault=True;
-        if(request.access == 3  && permissions.x && !permissions.u && wr_priv == 0)
+        if(request.access == 3  && permissions.x && !permissions.u && request.prv == 0)
           fault=True;
 
         // for load access

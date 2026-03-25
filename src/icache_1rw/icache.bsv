@@ -451,7 +451,7 @@ import SpecialFIFOs :: * ;
     `endif
     `ifdef pmp
       let pmpreq = PMPReq{ address: truncateLSB(phyaddr), access_type:2};
-      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(wr_priv),
+      let {pmp_err, pmp_cause} = fn_pmp_lookup(pmpreq, unpack(req.priv),
                                               pmp_cfg, pmp_addr);
       if (!lv_access_fault && pmp_err)begin
         lv_access_fault = True;
