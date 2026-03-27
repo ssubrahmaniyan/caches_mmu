@@ -1,3 +1,9 @@
 [submodule "src/src/LLCache_1rw/testbench/common_bsv"]
 	path = src/src/LLCache_1rw/testbench/common_bsv
 	url = https://gitlab.com/shaktiproject/common_bsv
+[submodule "src/LLCache_1rw/testbench/common_bsv"]
+	path = src/LLCache_1rw/testbench/common_bsv
+	url = https://gitlab.com/shaktiproject/common_bsv
+[submodule "src/LLCache_1rw/testbench/common_verilog"]
+	path = src/LLCache_1rw/testbench/common_verilog
+	url = https://gitlab.com/shaktiproject/common_verilog
