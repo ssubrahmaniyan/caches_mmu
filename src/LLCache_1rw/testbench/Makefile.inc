@@ -36,5 +36,5 @@ TRACE=disable
 TOP_MODULE:=mkLLCTestbench
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/:../../pmp/:../src/
 TOP_DIR:= ./
-TOP_FILE:=LLC_tb.bsv
+TOP_FILE:=LLCache_tb.bsv
 

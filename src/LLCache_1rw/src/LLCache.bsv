@@ -14,10 +14,6 @@ package LLCache;
 
   (*synthesize*)
   module mkLLCache(Ifc_LLCache);
-    rule rl_hello_world;
-      $display("Hellow world\n");
-      $finish();
-    endrule: rl_hello_world
   endmodule: mkLLCache
 
 endpackage
