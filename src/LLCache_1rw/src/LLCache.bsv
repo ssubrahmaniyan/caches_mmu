@@ -3,7 +3,8 @@ package LLCache;
   import GetPut::*;
 
   // Project Imports
-  import LLCache_types::*;
+  import LLCache_types  ::*;
+  import LLCache_tagram ::*;
 
   interface Ifc_LLCache;
     interface Put#(
