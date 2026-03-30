@@ -42,14 +42,13 @@ package LLCache_tagram;
 
   module mkLLCache_tagram
     (Ifc_tagram1rw#(
-      wordsize, 
-      blocksize, 
+      offset,
       ways,
       sets,
       paddr))
     provisos(
       Log#(sets, set_bits),       // setbits is the number of bits used as index in BRAM.
-      Add#(offset, set_bits, _a)  // _a bits for index + offset
+      Add#(offset, set_bits, _a),  // _a bits for index + offset
       Add#(tag_bits, _a, paddr)   // tag bits + index + offset = paddr bits
     );
 
@@ -65,7 +64,7 @@ package LLCache_tagram;
     Vector#(ways, Ifc_mem_1rw#(sets,      // number of sets
                                tag_bits,  // size of tag
                                1))          // number of banks
-      v_tags <- replicate_M(mkmem_1rw); 
+      v_tags <- replicateM(mkmem_1rw); 
 
 
     method Action ma_request(
@@ -90,10 +89,10 @@ package LLCache_tagram;
       end
 
       for (Integer i = 0; i < v_ways; i = i + 1) begin
-        lv_hit_vec[i] = pack(truncate((lv_tags[i]) == tag_in);
+        lv_hit_vec[i] = pack(truncate(lv_tags[i]) == tag_in);
       end
 
-      return TagResponse#(ways){
+      return TagResponse{
         waymask : lv_hit_vec
       };
     endmethod: mv_tagmatch_response
