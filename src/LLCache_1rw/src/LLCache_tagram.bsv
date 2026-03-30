@@ -4,7 +4,11 @@ Email ID : abhinavis2005@gmail.com
 */
 
 package LLCache_tagram;
-  import LLCache_types::*;
+  // Library Imports
+  import Vector         :: *;
+  // Project Imports
+  import LLCache_types  :: *;
+  import LLCache_lib    :: *;
   
   interface Ifc_tagram1rw
     #(numeric type wordsize ,
@@ -29,7 +33,16 @@ package LLCache_tagram;
   endinterface: Ifc_tagram1rw
 
   module mkLLCache_tagram
-    (Ifc_tagram1rw#(wordsize, blocksize, ways, sets, paddr));
+    (Ifc_tagram1rw#(
+      wordsize, 
+      blocksize, 
+      ways,
+      sets,
+      paddr));
+
+    let v_ways = valueOf(ways);
+    let v_sets = valueOf(sets);
+
 
   endmodule: mkLLCache_tagram
 
