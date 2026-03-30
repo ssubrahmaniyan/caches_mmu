@@ -1,4 +1,4 @@
-package LLC_tb;
+package LLCache_tb;
 
   import LLCache::*;
 

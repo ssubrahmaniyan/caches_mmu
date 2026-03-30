@@ -51,19 +51,17 @@ package LLCache_lib;
       n_entries)        // memory size
       ram_single [valueOf(banks)];
 
-    // CRegs to store output of each bank and provide
-    // Combinational path for same cycle read response
-    Reg#(Bit#(bpb)) rg_output [valueOf(banks)][2];
+    Reg#(Bit#(bpb)) rg_output [valueOf(banks)];
 
     for (Integer i = 0; i < valueOf(banks); i = i + 1) begin
       ram_single[i] <- mkbram_1rw ;
-      rg_output[i]  <- mkCReg(2,0);
+      rg_output[i]  <- mkReg(0);
     end
 
     // rules
     for (Integer i = 0; i < valueOf(banks); i = i + 1) begin
       rule rl_capture_output;
-        rg_output[i][0] <= ram_single[i].response;
+        rg_output[i] <= ram_single[i].response;
       endrule
     end
 
@@ -85,7 +83,7 @@ package LLCache_lib;
     method Bit#(data_width) read_response;
       Bit#(data_width) response;
       for (Integer i = 0; i < valueOf(banks); i = i + 1) begin
-        response[(i+1)*v_bpb-1 : i*v_bpb] = rg_output[i][1];
+        response[(i+1)*v_bpb-1 : i*v_bpb] = rg_output[i];
       end
       return response;
     endmethod: read_response

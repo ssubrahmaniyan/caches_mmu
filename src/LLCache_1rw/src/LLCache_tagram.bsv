@@ -11,7 +11,8 @@ package LLCache_tagram;
   import LLCache_lib    :: *;
   
   interface Ifc_tagram1rw
-    #(numeric type offset   , // number of bits needed to index a byte in a line
+    #(numeric type wordsize , 
+      numeric type blocksize,
       numeric type ways     ,
       numeric type sets     ,
       numeric type paddr    
@@ -42,12 +43,16 @@ package LLCache_tagram;
 
   module mkLLCache_tagram
     (Ifc_tagram1rw#(
-      offset,
+      wordsize,
+      blocksize,
       ways,
       sets,
       paddr))
     provisos(
       Log#(sets, set_bits),       // setbits is the number of bits used as index in BRAM.
+      Log#(wordsize, word_bits),   // wordbits is the number of bit sneeded to index a byte in a word
+      Log#(blocksize, block_bits), // blockbits is the number of bits needed to index a word in a block
+      Add#(word_bits, block_bits, offset),  
       Add#(offset, set_bits, _a),  // _a bits for index + offset
       Add#(tag_bits, _a, paddr)   // tag bits + index + offset = paddr bits
     );
@@ -74,8 +79,13 @@ package LLCache_tagram;
       Bit#(TLog#(ways)) way);
       
       Bit#(tag_bits) tag = truncateLSB(address);
-      for (Integer i = 0; i < v_ways; i = i + 1) begin
-        v_tags[i].request(access, index, tag, 1);
+      if (access == Write) begin
+        v_tags[way].request(access, index, tag, 1);
+      end
+      else begin
+        for (Integer i = 0; i < v_ways; i = i + 1) begin
+          v_tags[i].request(access, index, tag, 1);
+        end
       end
     endmethod: ma_request
 
