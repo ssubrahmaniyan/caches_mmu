@@ -13,4 +13,10 @@ package LLCache_types;
     numeric type data) 
   deriving (Bits, Eq);
 
+  typedef struct{
+    Bit#(ways)  waymask;
+  } TagResponse
+  #(numeric type ways)
+  deriving (Bits, Eq);
+
 endpackage: LLCache_types
