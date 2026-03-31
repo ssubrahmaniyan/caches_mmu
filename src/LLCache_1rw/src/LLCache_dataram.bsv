@@ -4,6 +4,15 @@ E-mail: subrahmaniyansanjeev@gmail.com
 */
 
 package LLCache_dataram;
+ 
+  // BSV Lib Imports
+  import Vector           :: *;
+
+  // Project Lib Imports
+  import LLCache_types    :: *;
+  import LLCache_lib      :: *;
+  import mem_config       :: *;
+
   interface Ifc_dataram1rw
     #(numeric type lsize,   // size of a line
       numeric type nsets,
@@ -35,5 +44,24 @@ package LLCache_dataram;
     );
 
   endinterface: LLCache_dataram
+
+  module mkLLCache_dataram
+    (Ifc_dataram1rw#(
+      lsize,
+      nsets,
+      nways, 
+      naddr
+    ))
+    provisos(
+     Log#(nsets, set_bits),
+    );
+
+    /*
+    Local Vars
+    */
+    let v_sets = valueOf(nsets);
+    let v_ways = valueOf(nways);
+    let v_set_bits = valueOf(set_bits);
     
+  endmodule: mkLLCAche_dataram
 endpackage: LLCache_dataram
