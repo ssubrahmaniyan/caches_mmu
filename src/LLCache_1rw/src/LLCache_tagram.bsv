@@ -9,12 +9,13 @@ package LLCache_tagram;
   // Project Imports
   import LLCache_types  :: *;
   import LLCache_lib    :: *;
+  import mem_config     :: *;
   
   interface Ifc_tagram1rw
     #(numeric type wordsize , 
       numeric type blocksize,
-      numeric type ways     ,
-      numeric type sets     ,
+      numeric type nways     ,
+      numeric type nsets     ,
       numeric type paddr    
   );
 
@@ -26,9 +27,9 @@ package LLCache_tagram;
     */
     method Action ma_request(
       AccessType access,
-      Bit#(TLog#(sets)) index,
+      Bit#(TLog#(nsets)) index,
       Bit#(paddr) address,
-      Bit#(TLog#(ways)) way);
+      Bit#(TLog#(nways)) way);
 
 
     /*
@@ -45,11 +46,11 @@ package LLCache_tagram;
     (Ifc_tagram1rw#(
       wordsize,
       blocksize,
-      ways,
-      sets,
+      nways,
+      nsets,
       paddr))
     provisos(
-      Log#(sets, set_bits),       // setbits is the number of bits used as index in BRAM.
+      Log#(nsets, set_bits),       // setbits is the number of bits used as index in BRAM.
       Log#(wordsize, word_bits),   // wordbits is the number of bit sneeded to index a byte in a word
       Log#(blocksize, block_bits), // blockbits is the number of bits needed to index a word in a block
       Add#(word_bits, block_bits, offset),  
@@ -60,31 +61,36 @@ package LLCache_tagram;
     /*
     Local Variables
     */
-    let v_ways = valueOf(ways);
-    let v_sets = valueOf(sets);
+    let v_ways = valueOf(nways);
+    let v_sets = valueOf(nsets);
 
     /*
     Block RAMs to store the tags.
     */
-    Vector#(ways, Ifc_mem_1rw#(sets,      // number of sets
+    Vector#(nways, Ifc_mem_config1rw#(nsets,      // number of sets
                                tag_bits,  // size of tag
                                1))          // number of banks
-      v_tags <- replicateM(mkmem_1rw); 
+      v_tags <- replicateM(mkmem_config1rw(
+                          False
+                          `ifdef testmode
+                          ,test_mode
+                          `endif
+                          )); 
 
 
     method Action ma_request(
       AccessType access,
-      Bit#(TLog#(sets)) index,
+      Bit#(TLog#(nsets)) index,
       Bit#(paddr) address,
-      Bit#(TLog#(ways)) way);
+      Bit#(TLog#(nways)) way);
       
       Bit#(tag_bits) tag = truncateLSB(address);
       if (access == Write) begin
-        v_tags[way].request(access, index, tag, 1);
+        v_tags[way].request(pack(access), index, tag, 1);
       end
       else begin
         for (Integer i = 0; i < v_ways; i = i + 1) begin
-          v_tags[i].request(access, index, tag, 1);
+          v_tags[i].request(pack(access), index, tag, 1);
         end
       end
     endmethod: ma_request
