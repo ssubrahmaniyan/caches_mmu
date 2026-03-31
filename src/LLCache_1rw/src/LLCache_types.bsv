@@ -5,12 +5,12 @@ package LLCache_types;
   } AccessType deriving (Bits, Eq);
 
   typedef struct {
-    Bit#(addr)  address;
-    Bit#(2)     access ;
-    Bit#(data)  data   ;
+    Bit#(addr_width)  address;
+    AccessType        access ;
+    Bit#(data_width)  data   ;
   } LLCache_ca_request
-  #(numeric type addr,
-    numeric type data) 
+  #(numeric type addr_width,
+    numeric type data_width) 
   deriving (Bits, Eq);
 
   typedef struct{

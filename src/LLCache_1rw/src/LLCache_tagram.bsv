@@ -27,7 +27,6 @@ package LLCache_tagram;
     */
     method Action ma_request(
       AccessType access,
-      Bit#(TLog#(nsets)) index,
       Bit#(paddr) address,
       Bit#(TLog#(nways)) way);
 
@@ -61,15 +60,17 @@ package LLCache_tagram;
     /*
     Local Variables
     */
-    let v_ways = valueOf(nways);
-    let v_sets = valueOf(nsets);
+    let v_ways      = valueOf(nways);
+    let v_sets      = valueOf(nsets);
+    let v_offset    = valueOf(offset);
+    let v_set_bits  = valueOf(set_bits);
 
     /*
     Block RAMs to store the tags.
     */
     Vector#(nways, Ifc_mem_config1rw#(nsets,      // number of sets
-                               tag_bits,  // size of tag
-                               1))          // number of banks
+                               tag_bits,          // size of tag
+                               1))                // number of banks
       v_tags <- replicateM(mkmem_config1rw(
                           False
                           `ifdef testmode
@@ -79,25 +80,32 @@ package LLCache_tagram;
 
 
     method Action ma_request(
-      AccessType access,
-      Bit#(TLog#(nsets)) index,
-      Bit#(paddr) address,
-      Bit#(TLog#(nways)) way);
+      AccessType          access,
+      Bit#(paddr)         address,
+      Bit#(TLog#(nways))  way);
       
-      Bit#(tag_bits) tag = truncateLSB(address);
+      Bit#(tag_bits) tag      = truncateLSB(address);
+      Bit#(set_bits) lv_index = address[v_set_bits + v_offset - 1 : v_offset];
+
       if (access == Write) begin
-        v_tags[way].request(pack(access), index, tag, 1);
+        // write latched only one one way
+        v_tags[way].request(pack(access), lv_index, tag, 1);
       end
       else begin
+        // reads are latched on all ways
         for (Integer i = 0; i < v_ways; i = i + 1) begin
-          v_tags[i].request(pack(access), index, tag, 1);
+          v_tags[i].request(pack(access), lv_index, tag, 1);
         end
       end
+
     endmethod: ma_request
 
-    method TagResponse#(ways) mv_tagmatch_response(Bit#(paddr) address_in);
-      Bit#(tag_bits) tag_in = truncateLSB(address_in);
-      Bit#(ways) lv_hit_vec = 0;
+    method TagResponse#(ways) mv_tagmatch_response(
+      Bit#(paddr) address_in);
+
+      Bit#(tag_bits)  tag_in      = truncateLSB(address_in);
+      Bit#(ways)      lv_hit_vec  = 0;
+
       Vector#(ways, Bit#(tag_bits)) lv_tags;
 
       for (Integer i = 0; i < v_ways; i = i + 1) begin
