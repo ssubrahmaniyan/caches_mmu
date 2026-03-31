@@ -54,14 +54,52 @@ package LLCache_dataram;
     ))
     provisos(
      Log#(nsets, set_bits),
+     Mul#(lsize, 8, line_bits), // number of bits per line in memory
+     Add#(offset, set_bits, _a) // bits to index and offset
     );
 
     /*
     Local Vars
     */
-    let v_sets = valueOf(nsets);
-    let v_ways = valueOf(nways);
-    let v_set_bits = valueOf(set_bits);
+    let v_sets      = valueOf(nsets);
+    let v_ways      = valueOf(nways);
+    let v_set_bits  = valueOf(set_bits);
+    let v_line_bits = valueOf(line_bits);
+    let v_offset    = valueOf(offset);    
     
-  endmodule: mkLLCAche_dataram
+    /*
+    Data lines stored in memory instances
+    */
+    Vector#(nways, Ifc_mem_config1rw#(nsets,      // number of sets per way
+                                      line_bits,  // number of bits per line
+                                    1))           // number of banks, defaulting to 1
+      v_lines <- replicateM(mkmem_config1rw(
+                                      False
+                                      `ifdef testmode
+                                      , test_mode
+                                      `endif
+                                      ));
+    
+    method Action ma_data_request(
+      AccessType access,
+      Bit#(TLog#(nways)) wayid,
+      Bit#(naddr) addr,
+      Bit#(lsize) data
+    );
+
+      Bit#(set_bits) lv_index = addr[v_set_bits + v_offset - 1 : v_offset];
+
+      if(access == Write) begin
+        v_lines[wayid].request(pack(access), lv_index, data, 1);
+      end
+      else begin
+        for (Integer i = 0; i < v_ways; i = i + 1)begin
+          v_lines[i].request(pack(access), lv_index, data, 1);
+        end
+      end
+
+    endmethod: ma_data_request
+
+  endmodule: mkLLCache_dataram
+  
 endpackage: LLCache_dataram
