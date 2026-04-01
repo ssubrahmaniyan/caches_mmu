@@ -100,6 +100,26 @@ package LLCache_dataram;
 
     endmethod: ma_data_request
 
+    method DataResponse#(lsize) mv_data_response(
+      TagResponse#(nways) waymask
+    );
+      
+      Bit#(nways)         lv_waymask = waymask;
+      Bit#(lsize)         lv_data    = 0;
+      
+      // TODO: replace with map
+      for (Integer i = 0; i < v_ways; i = i + 1) begin
+        if (lv_waymask[i] == 1) begin
+          lv_data = v_lines[i].read_response;
+        end
+      end
+
+      return DataResponse{
+        data : lv_data
+      };
+
+    endmethod: mv_data_response
+  
   endmodule: mkLLCache_dataram
   
 endpackage: LLCache_dataram
