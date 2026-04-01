@@ -14,9 +14,9 @@ package LLCache_types;
   deriving (Bits, Eq);
 
   typedef struct{
-    Bit#(ways)  waymask;
+    Bit#(nways)  waymask;
   } TagResponse
-  #(numeric type ways)
+  #(numeric type nways)
   deriving (Bits, Eq);
 
   typedef struct{
