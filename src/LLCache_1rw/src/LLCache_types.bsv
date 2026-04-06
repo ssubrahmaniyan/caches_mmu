@@ -20,7 +20,7 @@ package LLCache_types;
   deriving (Bits, Eq);
 
   typedef struct{
-    Bit#(lsize) data;
+    Bit#(TMul#(lsize, 8)) data;
   } DataResponse
   #(numeric type lsize)
   deriving (Bits, Eq);

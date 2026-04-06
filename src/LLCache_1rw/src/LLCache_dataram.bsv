@@ -21,29 +21,29 @@ package LLCache_dataram;
     );
 
     /*
-      doc: method: ma_data_request
+      doc: method: ma_request
       desc: When a request is enqueued into the LLC FIFO,
             it is also simultaneously inserted into the data ram.
     */
-    // TODO: Make input composite Maybe
-    method Action ma_data_request(
-      AccessType access,
-      Bit#(TLog#(nways)) wayid,
-      Bit#(naddr) addr,
-      Bit#(lsize) data
+    
+    method Action ma_request(
+      AccessType            access,
+      Bit#(TLog#(nways))    wayid,
+      Bit#(naddr)           addr,
+      Bit#(TMul#(lsize, 8)) data
     );
 
     /*
-      doc: method: mv_data_response
+      doc: method: mv_response
       desc: In the second cycle, the response method must be invoked
             with the waymask to read the data line.
             Returns a Maybe# to accomodate write responses also.
     */
-    method DataResponse#(lsize) mv_data_response(
-      TagResponse#(nways) waymask
+    method DataResponse#(lsize) mv_response(
+      TagResponse#(nways)   waymask
     );
 
-  endinterface: LLCache_dataram
+  endinterface: Ifc_dataram1rw
 
   module mkLLCache_dataram
     (Ifc_dataram1rw#(
@@ -54,8 +54,9 @@ package LLCache_dataram;
     ))
     provisos(
      Log#(nsets, set_bits),
-     Mul#(lsize, 8, line_bits), // number of bits per line in memory
-     Add#(offset, set_bits, _a) // bits to index and offset
+     Mul#(lsize, 8, line_bits),     // number of bits per line in memory
+     Add#(offset, set_bits, naddr), // bits to index and offset
+     Alias#(Vector#(nways, Bit#(TLog#(nways))), wayVec) 
     );
 
     /*
@@ -72,7 +73,7 @@ package LLCache_dataram;
     */
     Vector#(nways, Ifc_mem_config1rw#(nsets,      // number of sets per way
                                       line_bits,  // number of bits per line
-                                    1))           // number of banks, defaulting to 1
+                                      1))         // number of banks, defaulting to 1
       v_lines <- replicateM(mkmem_config1rw(
                                       False
                                       `ifdef testmode
@@ -80,45 +81,55 @@ package LLCache_dataram;
                                       `endif
                                       ));
     
-    method Action ma_data_request(
-      AccessType access,
-      Bit#(TLog#(nways)) wayid,
-      Bit#(naddr) addr,
-      Bit#(lsize) data
+    method Action ma_request(
+      AccessType            access,
+      Bit#(TLog#(nways))    wayid,
+      Bit#(naddr)           addr,
+      Bit#(TMul#(lsize, 8)) data
     );
 
       Bit#(set_bits) lv_index = addr[v_set_bits + v_offset - 1 : v_offset];
 
-      if(access == Write) begin
-        v_lines[wayid].request(pack(access), lv_index, data, 1);
-      end
-      else begin
-        for (Integer i = 0; i < v_ways; i = i + 1)begin
-          v_lines[i].request(pack(access), lv_index, data, 1);
-        end
-      end
+      function Action f_request(Bit#(TLog#(nways)) wid);
+        action
+          v_lines[wid].request(pack(access), lv_index, data, 1);
+        endaction
+      endfunction: f_request
 
-    endmethod: ma_data_request
+      case(access)
+        Write : f_request(wayid);
+        Read  : mapM_(f_request, wayVec'(genWith(fromInteger)));
+      endcase
 
-    method DataResponse#(lsize) mv_data_response(
+    endmethod: ma_request
+
+    method DataResponse#(lsize) mv_response(
       TagResponse#(nways) waymask
     );
       
-      Bit#(nways)         lv_waymask = waymask;
-      Bit#(lsize)         lv_data    = 0;
-      
-      // TODO: replace with map
-      for (Integer i = 0; i < v_ways; i = i + 1) begin
-        if (lv_waymask[i] == 1) begin
-          lv_data = v_lines[i].read_response;
-        end
-      end
+      Bit#(line_bits)         lv_data    = 0;
+      Bit#(nways)             lv_waymask = pack(waymask);
+
+      function Bit#(line_bits) f_read_response(Ifc_mem_config1rw#(nsets, line_bits, 1) mem_ifc);
+        return mem_ifc.read_response;
+      endfunction: f_read_response
+
+      function Bit#(TLog#(nways)) f_wayid(Bit#(nways) wm);
+          Vector#(nways, Bool) v_mask = unpack(wm);
+          
+          let maybe_idx = findIndex(id, v_mask);
+          
+          return pack(fromMaybe(0, maybe_idx));
+      endfunction: f_wayid      
+
+      // read response from only the matching tag 
+      lv_data = select(map(f_read_response, v_lines), f_wayid(lv_waymask));
 
       return DataResponse{
-        data : lv_data
+        data : pack('0)
       };
 
-    endmethod: mv_data_response
+    endmethod: mv_response
   
   endmodule: mkLLCache_dataram
   
