@@ -35,7 +35,7 @@ package LLCache_tagram;
       doc: method: mv_tagmatch_response
       description: This method is used to get the tag match response from the tag array.
     */
-    method TagResponse#(ways) mv_tagmatch_response(Bit#(paddr) address_in);
+    method TagResponse#(nways) mv_tagmatch_response(Bit#(paddr) address_in);
 
     //TODO: Add method for tag select response.
 
@@ -100,24 +100,17 @@ package LLCache_tagram;
 
     endmethod: ma_request
 
-    method TagResponse#(ways) mv_tagmatch_response(
+    method TagResponse#(nways) mv_tagmatch_response(
       Bit#(paddr) address_in);
 
       Bit#(tag_bits)  tag_in      = truncateLSB(address_in);
-      Bit#(ways)      lv_hit_vec  = 0;
 
-      Vector#(ways, Bit#(tag_bits)) lv_tags;
-
-      for (Integer i = 0; i < v_ways; i = i + 1) begin
-        lv_tags[i] = v_tags[i].read_response;
-      end
-
-      for (Integer i = 0; i < v_ways; i = i + 1) begin
-        lv_hit_vec[i] = pack(truncate(lv_tags[i]) == tag_in);
-      end
+      function Bool is_hit(Ifc_mem_config1rw#(nsets, tag_bits, 1) way_ifc);
+        return (way_ifc.read_response == tag_in);
+      endfunction
 
       return TagResponse{
-        waymask : lv_hit_vec
+        waymask : pack(map(is_hit, v_tags))
       };
     endmethod: mv_tagmatch_response
 
