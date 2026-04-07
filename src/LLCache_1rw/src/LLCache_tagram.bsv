@@ -54,7 +54,8 @@ package LLCache_tagram;
       Log#(blocksize, block_bits), // blockbits is the number of bits needed to index a word in a block
       Add#(word_bits, block_bits, offset),  
       Add#(offset, set_bits, _a),  // _a bits for index + offset
-      Add#(tag_bits, _a, paddr)   // tag bits + index + offset = paddr bits
+      Add#(tag_bits, _a, paddr),   // tag bits + index + offset = paddr bits
+      Alias#(Vector#(nways, Bit#(TLog#(nways))), wayVec)
     );
 
     /*
@@ -87,16 +88,16 @@ package LLCache_tagram;
       Bit#(tag_bits) tag      = truncateLSB(address);
       Bit#(set_bits) lv_index = address[v_set_bits + v_offset - 1 : v_offset];
 
-      if (access == Write) begin
-        // write latched only one one way
-        v_tags[way].request(pack(access), lv_index, tag, 1);
-      end
-      else begin
-        // reads are latched on all ways
-        for (Integer i = 0; i < v_ways; i = i + 1) begin
-          v_tags[i].request(pack(access), lv_index, tag, 1);
-        end
-      end
+      function Action req_way(Bit#(TLog#(nways)) w);
+        action
+          v_tags[w].request(pack(access), lv_index, tag, 1);
+        endaction
+      endfunction
+
+      case (access) 
+        Read : mapM_(req_way, wayVec'(genWith(fromInteger)));
+        Write: req_way(way);
+      endcase
 
     endmethod: ma_request
 
