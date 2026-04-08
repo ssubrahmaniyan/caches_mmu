@@ -50,7 +50,9 @@ package LLCache;
       LLCache_ca_llc_response
       #(TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_ca_llc_response <- mkSizedFIFOF(2);
-    
+
+    Reg#(TagResponse#(`dways)) rg_waymask <- mkReg(unpack('0));
+
 // TODO: change dwords to llc
     // State Elements
     // This module is the tag array.
@@ -69,6 +71,15 @@ package LLCache;
       `dways                  ,
       `paddr
     ) m_data <- mkLLCache_dataram;
+
+    rule rl_latch_tag_match;
+      let lv_request = ff_ca_request.first();
+      ff_ca_request.deq();
+
+      let lv_waymask = m_tag.mv_tagmatch_response(lv_request.address);
+
+      rg_waymask <= lv_waymask;
+    endrule: rl_latch_tag_match
 
     interface receive_ca_req = interface Put
 
@@ -95,16 +106,11 @@ package LLCache;
 
     endinterface: Put;
 
-    interface send_ca_llc_resp= interface Get
+    interface send_ca_llc_resp = interface Get
 
       method ActionValue#(LLCache_ca_llc_response#(TMul#(`dblocks, TMul#(`dwords, 8)))) get();
 
-        let lv_request = ff_ca_request.first();
-        ff_ca_request.deq();
-
-        let waymask = m_tag.mv_tagmatch_response(lv_request.address);
-
-        let lv_data_response = m_data.mv_response(waymask);
+        let lv_data_response = m_data.mv_response(rg_waymask);
 
         return unpack(pack(lv_data_response));
 
