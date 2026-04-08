@@ -41,5 +41,16 @@ package LLCache_types;
   } DataResponse_t
   #(numeric type lsize)
   deriving (Bits, Eq);
+
+  typedef struct{
+    Bit#(paddr)         address ;
+    Bit#(datawidth)     data    ;
+    Bit#(TLog#(ncores)) coreid  ;
+    Bool                valid   ;
+  } LLCache_mhb_entry
+  #(numeric type paddr,
+    numeric type datawidth,
+    numeric type ncores)
+  deriving (Bits, Eq);
   
 endpackage: LLCache_types

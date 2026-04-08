@@ -10,6 +10,7 @@ package LLCache;
   import LLCache_types    ::*;
   import LLCache_tagram   ::*;
   import LLCache_dataram  ::*;
+  import LLCache_mhb      ::*;
 
  // TODO: add doc
   interface Ifc_LLCache;
