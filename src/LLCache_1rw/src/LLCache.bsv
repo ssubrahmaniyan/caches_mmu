@@ -21,14 +21,14 @@ package LLCache;
     */
 
     interface Put#(
-      LLCache_ca_request
+      CA_LLCache_request_t
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
-      receive_ca_req;
+      ca_llcache_req;
 
     interface Get#(
-      LLCache_ca_llc_response
+      LLCache_CA_response_t
       #(TMul#(`dblocks, TMul#(`dwords, 8))))
-      send_ca_llc_resp;
+      llcache_ca_resp;
 
   endinterface: Ifc_LLCache
 
@@ -39,7 +39,7 @@ package LLCache;
     
     /*doc: FIFO: This fifo stores the request from the communication assist*/
     FIFOF#(
-      LLCache_ca_request
+      CA_LLCache_request_t
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_ca_request <- mkSizedFIFOF(2);
 
@@ -47,11 +47,11 @@ package LLCache;
       desc: Holds outgoing response to the communication assist
     */
     FIFOF#(
-      LLCache_ca_llc_response
+      LLCache_CA_response_t
       #(TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_ca_llc_response <- mkSizedFIFOF(2);
 
-    Reg#(TagResponse#(`dways)) rg_waymask <- mkReg(unpack('0));
+    Reg#(TagResponse_t#(`dways)) rg_waymask <- mkReg(unpack('0));
 
 // TODO: change dwords to llc
     // State Elements
@@ -81,22 +81,22 @@ package LLCache;
       rg_waymask <= lv_waymask;
     endrule: rl_latch_tag_match
 
-    interface receive_ca_req = interface Put
+    interface ca_llcache_req = interface Put
 
-      method Action put(LLCache_ca_request#(
+      method Action put(CA_LLCache_request_t#(
           `paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
           request);
 
         ff_ca_request.enq(request);
 
         m_tag.ma_request(
-          AccessType'(Read),
+          AccessType_t'(Read),
           request.address,
           ?  
         );
 
         m_data.ma_request(
-          AccessType'(Read) ,
+          AccessType_t'(Read) ,
           ?                 , // don't care about wayid on a read
           request.address   ,
           ?                   // don't care about data on a read
@@ -106,9 +106,9 @@ package LLCache;
 
     endinterface: Put;
 
-    interface send_ca_llc_resp = interface Get
+    interface llcache_ca_resp = interface Get
 
-      method ActionValue#(LLCache_ca_llc_response#(TMul#(`dblocks, TMul#(`dwords, 8)))) get();
+      method ActionValue#(LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)))) get();
 
         let lv_data_response = m_data.mv_response(rg_waymask);
 

@@ -2,14 +2,14 @@ package LLCache_types;
   typedef enum {
     Read = 0,
     Write = 1
-  } AccessType deriving (Bits, Eq);
+  } AccessType_t deriving (Bits, Eq);
 
   // TODO: Add identifier for requesting core
   typedef struct {
     Bit#(addr_width)  address;
-    AccessType        access ;
+    AccessType_t        access ;
     Bit#(data_width)  data   ;
-  } LLCache_ca_request
+  } CA_LLCache_request_t
   #(numeric type addr_width,
     numeric type data_width) 
   deriving (Bits, Eq);
@@ -17,19 +17,19 @@ package LLCache_types;
   // TODO: Add identifier for core to respond to
   typedef struct{
     Bit#(data_width) data   ;
-  } LLCache_ca_llc_response
+  } LLCache_CA_response_t
   #(numeric type data_width)
   deriving (Bits, Eq);
   
   typedef struct{
     Bit#(nways)  waymask;
-  } TagResponse
+  } TagResponse_t
   #(numeric type nways)
   deriving (Bits, Eq);
 
   typedef struct{
     Bit#(TMul#(lsize, 8)) data;
-  } DataResponse
+  } DataResponse_t
   #(numeric type lsize)
   deriving (Bits, Eq);
   

@@ -27,7 +27,7 @@ package LLCache_dataram;
     */
     
     method Action ma_request(
-      AccessType            access,
+      AccessType_t          access,
       Bit#(TLog#(nways))    wayid,
       Bit#(naddr)           addr,
       Bit#(TMul#(lsize, 8)) data
@@ -39,8 +39,8 @@ package LLCache_dataram;
             with the waymask to read the data line.
             Returns a Maybe# to accomodate write responses also.
     */
-    method DataResponse#(lsize) mv_response(
-      TagResponse#(nways)   waymask
+    method DataResponse_t#(lsize) mv_response(
+      TagResponse_t#(nways)   waymask
     );
 
   endinterface: Ifc_dataram1rw
@@ -82,7 +82,7 @@ package LLCache_dataram;
                                       ));
     
     method Action ma_request(
-      AccessType            access,
+      AccessType_t          access,
       Bit#(TLog#(nways))    wayid,
       Bit#(naddr)           addr,
       Bit#(TMul#(lsize, 8)) data
@@ -103,8 +103,8 @@ package LLCache_dataram;
 
     endmethod: ma_request
 
-    method DataResponse#(lsize) mv_response(
-      TagResponse#(nways) waymask
+    method DataResponse_t#(lsize) mv_response(
+      TagResponse_t#(nways) waymask
     );
       
       Bit#(line_bits)         lv_data    = 0;
@@ -125,7 +125,7 @@ package LLCache_dataram;
       // read response from only the matching tag 
       lv_data = select(map(f_read_response, v_lines), f_wayid(lv_waymask));
 
-      return DataResponse{
+      return DataResponse_t{
         data : lv_data
       };
 

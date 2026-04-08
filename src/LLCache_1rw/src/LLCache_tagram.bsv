@@ -26,16 +26,16 @@ package LLCache_tagram;
       A read is latched on all ways, Write is latched only on one way.
     */
     method Action ma_request(
-      AccessType access,
-      Bit#(paddr) address,
-      Bit#(TLog#(nways)) way);
+      AccessType_t        access,
+      Bit#(paddr)         address,
+      Bit#(TLog#(nways))  way);
 
 
     /*
       doc: method: mv_tagmatch_response
       description: This method is used to get the tag match response from the tag array.
     */
-    method TagResponse#(nways) mv_tagmatch_response(Bit#(paddr) address_in);
+    method TagResponse_t#(nways) mv_tagmatch_response(Bit#(paddr) address_in);
 
     //TODO: Add method for tag select response.
 
@@ -81,7 +81,7 @@ package LLCache_tagram;
 
 
     method Action ma_request(
-      AccessType          access,
+      AccessType_t        access,
       Bit#(paddr)         address,
       Bit#(TLog#(nways))  way);
       
@@ -101,7 +101,7 @@ package LLCache_tagram;
 
     endmethod: ma_request
 
-    method TagResponse#(nways) mv_tagmatch_response(
+    method TagResponse_t#(nways) mv_tagmatch_response(
       Bit#(paddr) address_in);
 
       Bit#(tag_bits)  tag_in      = truncateLSB(address_in);
@@ -110,7 +110,7 @@ package LLCache_tagram;
         return (way_ifc.read_response == tag_in);
       endfunction
 
-      return TagResponse{
+      return TagResponse_t{
         waymask : pack(map(is_hit, v_tags))
       };
     endmethod: mv_tagmatch_response

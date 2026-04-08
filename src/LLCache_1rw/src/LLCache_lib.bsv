@@ -15,10 +15,10 @@ package LLCache_lib;
       the request to the memory for read and write operation.
     */
     method Action request(
-      AccessType access,
-      Bit#(TLog#(n_entries)) index,
-      Bit#(data_width) data,
-      Bit#(banks) bank_en
+      AccessType_t            access,
+      Bit#(TLog#(n_entries))  index,
+      Bit#(data_width)        data,
+      Bit#(banks)             bank_en
     );
 
     /* doc: method: read_response
@@ -66,10 +66,10 @@ package LLCache_lib;
     end
 
     method Action request(
-      AccessType access, 
-      Bit#(TLog#(n_entries)) index, 
-      Bit#(data_width) data, 
-      Bit#(banks) bank_en);
+      AccessType_t            access, 
+      Bit#(TLog#(n_entries))  index, 
+      Bit#(data_width)        data, 
+      Bit#(banks)             bank_en);
 
       for (Integer i = 0; i < valueOf(banks); i = i + 1) begin
         if (bank_en[i] == 1'b1) begin
