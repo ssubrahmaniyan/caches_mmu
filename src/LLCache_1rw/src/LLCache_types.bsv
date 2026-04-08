@@ -7,7 +7,7 @@ package LLCache_types;
   // TODO: Add identifier for requesting core
   typedef struct {
     Bit#(addr_width)  address;
-    AccessType_t        access ;
+    AccessType_t      access ;
     Bit#(data_width)  data   ;
   } CA_LLCache_request_t
   #(numeric type addr_width,
@@ -20,7 +20,16 @@ package LLCache_types;
   } LLCache_CA_response_t
   #(numeric type data_width)
   deriving (Bits, Eq);
-  
+
+  typedef struct{
+    Bit#(addr_width)  address;
+    AccessType_t      access;    
+    Bit#(data_width)  data;
+  } LLCache_CA_request_t
+  #(numeric type addr_width,
+    numeric type data_width)
+  deriving (Bits, Eq);
+
   typedef struct{
     Bit#(nways)  waymask;
   } TagResponse_t

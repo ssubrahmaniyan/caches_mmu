@@ -15,7 +15,7 @@ package LLCache;
   interface Ifc_LLCache;
 
     /* 
-      doc: subinterface: receive_ca_req
+      doc: subinterface: ca_llcache_req 
       description: This interface is used to receive the request from the 
       communication assist. 
     */
@@ -25,10 +25,25 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
       ca_llcache_req;
 
+    /*
+      doc: subinterface: llcache_ca_resp
+      desc: This interface is used to put responses to the CA for requests
+    */
+
     interface Get#(
       LLCache_CA_response_t
       #(TMul#(`dblocks, TMul#(`dwords, 8))))
       llcache_ca_resp;
+
+    /*
+      doc: subinterface: llcache_ca_req
+      desc: This interface is used to put requests to the CA for memory access
+    */
+
+    interface Get#(
+      LLCache_CA_request_t
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
+      llcache_ca_req; 
 
   endinterface: Ifc_LLCache
 
@@ -41,15 +56,26 @@ package LLCache;
     FIFOF#(
       CA_LLCache_request_t
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
-    ) ff_ca_request <- mkSizedFIFOF(2);
+    ) ff_ca_llcache_request <- mkSizedFIFOF(2);
 
-    /*doc: FIFO: ff_ca_llc_responseo
+    /*
+      doc: FIFO: ff_llcache_ca_response
       desc: Holds outgoing response to the communication assist
     */
     FIFOF#(
       LLCache_CA_response_t
       #(TMul#(`dblocks, TMul#(`dwords, 8)))
-    ) ff_ca_llc_response <- mkSizedFIFOF(2);
+    ) ff_llcache_ca_response <- mkSizedFIFOF(2);
+
+    /*
+      doc: FIOF: ff_llcache_ca_request
+      desc: Holds outgoing requests to the communication assist
+    */
+    
+    FIFOF#(
+      LLCache_CA_request_t
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
+    ) ff_llcache_ca_request <- mkSizedFIFOF(2);
 
     Reg#(TagResponse_t#(`dways)) rg_waymask <- mkReg(unpack('0));
 
@@ -73,8 +99,8 @@ package LLCache;
     ) m_data <- mkLLCache_dataram;
 
     rule rl_latch_tag_match;
-      let lv_request = ff_ca_request.first();
-      ff_ca_request.deq();
+      let lv_request = ff_ca_llcache_request.first();
+      ff_ca_llcache_request.deq();
 
       let lv_waymask = m_tag.mv_tagmatch_response(lv_request.address);
 
@@ -87,7 +113,7 @@ package LLCache;
           `paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
           request);
 
-        ff_ca_request.enq(request);
+        ff_ca_llcache_request.enq(request);
 
         m_tag.ma_request(
           AccessType_t'(Read),
