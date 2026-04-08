@@ -25,9 +25,14 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
       receive_ca_req;
 
+    interface Get#(
+      LLCache_ca_llc_response
+      #(TMul#(`dblocks, TMul#(`dwords, 8))))
+      send_ca_llc_resp;
+
   endinterface: Ifc_LLCache
 
-  (*synthesize*)
+  (* synthesize *)
   module mkLLCache(Ifc_LLCache);
 
     /* FIFOs to interact with the interface of the module */
@@ -38,6 +43,14 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_ca_request <- mkSizedFIFOF(2);
 
+    /*doc: FIFO: ff_ca_llc_responseo
+      desc: Holds outgoing response to the communication assist
+    */
+    FIFOF#(
+      LLCache_ca_llc_response
+      #(TMul#(`dblocks, TMul#(`dwords, 8)))
+    ) ff_ca_llc_response <- mkSizedFIFOF(2);
+    
 // TODO: change dwords to llc
     // State Elements
     // This module is the tag array.
@@ -58,28 +71,46 @@ package LLCache;
     ) m_data <- mkLLCache_dataram;
 
     interface receive_ca_req = interface Put
+
       method Action put(LLCache_ca_request#(
           `paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
           request);
 
-      ff_ca_request.enq(request);
+        ff_ca_request.enq(request);
 
-      m_tag.ma_request(
-        AccessType'(Read),
-        request.address,
-        ?  
-      );
+        m_tag.ma_request(
+          AccessType'(Read),
+          request.address,
+          ?  
+        );
 
-      m_data.ma_request(
-        AccessType'(Read) ,
-        ?                 , // don't care about wayid on a read
-        request.address   ,
-        ?                   // don't care about data on a read
-      ); 
+        m_data.ma_request(
+          AccessType'(Read) ,
+          ?                 , // don't care about wayid on a read
+          request.address   ,
+          ?                   // don't care about data on a read
+        ); 
 
       endmethod: put
 
     endinterface: Put;
+
+    interface send_ca_llc_resp= interface Get
+
+      method ActionValue#(LLCache_ca_llc_response#(TMul#(`dblocks, TMul#(`dwords, 8)))) get();
+
+        let lv_request = ff_ca_request.first();
+        ff_ca_request.deq();
+
+        let waymask = m_tag.mv_tagmatch_response(lv_request.address);
+
+        let lv_data_response = m_data.mv_response(waymask);
+
+        return unpack(pack(lv_data_response));
+
+      endmethod: get
+
+    endinterface: Get;
 
   endmodule: mkLLCache
 

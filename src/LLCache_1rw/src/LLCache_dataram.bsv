@@ -126,7 +126,7 @@ package LLCache_dataram;
       lv_data = select(map(f_read_response, v_lines), f_wayid(lv_waymask));
 
       return DataResponse{
-        data : pack('0)
+        data : lv_data
       };
 
     endmethod: mv_response
