@@ -4,21 +4,25 @@ package LLCache_types;
     Write = 1
   } AccessType_t deriving (Bits, Eq);
 
-  // TODO: Add identifier for requesting core
   typedef struct {
-    Bit#(addr_width)  address;
-    AccessType_t      access ;
-    Bit#(data_width)  data   ;
+    Bit#(addr_width)    address;
+    AccessType_t        access;
+    Bit#(data_width)    data;
+    Bit#(TLog#(ncores)) hart_id;
   } CA_LLCache_request_t
   #(numeric type addr_width,
-    numeric type data_width) 
+    numeric type data_width,
+    numeric type ncores) 
   deriving (Bits, Eq);
 
-  // TODO: Add identifier for core to respond to
   typedef struct{
-    Bit#(data_width) data   ;
+    Bit#(data_width)    data;
+    Bit#(addr_width)    address;
+    Bit#(TLog#(ncores)) hart_id;
   } LLCache_CA_response_t
-  #(numeric type data_width)
+  #(numeric type data_width,
+    numeric type addr_width,
+    numeric type ncores)
   deriving (Bits, Eq);
 
   typedef struct{

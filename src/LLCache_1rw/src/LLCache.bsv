@@ -11,7 +11,7 @@ package LLCache;
   import LLCache_tagram   ::*;
   import LLCache_dataram  ::*;
   import LLCache_mhb      ::*;
-
+  `include "LLCache.defines"
  // TODO: add doc
   interface Ifc_LLCache;
 
@@ -23,7 +23,7 @@ package LLCache;
 
     interface Put#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores)))
       ca_llcache_req;
 
     /*
@@ -33,7 +33,7 @@ package LLCache;
 
     interface Get#(
       LLCache_CA_response_t
-      #(TMul#(`dblocks, TMul#(`dwords, 8))))
+      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores)))
       llcache_ca_resp;
 
     /*
@@ -56,7 +56,7 @@ package LLCache;
     /*doc: FIFO: This fifo stores the request from the communication assist*/
     FIFOF#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores))
     ) ff_ca_llcache_request <- mkSizedFIFOF(2);
 
     /*
@@ -65,7 +65,7 @@ package LLCache;
     */
     FIFOF#(
       LLCache_CA_response_t
-      #(TMul#(`dblocks, TMul#(`dwords, 8)))
+      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))
     ) ff_llcache_ca_response <- mkSizedFIFOF(2);
 
     /*
@@ -78,7 +78,15 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_llcache_ca_request <- mkSizedFIFOF(2);
 
-    Reg#(TagResponse_t#(`dways)) rg_waymask <- mkReg(unpack('0));
+    /*
+      doc: FIFO: ff_data_response
+      desc: Holds the data response for the read method to access. Useful to handle 
+            hit and miss cases
+    */
+
+    FIFOF#(
+      LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))     
+    ) ff_data_response <- mkSizedFIFOF(2);
 
 // TODO: change dwords to llc
     // State Elements
@@ -90,7 +98,6 @@ package LLCache;
       `dsets  ,
       `paddr
     ) m_tag <- mkLLCache_tagram;
-
     // Instance of the data array
     Ifc_dataram1rw#(
       TMul#(`dwords, `dblocks),
@@ -99,19 +106,41 @@ package LLCache;
       `paddr
     ) m_data <- mkLLCache_dataram;
 
-    rule rl_latch_tag_match;
-      let lv_request = ff_ca_llcache_request.first();
-      ff_ca_llcache_request.deq();
+    /*
+      doc: rule: rl_hit_or_miss
+      desc: checks if the line hit in the LLC.
+            Hit: the waymask is used to choose the 
+            correct way from the dataram and the response is enqueued in the buffer.
+            Miss: TODO
+    */
 
+    rule rl_hit_or_miss;
+
+      let lv_request = ff_ca_llcache_request.first();
       let lv_waymask = m_tag.mv_tagmatch_response(lv_request.address);
 
-      rg_waymask <= lv_waymask;
-    endrule: rl_latch_tag_match
+      if (pack(lv_waymask) != 0) begin // cache hit logic
+          ff_ca_llcache_request.deq();
+          
+          let lv_data_response = m_data.mv_response(lv_waymask);
+          
+          let resp = LLCache_CA_response_t {
+              data: pack(lv_data_response),
+              address: lv_request.address,
+              hart_id: lv_request.hart_id
+          };
+
+          ff_data_response.enq(resp);
+      end else begin // cache miss logic
+          // TODO: handle miss logic
+      end
+
+    endrule: rl_hit_or_miss
 
     interface ca_llcache_req = interface Put
 
       method Action put(CA_LLCache_request_t#(
-          `paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
+          `paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores))
           request);
 
         ff_ca_llcache_request.enq(request);
@@ -135,16 +164,29 @@ package LLCache;
 
     interface llcache_ca_resp = interface Get
 
-      method ActionValue#(LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)))) get();
+      method ActionValue#(LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))) get();
+      
+        let lv_data_response = ff_data_response.first();
+        ff_data_response.deq();
 
-        let lv_data_response = m_data.mv_response(rg_waymask);
-
-        return unpack(pack(lv_data_response));
+        return lv_data_response;
 
       endmethod: get
 
     endinterface: Get;
+    
+    interface llcache_ca_req = interface Get
+      
+      method ActionValue#(LLCache_CA_request_t#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))) get();
 
+        let lv_ca_request = ff_llcache_ca_request.first();
+        ff_llcache_ca_request.deq();
+
+        return unpack(pack(lv_ca_request));
+        
+      endmethod: get 
+    
+    endinterface: Get;
   endmodule: mkLLCache
 
 endpackage: LLCache

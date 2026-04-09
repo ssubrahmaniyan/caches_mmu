@@ -4,7 +4,7 @@ include Makefile.inc
 
 BSVBUILDDIR:=./build/
 VERILOGDIR:=./verilog/
-BSVINCDIR:= .:%/Libraries:$(DIR)
+BSVINCDIR:= .:%/Libraries:$(DIR):../defs
 BSVOUTDIR:=./bin
 BSC_DIR:=$(shell which bsc)
 BSC_VDIR:=$(subst bin/bsc,bin/,${BSC_DIR})../lib/Verilog
