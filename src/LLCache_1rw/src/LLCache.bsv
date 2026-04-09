@@ -23,7 +23,7 @@ package LLCache;
 
     interface Put#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores)))
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores))
       ca_llcache_req;
 
     /*
@@ -33,7 +33,7 @@ package LLCache;
 
     interface Get#(
       LLCache_CA_response_t
-      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores)))
+      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, `ncores))
       llcache_ca_resp;
 
     /*
@@ -49,14 +49,18 @@ package LLCache;
   endinterface: Ifc_LLCache
 
   (* synthesize *)
-  module mkLLCache(Ifc_LLCache);
-
+  module mkLLCache(Ifc_LLCache)
+    provisos(
+      // Numeric Alias for better readability
+      NumAlias#(TMul#(`dblocks, TMul#(`dwords, 8)), dataWidth),
+      NumAlias#(`paddr, paddrWidth)
+    );
     /* FIFOs to interact with the interface of the module */
     
     /*doc: FIFO: This fifo stores the request from the communication assist*/
     FIFOF#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores))
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores)
     ) ff_ca_llcache_request <- mkSizedFIFOF(2);
 
     /*
@@ -85,7 +89,7 @@ package LLCache;
     */
 
     FIFOF#(
-      LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))     
+      LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, `ncores)     
     ) ff_data_response <- mkSizedFIFOF(2);
 
 // TODO: change dwords to llc
@@ -98,6 +102,7 @@ package LLCache;
       `dsets  ,
       `paddr
     ) m_tag <- mkLLCache_tagram;
+
     // Instance of the data array
     Ifc_dataram1rw#(
       TMul#(`dwords, `dblocks),
@@ -105,6 +110,15 @@ package LLCache;
       `dways                  ,
       `paddr
     ) m_data <- mkLLCache_dataram;
+
+    // Instance of the Miss Handling Buffer
+    Ifc_LLCache_mhb#(
+      `mhbsize,
+      dataWidth,
+      `ncores,
+      paddrWidth
+    ) m_mhb <- mkLLCache_mhb;
+
 
     /*
       doc: rule: rl_hit_or_miss
@@ -114,31 +128,47 @@ package LLCache;
             Miss: TODO
     */
 
-    rule rl_hit_or_miss;
+    let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
+    let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
+    //TODO: add assertion to check that waymask does not have more than one hits.
 
-      let lv_request = ff_ca_llcache_request.first();
-      let lv_waymask = m_tag.mv_tagmatch_response(lv_request.address);
+    rule rl_hit(is_hit);
+      // retrive and dequeue the request
+      let lv_request <- toGet(ff_ca_llcache_request).get();
 
-      if (pack(lv_waymask) != 0) begin // cache hit logic
-          ff_ca_llcache_request.deq();
-          
-          let lv_data_response = m_data.mv_response(lv_waymask);
-          
-          let resp = LLCache_CA_response_t {
-              data: pack(lv_data_response),
-              address: lv_request.address,
-              hart_id: lv_request.hart_id
-          };
+      // get data using waymask
+      let lv_data_response = m_data.mv_response(waymask);
 
-          ff_data_response.enq(resp);
-      end else begin // cache miss logic
-          // TODO: handle miss logic
-      end
+      let resp = LLCache_CA_response_t {
+          data: pack(lv_data_response),
+          address: lv_request.address,
+          hart_id: lv_request.hart_id
+      };
 
-    endrule: rl_hit_or_miss
+      // enqueue the response to the response FIFO
+      ff_data_response.enq(resp);
+    endrule: rl_hit
+
+    rule rl_miss(!is_hit);
+      // retrieve and dequeue the request
+      let lv_request <- toGet(ff_ca_llcache_request).get();
+
+      // allocate an entry in the MHB for this miss
+      m_mhb.ma_allocate_mhb_entry(
+        lv_request.address,
+        lv_request.hart_id
+      );
+
+      // enqeue a request to the CA for the data on a miss.
+      ff_llcache_ca_request.enq(LLCache_CA_request_t{
+        address: lv_request.address,
+        access: AccessType_t'(Read),
+        data: 0 // don't care about data on a read
+      });
+
+    endrule: rl_miss
 
     interface Put ca_llcache_req;
-
       method Action put(request);
 
         ff_ca_llcache_request.enq(request);
@@ -157,21 +187,20 @@ package LLCache;
         ); 
 
       endmethod: put
+  endinterface
 
-    endinterface
+  // Exposes the internal response FIFO as a 
+  // standardized Get interface using the toGet transformer.
+  // The top value of the response FIFO is returned on a get,
+  // and the FIFO is dequeued.
+  interface Get llcache_ca_resp = toGet(ff_data_response);
+  
+  // Exposes the internal response FIFO as a 
+  // standardized Get interface using the toGet transformer.
+  // The top value of the response FIFO is returned on a get,
+  // and the FIFO is dequeued.
+  interface Get llcache_ca_req  = toGet(ff_llcache_ca_request);
 
-    // Exposes the internal response FIFO as a 
-    // standardized Get interface using the toGet transformer.
-    // The top value of the response FIFO is returned on a get,
-    // and the FIFO is dequeued.
-    interface Get llcache_ca_resp = toGet(ff_data_response);
-    
-    // Exposes the internal response FIFO as a 
-    // standardized Get interface using the toGet transformer.
-    // The top value of the response FIFO is returned on a get,
-    // and the FIFO is dequeued.
-    interface Get llcache_ca_req  = toGet(ff_llcache_ca_request);
-
-  endmodule: mkLLCache
+endmodule: mkLLCache
 
 endpackage: LLCache

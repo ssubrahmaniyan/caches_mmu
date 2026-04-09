@@ -1,1 +1,2 @@
 `define ncores 4
+`define mhbsize 10
