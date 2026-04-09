@@ -137,11 +137,9 @@ package LLCache;
 
     endrule: rl_hit_or_miss
 
-    interface ca_llcache_req = interface Put
+    interface Put ca_llcache_req;
 
-      method Action put(CA_LLCache_request_t#(
-          `paddr, TMul#(`dblocks, TMul#(`dwords, 8)), TLog#(`ncores))
-          request);
+      method Action put(request);
 
         ff_ca_llcache_request.enq(request);
 
@@ -153,40 +151,27 @@ package LLCache;
 
         m_data.ma_request(
           AccessType_t'(Read) ,
-          ?                 , // don't care about wayid on a read
-          request.address   ,
-          ?                   // don't care about data on a read
+          ?                   , // don't care about wayid on a read
+          request.address     ,
+          ?                     // don't care about data on a read
         ); 
 
       endmethod: put
 
-    endinterface: Put;
+    endinterface
 
-    interface llcache_ca_resp = interface Get
-
-      method ActionValue#(LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))) get();
-      
-        let lv_data_response = ff_data_response.first();
-        ff_data_response.deq();
-
-        return lv_data_response;
-
-      endmethod: get
-
-    endinterface: Get;
+    // Exposes the internal response FIFO as a 
+    // standardized Get interface using the toGet transformer.
+    // The top value of the response FIFO is returned on a get,
+    // and the FIFO is dequeued.
+    interface Get llcache_ca_resp = toGet(ff_data_response);
     
-    interface llcache_ca_req = interface Get
-      
-      method ActionValue#(LLCache_CA_request_t#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))) get();
+    // Exposes the internal response FIFO as a 
+    // standardized Get interface using the toGet transformer.
+    // The top value of the response FIFO is returned on a get,
+    // and the FIFO is dequeued.
+    interface Get llcache_ca_req  = toGet(ff_llcache_ca_request);
 
-        let lv_ca_request = ff_llcache_ca_request.first();
-        ff_llcache_ca_request.deq();
-
-        return unpack(pack(lv_ca_request));
-        
-      endmethod: get 
-    
-    endinterface: Get;
   endmodule: mkLLCache
 
 endpackage: LLCache

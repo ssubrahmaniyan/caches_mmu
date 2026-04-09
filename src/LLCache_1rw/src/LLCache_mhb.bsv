@@ -114,6 +114,6 @@ package LLCache_mhb;
       rg_mhb_head <= rg_mhb_head + 1;
       return lv_entry;
     endmethod: mav_mhb_release
-  endmodule: mkLLCache_mhb_entry
+  endmodule: mkLLCache_mhb
 
 endpackage: LLCache_mhb
