@@ -46,6 +46,16 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
       llcache_ca_req; 
 
+    /*
+      doc: subinterface: ca_llcache_response
+      desc: Interface to put responses from memory to fill into cache lines
+    */
+
+    interface Put#(
+      CA_LLCache_response_t
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores))
+      ca_llcache_resp;
+
   endinterface: Ifc_LLCache
 
   (* synthesize *)
@@ -73,7 +83,7 @@ package LLCache;
     ) ff_llcache_ca_response <- mkSizedFIFOF(2);
 
     /*
-      doc: FIOF: ff_llcache_ca_request
+      doc: FIFO: ff_llcache_ca_request
       desc: Holds outgoing requests to the communication assist
     */
     
@@ -82,6 +92,16 @@ package LLCache;
       #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
     ) ff_llcache_ca_request <- mkSizedFIFOF(2);
 
+    /*
+      doc: FIFO: ff_ca_llcache_response
+      desc: Holds incoming memory fill responses
+    */
+
+    FIFOF#(
+      CA_LLCache_response_t
+      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores)
+    ) ff_ca_llcache_response <- mkSizedFIFOF(2);
+   
     /*
       doc: FIFO: ff_data_response
       desc: Holds the data response for the read method to access. Useful to handle 
@@ -118,15 +138,6 @@ package LLCache;
       `ncores,
       paddrWidth
     ) m_mhb <- mkLLCache_mhb;
-
-
-    /*
-      doc: rule: rl_hit_or_miss
-      desc: checks if the line hit in the LLC.
-            Hit: the waymask is used to choose the 
-            correct way from the dataram and the response is enqueued in the buffer.
-            Miss: TODO
-    */
 
     let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
     let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
@@ -168,6 +179,39 @@ package LLCache;
 
     endrule: rl_miss
 
+    /*
+      doc: rule: fill_mhb
+      desc: dequeues entry from the response buffer and updates the mhb
+    */
+    rule fill_mhb(!m_mhb.mv_mhb_empty() && ff_ca_llcache_response.notEmpty());
+
+      let lv_response = ff_ca_llcache_response.first();
+      ff_ca_llcache_response.deq();
+
+      // TODO: add assertion for fills being in same order as requests
+      m_mhb.ma_update_mhb_entry(lv_response.data);
+
+    endrule: fill_mhb
+    
+    rule update_cache(m_mhb.mv_mhb_full());
+      // TODO: make update controlled on cache status
+      // TODO: ensure data is also sent to apt hart
+      let lv_entry <- m_mhb.mav_mhb_release();
+      
+      m_tag.ma_request(
+        AccessType_t'(Write),
+        lv_entry.address,
+        unpack('0) // TODO: choose way aptly
+      );
+
+      m_data.ma_request(
+        AccessType_t'(Write),
+        unpack('0), // TODO: choose way aptly
+        lv_entry.address,
+        lv_entry.data
+      );
+    endrule: update_cache
+    
     interface Put ca_llcache_req;
       method Action put(request);
 
@@ -200,6 +244,8 @@ package LLCache;
   // The top value of the response FIFO is returned on a get,
   // and the FIFO is dequeued.
   interface Get llcache_ca_req  = toGet(ff_llcache_ca_request);
+
+  interface Put ca_llcache_resp = toPut(ff_ca_llcache_response);
 
 endmodule: mkLLCache
 

@@ -15,6 +15,16 @@ package LLCache_types;
     numeric type ncores) 
   deriving (Bits, Eq);
 
+  typedef struct {
+    Bit#(addr_width)    address;
+    Bit#(data_width)    data;
+    Bit#(TLog#(ncores)) hart_id;
+  } CA_LLCache_response_t 
+  #(numeric type addr_width,
+    numeric type data_width,
+    numeric type ncores)
+  deriving (Bits, Eq);
+
   typedef struct{
     Bit#(data_width)    data;
     Bit#(addr_width)    address;
