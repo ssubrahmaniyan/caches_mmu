@@ -1,2 +1,6 @@
 `define ncores 4
 `define mhbsize 10
+`define llcwords 8
+`define llcblocks 8
+`define llcways 8
+`define llcsets 64

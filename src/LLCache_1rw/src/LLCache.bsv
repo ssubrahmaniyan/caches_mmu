@@ -23,7 +23,7 @@ package LLCache;
 
     interface Put#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores))
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8)), `ncores))
       ca_llcache_req;
 
     /*
@@ -33,7 +33,7 @@ package LLCache;
 
     interface Get#(
       LLCache_CA_response_t
-      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, `ncores))
+      #(TMul#(`llcblocks, TMul#(`llcwords, 8)), `paddr, `ncores))
       llcache_ca_resp;
 
     /*
@@ -43,7 +43,7 @@ package LLCache;
 
     interface Get#(
       LLCache_CA_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))))
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8))))
       llcache_ca_req; 
 
     /*
@@ -53,7 +53,7 @@ package LLCache;
 
     interface Put#(
       CA_LLCache_response_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores))
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8)), `ncores))
       ca_llcache_resp;
 
   endinterface: Ifc_LLCache
@@ -62,7 +62,7 @@ package LLCache;
   module mkLLCache(Ifc_LLCache)
     provisos(
       // Numeric Alias for better readability
-      NumAlias#(TMul#(`dblocks, TMul#(`dwords, 8)), dataWidth),
+      NumAlias#(TMul#(`llcblocks, TMul#(`llcwords, 8)), dataWidth),
       NumAlias#(`paddr, paddrWidth)
     );
     /* FIFOs to interact with the interface of the module */
@@ -70,7 +70,7 @@ package LLCache;
     /*doc: FIFO: This fifo stores the request from the communication assist*/
     FIFOF#(
       CA_LLCache_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores)
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8)), `ncores)
     ) ff_ca_llcache_request <- mkSizedFIFOF(2);
 
     /*
@@ -79,7 +79,7 @@ package LLCache;
     */
     FIFOF#(
       LLCache_CA_response_t
-      #(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, TLog#(`ncores))
+      #(TMul#(`llcblocks, TMul#(`llcwords, 8)), `paddr, TLog#(`ncores))
     ) ff_llcache_ca_response <- mkSizedFIFOF(2);
 
     /*
@@ -89,7 +89,7 @@ package LLCache;
     
     FIFOF#(
       LLCache_CA_request_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)))
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8)))
     ) ff_llcache_ca_request <- mkSizedFIFOF(2);
 
     /*
@@ -99,7 +99,7 @@ package LLCache;
 
     FIFOF#(
       CA_LLCache_response_t
-      #(`paddr, TMul#(`dblocks, TMul#(`dwords, 8)), `ncores)
+      #(`paddr, TMul#(`llcblocks, TMul#(`llcwords, 8)), `ncores)
     ) ff_ca_llcache_response <- mkSizedFIFOF(2);
    
     /*
@@ -109,25 +109,24 @@ package LLCache;
     */
 
     FIFOF#(
-      LLCache_CA_response_t#(TMul#(`dblocks, TMul#(`dwords, 8)), `paddr, `ncores)     
+      LLCache_CA_response_t#(TMul#(`llcblocks, TMul#(`llcwords, 8)), `paddr, `ncores)     
     ) ff_data_response <- mkSizedFIFOF(2);
 
-// TODO: change dwords to llc
     // State Elements
     // This module is the tag array.
     Ifc_tagram1rw#(
-      `dwords ,
-      `dblocks,
-      `dways  ,
-      `dsets  ,
+      `llcwords ,
+      `llcblocks,
+      `llcways  ,
+      `llcsets  ,
       `paddr
     ) m_tag <- mkLLCache_tagram;
 
     // Instance of the data array
     Ifc_dataram1rw#(
-      TMul#(`dwords, `dblocks),
-      `dsets                  ,
-      `dways                  ,
+      TMul#(`llcwords, `llcblocks),
+      `llcsets                  ,
+      `llcways                  ,
       `paddr
     ) m_data <- mkLLCache_dataram;
 
