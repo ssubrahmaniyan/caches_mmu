@@ -76,6 +76,8 @@ package LLCache_replacement;
           // If the current node is 0, we go to the left child,
           // otherwise we go to the right child.
           // next index is node * 2 + 1 + tree[node]
+          // return (next_node, tree[node]) tree[node] is the bit at the 
+          // current node, which will be used to construct the victim way index.
          return tuple2((node << 1) + 1 + zeroExtend(tree[node]), tree[node]);
         endfunction
 
@@ -85,11 +87,11 @@ package LLCache_replacement;
           1'b1 : begin
             // If all ways are valid, we need to traverse the tree and
             // find pLRU victim.
-            // MapAccumL traverses the tree and updates the bits along the way. 
-            // It returns the index of the way to be replaced and the updated tree.
+            // MapAccumL traverses the tree and updates the node along the way. 
+            // It returns the index of the way to be replaced and the final node.
             // Threads a state (accumulator) from left-to-right while simultaneously 
             // mapping each element.
-            match {.*, .victim} = mapAccumL(
+            match {.*, .victim} = mapAccumL( // throw away final node, and use victim
              traverse,
              0, genVector()
             );
@@ -115,25 +117,37 @@ package LLCache_replacement;
         );
 
         let tree = v_count[index];
+        let v_waybits = valueOf(TLog#(nways));
 
         function Tuple2#(Bit#(TLog#(nways)), Bit#(TSub#(nways,1))) 
           update_step (
             Tuple2#(Bit#(TLog#(nways)), Bit#(TSub#(nways,1))) acc, 
             Integer i);
+            // the accumulator contains the corrent node 
+            // and the entire tree
 
             match {.node, .t} = acc;
-            Bit#(1) dir       = accessed_way[i];
+
+            // we go left or right depending on the accessed way
+            // if the accessed way is in the left subtree, we set the current node to 1
+
+            // we need to index from MHB side of the tree.
+            Bit#(1) dir       = accessed_way[v_waybits - 1 - i];
             t[node] = ~dir;
             let next_node = (node << 1) + 1 + zeroExtend(dir);
 
             return tuple2(next_node, t);
         endfunction: update_step
 
+        // foldl takes an accumualator (node, tree) and applies
+        // the function update_step for each level of the tree. 
+        // The final_tree is then returned.
         match {.*, .final_tree} = foldl(
           update_step,
           tuple2(0, tree),
           Vector#(TLog#(nways), Integer)'(genVector())
         );
+
         v_count[index] <= final_tree;
       endmethod: ma_update_set
 
