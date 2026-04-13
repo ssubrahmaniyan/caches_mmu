@@ -67,6 +67,7 @@ package LLCache_replacement;
       );
 
         let tree = v_count[index];
+        let v_ways = valueOf(nways);
 
         function Tuple2#(Bit#(TLog#(nways)), Bit#(1)) 
           traverse(Bit#(TLog#(nways)) node, Integer _i);
@@ -78,16 +79,32 @@ package LLCache_replacement;
          return tuple2((node << 1) + 1 + zeroExtend(tree[node]), tree[node]);
         endfunction
 
-        // MapAccumL traverses the tree and updates the bits along the way. 
-        // It returns the index of the way to be replaced and the updated tree.
-        // Threads a state (accumulator) from left-to-right while simultaneously 
-        // mapping each element.
-        match {.*, .victim_bits} = mapAccumL(
-         traverse,
-         0, genVector()
-        );
 
-        return pack(victim_bits);
+        Bit#(TLog#(nways)) victim_bits;
+        case (reduceAnd(valid)) matches
+          1'b1 : begin
+            // If all ways are valid, we need to traverse the tree and
+            // find pLRU victim.
+            // MapAccumL traverses the tree and updates the bits along the way. 
+            // It returns the index of the way to be replaced and the updated tree.
+            // Threads a state (accumulator) from left-to-right while simultaneously 
+            // mapping each element.
+            match {.*, .victim} = mapAccumL(
+             traverse,
+             0, genVector()
+            );
+            victim_bits = pack(victim);
+          end
+          1'b0 : begin
+            for (Integer i = 0; i < fromInteger(v_ways); i = i + 1) begin
+              if (valid[i] == 0) begin
+                victim_bits = fromInteger(i);
+              end
+            end
+          end
+        endcase
+
+        return victim_bits;
 
       endmethod: mav_line_replace
 
