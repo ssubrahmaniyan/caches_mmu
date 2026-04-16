@@ -26,12 +26,15 @@ package LLCache_tb;
     Reg#(UInt#(16)) rg_cycles <- mkReg(0);
 
     Reg#(Bool) rg_first_miss_seen <- mkReg(False);
-    Reg#(Bool) rg_second_miss_seen <- mkReg(False);
-    Reg#(Bool) rg_llc_resp_seen <- mkReg(False);
+    Reg#(UInt#(2)) rg_resp_count <- mkReg(0);
 
-    Reg#(Bit#(`paddr)) rg_resp_addr <- mkReg(0);
-    Reg#(Bit#(TLog#(`ncores))) rg_resp_hart <- mkReg(0);
-    Reg#(Bit#(LLCLineBits)) rg_resp_data <- mkReg(0);
+    Reg#(Bit#(`paddr)) rg_first_resp_addr <- mkReg(0);
+    Reg#(Bit#(TLog#(`ncores))) rg_first_resp_hart <- mkReg(0);
+    Reg#(Bit#(LLCLineBits)) rg_first_resp_data <- mkReg(0);
+
+    Reg#(Bit#(`paddr)) rg_second_resp_addr <- mkReg(0);
+    Reg#(Bit#(TLog#(`ncores))) rg_second_resp_hart <- mkReg(0);
+    Reg#(Bit#(LLCLineBits)) rg_second_resp_data <- mkReg(0);
 
     Ifc_LLCache dut <- mkLLCache;
 
@@ -85,11 +88,12 @@ package LLCache_tb;
         $finish;
       end
 
-      if (rg_test_state < 3) begin
+      if (!rg_first_miss_seen) begin
         rg_first_miss_seen <= True;
       end
       else begin
-        rg_second_miss_seen <= True;
+        $display("%0t: [TB][FAIL] Unexpected second miss request", $time);
+        $finish;
       end
     endrule
 
@@ -99,12 +103,22 @@ package LLCache_tb;
       $display("%0t: [LLC] Received Cache Response! Data: %h, Address: %h, Hart: %d", 
                 $time, resp.data, resp.address, resp.hart_id);
 
-      if (rg_test_state >= 3) begin
-        rg_llc_resp_seen <= True;
-        rg_resp_addr <= resp.address;
-        rg_resp_hart <= resp.hart_id;
-        rg_resp_data <= resp.data;
+      if (rg_resp_count == 0) begin
+        rg_first_resp_addr <= resp.address;
+        rg_first_resp_hart <= resp.hart_id;
+        rg_first_resp_data <= resp.data;
       end
+      else if (rg_resp_count == 1) begin
+        rg_second_resp_addr <= resp.address;
+        rg_second_resp_hart <= resp.hart_id;
+        rg_second_resp_data <= resp.data;
+      end
+      else begin
+        $display("%0t: [TB][FAIL] Unexpected extra cache response", $time);
+        $finish;
+      end
+
+      rg_resp_count <= rg_resp_count + 1;
     endrule
 
     rule state_0_start(rg_test_state == 0);
@@ -125,31 +139,49 @@ package LLCache_tb;
       rg_test_state <= 4'd3;
     endrule
 
-    rule state_3_send_second_read(rg_test_state == 4'd3);
-      dut.ca_llcache_req.put(fn_mk_read_req(fn_test_addr(), fn_test_hart()));
-      $display("%0t: [TB] Sent second read request to %h (expected hit)", $time, fn_test_addr());
+    rule state_3_wait_fill_response(rg_test_state == 4'd3 && rg_resp_count >= 1);
+      if (rg_first_resp_addr != fn_test_addr()) begin
+        $display("%0t: [TB][FAIL] Fill response address mismatch. Got %h Expected %h",
+                 $time, rg_first_resp_addr, fn_test_addr());
+        $finish;
+      end
+      if (rg_first_resp_hart != fn_test_hart()) begin
+        $display("%0t: [TB][FAIL] Fill response hart mismatch. Got %0d Expected %0d",
+                 $time, rg_first_resp_hart, fn_test_hart());
+        $finish;
+      end
+      if (rg_first_resp_data != fn_fill_data()) begin
+        $display("%0t: [TB][FAIL] Fill response data mismatch. Got %h Expected %h",
+                 $time, rg_first_resp_data, fn_fill_data());
+        $finish;
+      end
+      $display("%0t: [TB] Observed returned fill data before issuing next request", $time);
       rg_test_state <= 4'd4;
     endrule
 
-    rule state_4_fail_on_second_miss(rg_test_state == 4'd4 && rg_second_miss_seen);
-      $display("%0t: [TB][FAIL] Second read still generated a miss request", $time);
-      $finish;
+    rule state_4_send_second_read(rg_test_state == 4'd4);
+      dut.ca_llcache_req.put(fn_mk_read_req(fn_test_addr(), fn_test_hart()));
+      $display("%0t: [TB] Sent second read request to %h (expected hit)", $time, fn_test_addr());
+      rg_test_state <= 4'd5;
     endrule
 
-    rule state_4_check_hit_response(rg_test_state == 4'd4 && rg_llc_resp_seen && !rg_second_miss_seen);
-      if (rg_resp_addr != fn_test_addr()) begin
-        $display("%0t: [TB][FAIL] Response address mismatch. Got %h Expected %h", $time, rg_resp_addr, fn_test_addr());
+    rule state_5_wait_second_response(rg_test_state == 4'd5 && rg_resp_count >= 2);
+      if (rg_second_resp_addr != fn_test_addr()) begin
+        $display("%0t: [TB][FAIL] Hit response address mismatch. Got %h Expected %h",
+                 $time, rg_second_resp_addr, fn_test_addr());
         $finish;
       end
-      if (rg_resp_hart != fn_test_hart()) begin
-        $display("%0t: [TB][FAIL] Response hart mismatch. Got %0d Expected %0d", $time, rg_resp_hart, fn_test_hart());
+      if (rg_second_resp_hart != fn_test_hart()) begin
+        $display("%0t: [TB][FAIL] Hit response hart mismatch. Got %0d Expected %0d",
+                 $time, rg_second_resp_hart, fn_test_hart());
         $finish;
       end
-      if (rg_resp_data != fn_fill_data()) begin
-        $display("%0t: [TB][FAIL] Response data mismatch. Got %h Expected %h", $time, rg_resp_data, fn_fill_data());
+      if (rg_second_resp_data != fn_fill_data()) begin
+        $display("%0t: [TB][FAIL] Hit response data mismatch. Got %h Expected %h",
+                 $time, rg_second_resp_data, fn_fill_data());
         $finish;
       end
-      $display("%0t: [TB][PASS] LLCache miss->fill->hit flow verified", $time);
+      $display("%0t: [TB][PASS] LLCache miss->fill->response->hit flow verified", $time);
       $finish;
     endrule
 

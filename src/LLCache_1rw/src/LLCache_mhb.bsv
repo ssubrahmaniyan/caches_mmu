@@ -16,14 +16,14 @@ package LLCache_mhb;
 
     (*always_ready*)
     method Bool mv_mhb_empty();
-
+  
     /*
       doc: method: ma_allocate_mhb_entry
-      description: Allocates an entry in the MHB for the given address and coreid.
+      description: Allocates an entry in the MHB for the given address and hart_id.
     */
     method Action ma_allocate_mhb_entry(
       Bit#(paddr) address,
-      Bit#(TLog#(ncores)) coreid);
+      Bit#(TLog#(ncores)) hart_id);
 
     /*
       doc: method: ma_update_mhb_entry
@@ -89,13 +89,14 @@ package LLCache_mhb;
 
     method Action ma_allocate_mhb_entry(
       Bit#(paddr) address,
-      Bit#(TLog#(ncores)) coreid) if (!is_mhb_full());
+      Bit#(TLog#(ncores)) hart_id) if (!is_mhb_full());
 
       v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
         address : address,
         data    : 0, 
-        coreid  : coreid,
-        valid   : True
+        hart_id : hart_id,
+        valid   : True,
+        filled  : False
       };
       rg_mhb_tail <= rg_mhb_tail + 1;
 
@@ -103,14 +104,26 @@ package LLCache_mhb;
 
     method Action ma_update_mhb_entry(
       Bit#(datawidth) data);
-      v_mhb[rg_mhb_current_fill].data <= data;
+      
+      let lv_entry = v_mhb[rg_mhb_current_fill];
+      lv_entry.data = data;
+      lv_entry.filled = True;
+
+      v_mhb[rg_mhb_current_fill] <= lv_entry;
       rg_mhb_current_fill <= rg_mhb_current_fill + 1;
     endmethod: ma_update_mhb_entry
 
     method ActionValue#(LLCache_mhb_entry#(paddr, datawidth, ncores))
-      mav_mhb_release() if (v_mhb[rg_mhb_head].valid);
+      mav_mhb_release() if (v_mhb[rg_mhb_head].valid && v_mhb[rg_mhb_head].filled);
       LLCache_mhb_entry#(paddr, datawidth, ncores) lv_entry = v_mhb[rg_mhb_head];
-      v_mhb[rg_mhb_head].valid <= False;
+
+      v_mhb[rg_mhb_head] <= LLCache_mhb_entry{
+        address : 0,
+        data    : 0,
+        hart_id : 0,
+        valid   : False,
+        filled  : False
+      };
       rg_mhb_head <= rg_mhb_head + 1;
       return lv_entry;
     endmethod: mav_mhb_release

@@ -141,7 +141,9 @@ package LLCache;
     let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
     let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
     //TODO: add assertion to check that waymask does not have more than one hits.
-
+    
+    (*descending_urgency = "rl_update_cache, rl_hit, rl_miss"*)
+    // the update cache rule will respond with data in case of a miss flow
     rule rl_hit(is_hit);
       // retrive and dequeue the request
       let lv_request <- toGet(ff_ca_llcache_request).get();
@@ -169,7 +171,7 @@ package LLCache;
         lv_request.hart_id
       );
 
-      // enqeue a request to the CA for the data on a miss.
+      // enqueue a request to the CA for the data on a miss.
       ff_llcache_ca_request.enq(LLCache_CA_request_t{
         address: lv_request.address,
         access: AccessType_t'(Read),
@@ -182,7 +184,7 @@ package LLCache;
       doc: rule: fill_mhb
       desc: dequeues entry from the response buffer and updates the mhb
     */
-    rule fill_mhb(!m_mhb.mv_mhb_empty() && ff_ca_llcache_response.notEmpty());
+    rule rl_fill_mhb(!m_mhb.mv_mhb_empty() && ff_ca_llcache_response.notEmpty());
 
       let lv_response = ff_ca_llcache_response.first();
       ff_ca_llcache_response.deq();
@@ -190,13 +192,13 @@ package LLCache;
       // TODO: add assertion for fills being in same order as requests
       m_mhb.ma_update_mhb_entry(lv_response.data);
 
-    endrule: fill_mhb
+    endrule: rl_fill_mhb
     
-    rule update_cache(m_mhb.mv_mhb_full());
+    rule rl_update_cache;
       // TODO: make update controlled on cache status
       // TODO: ensure data is also sent to apt hart
       let lv_entry <- m_mhb.mav_mhb_release();
-      
+      $display("fired");
       m_tag.ma_request(
         AccessType_t'(Write),
         lv_entry.address,
@@ -209,7 +211,18 @@ package LLCache;
         lv_entry.address,
         lv_entry.data
       );
-    endrule: update_cache
+
+      // respond to CA with the data simultaneously
+
+      let lv_resp = LLCache_CA_response_t {
+          data: lv_entry.data,
+          address: lv_entry.address,
+          hart_id: lv_entry.hart_id
+      };
+
+      ff_data_response.enq(lv_resp);
+
+    endrule: rl_update_cache
     
     interface Put ca_llcache_req;
       method Action put(request);
