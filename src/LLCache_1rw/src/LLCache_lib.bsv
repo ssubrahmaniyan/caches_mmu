@@ -3,6 +3,16 @@ package LLCache_lib;
   import bram_1rw       :: *;
   import LLCache_types  :: *;
 
+  function Bit#(TLog#(nways)) f_onehot_to_index(Bit#(nways) oh_mask)
+    provisos(
+      Add#(a__, TLog#(nways), TLog#(TAdd#(1, nways)))
+    );
+
+      // countZerosLSB returns a UInt, so we pack it to Bit#() and
+      //truncate it to the exact width
+      return truncate(pack(countZerosLSB(oh_mask)));
+  endfunction
+
   interface Ifc_mem_1rw#(
     numeric type n_entries  ,
     numeric type data_width ,

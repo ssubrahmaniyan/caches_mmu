@@ -82,7 +82,7 @@ package LLCache_replacement;
         endfunction
 
 
-        Bit#(TLog#(nways)) victim_bits;
+        Bit#(TLog#(nways)) victim_bits = 0;
         case (reduceAnd(valid)) matches
           1'b1 : begin
             // If all ways are valid, we need to traverse the tree and

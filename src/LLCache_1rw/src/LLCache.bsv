@@ -5,12 +5,15 @@ package LLCache;
   //Library imports
   import GetPut ::  *;
   import FIFOF  ::  *;
+  import Vector  ::  *;
 
   // Project Imports
-  import LLCache_types    ::*;
-  import LLCache_tagram   ::*;
-  import LLCache_dataram  ::*;
-  import LLCache_mhb      ::*;
+  import LLCache_types        :: *;
+  import LLCache_tagram       :: *;
+  import LLCache_dataram      :: *;
+  import LLCache_mhb          :: *;
+  import LLCache_replacement  :: *;
+
   `include "LLCache.defines"
  // TODO: add doc
   interface Ifc_LLCache;
@@ -61,6 +64,7 @@ package LLCache;
   (* synthesize *)
   module mkLLCache(Ifc_LLCache)
     provisos(
+      Log#(`llcsets, set_bits),
       // Numeric Alias for better readability
       NumAlias#(TMul#(`llcblocks, TMul#(`llcwords, 8)), dataWidth),
       NumAlias#(`paddr, paddrWidth)
@@ -121,8 +125,7 @@ package LLCache;
       `llcsets  ,
       `paddr
     ) m_tag <- mkLLCache_tagram;
-
-    // Instance of the data array
+// Instance of the data array
     Ifc_dataram1rw#(
       TMul#(`llcwords, `llcblocks),
       `llcsets                  ,
@@ -137,6 +140,15 @@ package LLCache;
       `ncores,
       paddrWidth
     ) m_mhb <- mkLLCache_mhb;
+
+    // Instance of replacement policy module
+    Ifc_replace#(
+      `llcsets,
+      `llcways
+    ) m_replace <- mkLLCache_replacement;
+
+    // valid bits for each way in each set
+    Vector#(`llcsets, Reg#(Bit#(`llcways))) v_valid <- replicateM(mkReg(0)); 
 
     let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
     let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
@@ -156,6 +168,13 @@ package LLCache;
           address: lv_request.address,
           hart_id: lv_request.hart_id
       };
+
+
+      // the replacement module needs to be updated on every access
+      m_replace.ma_update_set(
+        truncateLSB(lv_request.address),
+        waymask.waymask
+      );
 
       // enqueue the response to the response FIFO
       ff_data_response.enq(resp);
@@ -199,15 +218,28 @@ package LLCache;
       // TODO: ensure data is also sent to apt hart
       let lv_entry <- m_mhb.mav_mhb_release();
       $display("fired");
+      Bit#(set_bits) lv_index = truncateLSB(lv_entry.address);
+
+      let lv_wayidx <- m_replace.mav_line_replace(
+        lv_index,
+        v_valid[lv_index]
+      );
+
+      Bit#(`llcways) lv_waymask = (1 << lv_wayidx);
+
+      // update valid bit for the way being updated
+      v_valid[lv_index] <= v_valid[lv_index] | lv_waymask;
+
+
       m_tag.ma_request(
         AccessType_t'(Write),
         lv_entry.address,
-        unpack('0) // TODO: choose way aptly
+        lv_wayidx
       );
 
       m_data.ma_request(
         AccessType_t'(Write),
-        unpack('0), // TODO: choose way aptly
+        lv_wayidx,
         lv_entry.address,
         lv_entry.data
       );
