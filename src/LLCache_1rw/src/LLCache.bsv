@@ -13,6 +13,7 @@ package LLCache;
   import LLCache_dataram      :: *;
   import LLCache_mhb          :: *;
   import LLCache_replacement  :: *;
+  import LLCache_lib          :: *;
 
   `include "LLCache.defines"
  // TODO: add doc
@@ -249,7 +250,7 @@ package LLCache;
       let lv_resp = LLCache_CA_response_t {
           data: lv_entry.data,
           address: lv_entry.address,
-          hart_id: lv_entry.hart_id
+          hart_id: f_onehot_to_index(lv_entry.hart_id)
       };
 
       ff_data_response.enq(lv_resp);

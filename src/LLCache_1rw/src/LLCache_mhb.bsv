@@ -5,6 +5,9 @@ package LLCache_mhb;
   import LLCache_types  :: *;
   import DefaultValue   :: *;
 
+  // project imports
+  import LLCache_lib    :: *;
+
   interface     Ifc_LLCache_mhb#(
     numeric type mhbsize,
     numeric type datawidth,
@@ -47,7 +50,10 @@ package LLCache_mhb;
       mhbsize,
       datawidth,
       ncores,
-      paddr));
+      paddr))
+    provisos(
+      Add#(1, a__, ncores)
+    );
 
 
     /*
@@ -94,7 +100,7 @@ package LLCache_mhb;
       v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
         address : address,
         data    : 0, 
-        hart_id : hart_id,
+        hart_id : f_index_to_onehot(hart_id),
         valid   : True,
         filled  : False
       };

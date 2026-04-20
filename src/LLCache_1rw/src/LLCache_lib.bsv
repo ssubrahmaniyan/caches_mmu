@@ -3,15 +3,23 @@ package LLCache_lib;
   import bram_1rw       :: *;
   import LLCache_types  :: *;
 
-  function Bit#(TLog#(nways)) f_onehot_to_index(Bit#(nways) oh_mask)
+  function Bit#(TLog#(n)) f_onehot_to_index(Bit#(n) oh_mask)
     provisos(
-      Add#(a__, TLog#(nways), TLog#(TAdd#(1, nways)))
+      Add#(a__, TLog#(n), TLog#(TAdd#(1, n))) // TLog#(n+1) >= TLog#(n)
     );
 
       // countZerosLSB returns a UInt, so we pack it to Bit#() and
       //truncate it to the exact width
       return truncate(pack(countZerosLSB(oh_mask)));
   endfunction
+
+  function Bit#(n) f_index_to_onehot(Bit#(TLog#(n)) index)
+    provisos(
+      Add#(1, a__, n) 
+    );
+    Bit#(n) one = 1;
+    return (one << index);
+  endfunction: f_index_to_onehot
 
   interface Ifc_mem_1rw#(
     numeric type n_entries  ,
