@@ -21,14 +21,6 @@ package LLCache_mhb;
     method Bool mv_mhb_empty();
   
     /*
-      doc: method: ma_allocate_mhb_entry
-      description: Allocates an entry in the MHB for the given address and hart_id.
-    */
-    method Action ma_allocate_mhb_entry(
-      Bit#(paddr) address,
-      Bit#(TLog#(ncores)) hart_id);
-
-    /*
       doc: method: ma_update_mhb_entry
       description: Updates the data field of the current MHB entry being filled.
     */
@@ -42,6 +34,12 @@ package LLCache_mhb;
     method ActionValue#(LLCache_mhb_entry#(paddr, datawidth, ncores))
       mav_mhb_release();
 
+
+    method ActionValue#(MHB_Lookup_Result_t)
+      mav_mhb_manage_miss(
+        Bit#(paddr) address,
+        Bit#(TLog#(ncores)) hart_id
+      );
 
   endinterface: Ifc_LLCache_mhb
 
@@ -93,20 +91,6 @@ package LLCache_mhb;
       return !v_mhb[rg_mhb_head].valid;
     endmethod: mv_mhb_empty
 
-    method Action ma_allocate_mhb_entry(
-      Bit#(paddr) address,
-      Bit#(TLog#(ncores)) hart_id) if (!is_mhb_full());
-
-      v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
-        address : address,
-        data    : 0, 
-        hart_id : f_index_to_onehot(hart_id),
-        valid   : True,
-        filled  : False
-      };
-      rg_mhb_tail <= rg_mhb_tail + 1;
-
-    endmethod: ma_allocate_mhb_entry
 
     method Action ma_update_mhb_entry(
       Bit#(datawidth) data);
@@ -133,6 +117,39 @@ package LLCache_mhb;
       rg_mhb_head <= rg_mhb_head + 1;
       return lv_entry;
     endmethod: mav_mhb_release
+
+    method ActionValue#(MHB_Lookup_Result_t)
+      mav_mhb_manage_miss(
+        Bit#(paddr) address,
+        Bit#(TLog#(ncores)) hart_id
+      );
+
+      function entry_hit(e) = (e.valid && e.address == address);
+
+      let lv_hit_index = findIndex(
+        entry_hit,
+        readVReg(v_mhb)
+      );
+
+      if (lv_hit_index matches tagged Valid .idx) begin
+        // already pending
+        // update hart_id bit vector
+        v_mhb[idx].hart_id <= v_mhb[idx].hart_id | f_index_to_onehot(hart_id);
+        return MHB_Lookup_Result_t'(AlreadyPending);
+      end else begin
+        v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
+          address : address,
+          data    : 0, 
+          hart_id : f_index_to_onehot(hart_id),
+          valid   : True,
+          filled  : False
+        };
+        rg_mhb_tail <= rg_mhb_tail + 1;
+        return MHB_Lookup_Result_t'(NewlyAllocated);
+      end
+      
+    endmethod: mav_mhb_manage_miss
+
   endmodule: mkLLCache_mhb
 
 endpackage: LLCache_mhb

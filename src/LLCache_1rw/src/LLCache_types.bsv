@@ -59,7 +59,7 @@ package LLCache_types;
   typedef struct{
     Bit#(paddr)         address ;
     Bit#(datawidth)     data    ;
-    Bit#(ncores) hart_id ;
+    Bit#(ncores)        hart_id ;
     Bool                valid   ;
     Bool                filled  ;
   } LLCache_mhb_entry
@@ -67,5 +67,11 @@ package LLCache_types;
     numeric type datawidth,
     numeric type ncores)
   deriving (Bits, Eq);
+
+  typedef enum{
+    AlreadyPending,
+    NewlyAllocated
+  } MHB_Lookup_Result_t
+    deriving (Bits, Eq);
   
 endpackage: LLCache_types

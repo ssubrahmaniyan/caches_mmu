@@ -185,18 +185,20 @@ package LLCache;
       // retrieve and dequeue the request
       let lv_request <- toGet(ff_ca_llcache_request).get();
 
-      // allocate an entry in the MHB for this miss
-      m_mhb.ma_allocate_mhb_entry(
+      let lv_mhb_result <- m_mhb.mav_mhb_manage_miss(
         lv_request.address,
         lv_request.hart_id
       );
 
-      // enqueue a request to the CA for the data on a miss.
-      ff_llcache_ca_request.enq(LLCache_CA_request_t{
-        address: lv_request.address,
-        access: AccessType_t'(Read),
-        data: 0 // don't care about data on a read
-      });
+      if (lv_mhb_result matches NewlyAllocated) begin
+        // if newly allocated then send a request 
+        // main memory.
+        ff_llcache_ca_request.enq(LLCache_CA_request_t{
+          address: lv_request.address,
+          access: AccessType_t'(Read),
+          data: 0 // don't care about data on a read
+        });
+      end
 
     endrule: rl_miss
 
