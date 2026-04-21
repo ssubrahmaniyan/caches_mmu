@@ -35,7 +35,7 @@ package LLCache_mhb;
       mav_mhb_release();
 
 
-    method ActionValue#(MHB_Lookup_Result_t)
+    method ActionValue#(MHB_Lookup_Result_u#(datawidth))
       mav_mhb_manage_miss(
         Bit#(paddr) address,
         Bit#(TLog#(ncores)) hart_id
@@ -118,7 +118,7 @@ package LLCache_mhb;
       return lv_entry;
     endmethod: mav_mhb_release
 
-    method ActionValue#(MHB_Lookup_Result_t)
+    method ActionValue#(MHB_Lookup_Result_u#(datawidth))
       mav_mhb_manage_miss(
         Bit#(paddr) address,
         Bit#(TLog#(ncores)) hart_id
@@ -134,8 +134,15 @@ package LLCache_mhb;
       if (lv_hit_index matches tagged Valid .idx) begin
         // already pending
         // update hart_id bit vector
-        v_mhb[idx].hart_id <= v_mhb[idx].hart_id | f_index_to_onehot(hart_id);
-        return MHB_Lookup_Result_t'(AlreadyPending);
+        if (v_mhb[idx].filled) begin
+          // if filled then data is ready and we can return it immediately
+          let return_data = v_mhb[idx].data;
+          return tagged DataReady(return_data);
+        end
+        else begin
+          v_mhb[idx].hart_id <= v_mhb[idx].hart_id | f_index_to_onehot(hart_id);
+          return tagged AlreadyPending;
+        end
       end else begin
         v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
           address : address,
@@ -145,7 +152,7 @@ package LLCache_mhb;
           filled  : False
         };
         rg_mhb_tail <= rg_mhb_tail + 1;
-        return MHB_Lookup_Result_t'(NewlyAllocated);
+        return tagged NewlyAllocated;
       end
       
     endmethod: mav_mhb_manage_miss

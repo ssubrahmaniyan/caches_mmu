@@ -68,10 +68,12 @@ package LLCache_types;
     numeric type ncores)
   deriving (Bits, Eq);
 
-  typedef enum{
-    AlreadyPending,
-    NewlyAllocated
-  } MHB_Lookup_Result_t
+  typedef union tagged {
+    void            AlreadyPending;
+    void            NewlyAllocated;
+    Bit#(datawidth) DataReady;
+  } MHB_Lookup_Result_u
+  #(numeric type datawidth)
     deriving (Bits, Eq);
   
 endpackage: LLCache_types

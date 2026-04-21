@@ -190,7 +190,7 @@ package LLCache;
         lv_request.hart_id
       );
 
-      if (lv_mhb_result matches NewlyAllocated) begin
+      if (lv_mhb_result matches tagged NewlyAllocated) begin
         // if newly allocated then send a request 
         // main memory.
         ff_llcache_ca_request.enq(LLCache_CA_request_t{
@@ -198,6 +198,12 @@ package LLCache;
           access: AccessType_t'(Read),
           data: 0 // don't care about data on a read
         });
+      end else if (lv_mhb_result matches tagged DataReady .ret_data) begin
+        let resp = LLCache_CA_response_t {
+            data: ret_data,
+            address: lv_request.address,
+            hart_id: lv_request.hart_id
+        };
       end
 
     endrule: rl_miss
