@@ -220,7 +220,6 @@ package LLCache;
       // TODO: make update controlled on cache status
       // TODO: ensure data is also sent to apt hart
       let lv_entry <- m_mhb.mav_mhb_release();
-      $display("fired");
       Bit#(set_bits) lv_index = truncateLSB(lv_entry.address);
 
       let lv_wayidx <- m_replace.mav_line_replace(
