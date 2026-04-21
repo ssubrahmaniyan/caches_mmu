@@ -137,10 +137,9 @@ link_verilator:
 simulate:
 	@echo Simulation...
 	$(call presim_config)
-	@exec ./$(BSVOUTDIR)/out
+	@exec ./$(BSVOUTDIR)/out +fullverbose
 	@echo Simulation finished
 
 .PHONY: clean
 clean:
 	rm -rf build bin *.jou *.log test.mem  log verilog fpga obj_dir sim_main.h vars data.mem
-
