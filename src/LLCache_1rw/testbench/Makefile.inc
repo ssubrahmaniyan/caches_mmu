@@ -33,8 +33,11 @@ THREADS=1
 COVERAGE=none
 TRACE=disable
 
+# params for testbench
+LLCWAYS=8
+PADDR=32
+
 TOP_MODULE:=mkLLCTestbench
 DIR:=../:./common_bsv:./common_verilog/bsvwrappers:../../tlbs/:../../pmp/:../src/
 TOP_DIR:= ./
 TOP_FILE:=LLCache_tb.bsv
-

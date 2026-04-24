@@ -67,6 +67,7 @@ VERILATOR_FLAGS = --stats --no-timing -O3 -CFLAGS -O3 -LDFLAGS "-static" --x-ass
 VCS_MACROS = +define+BSV_RESET_FIFO_HEAD=True +define+BSV_RESET_FIFO_ARRAY=True +define+BSV_ASYNC_RESET +define+VERBOSE
 
 define presim_config
+	python3 gen_test.py --ways $(LLCWAYS) --paddr-width $(PADDR) --out test.mem
 endef
 default: generate_verilog link_verilator simulate
 
