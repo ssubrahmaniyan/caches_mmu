@@ -153,6 +153,10 @@ package LLCache;
     // valid bits for each way in each set
     Vector#(`llcsets, Reg#(Bit#(`llcways))) v_valid <- replicateM(mkReg(0)); 
 
+    Vector#(`llcsets, Reg#(Bit#(`llcways))) v_dirty <- replicateM(mkReg(0)); 
+
+    Vector#(`llcsets, Reg#(Bit#(`llcways))) v_gamma <- replicateM(mkReg(0)); 
+
     let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
     let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
     //TODO: add assertion to check that waymask does not have more than one hits.
