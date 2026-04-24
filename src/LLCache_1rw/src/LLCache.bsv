@@ -16,6 +16,7 @@ package LLCache;
   import LLCache_lib          :: *;
 
   `include "LLCache.defines"
+  `include "Logger.bsv"
  // TODO: add doc
   interface Ifc_LLCache;
 
@@ -205,6 +206,7 @@ package LLCache;
             address: lv_request.address,
             hart_id: lv_request.hart_id
         };
+        ff_data_response.enq(resp);
       end
 
     endrule: rl_miss
@@ -213,10 +215,12 @@ package LLCache;
       doc: rule: fill_mhb
       desc: dequeues entry from the response buffer and updates the mhb
     */
-    rule rl_fill_mhb(!m_mhb.mv_mhb_empty() && ff_ca_llcache_response.notEmpty());
+    rule rl_fill_mhb(ff_ca_llcache_response.notEmpty());
 
       let lv_response = ff_ca_llcache_response.first();
       ff_ca_llcache_response.deq();
+      `logLevel(llc, 2, $format("[LLC][FILL_DEQUEUE] Addr: %h Data: %h Hart: %0d",
+          lv_response.address, lv_response.data, lv_response.hart_id))
 
       // TODO: add assertion for fills being in same order as requests
       m_mhb.ma_update_mhb_entry(lv_response.data);

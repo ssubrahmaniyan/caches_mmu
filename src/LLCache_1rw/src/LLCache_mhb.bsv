@@ -7,6 +7,7 @@ package LLCache_mhb;
 
   // project imports
   import LLCache_lib    :: *;
+  `include "Logger.bsv"
 
   interface     Ifc_LLCache_mhb#(
     numeric type mhbsize,
@@ -19,7 +20,7 @@ package LLCache_mhb;
 
     (*always_ready*)
     method Bool mv_mhb_empty();
-  
+
     /*
       doc: method: ma_update_mhb_entry
       description: Updates the data field of the current MHB entry being filled.
@@ -43,7 +44,7 @@ package LLCache_mhb;
 
   endinterface: Ifc_LLCache_mhb
 
-  module mkLLCache_mhb 
+  module mkLLCache_mhb
     (Ifc_LLCache_mhb#(
       mhbsize,
       datawidth,
@@ -53,23 +54,22 @@ package LLCache_mhb;
       Add#(1, a__, ncores)
     );
 
-
     /*
       doc: variable: v_mhb
-      description: Vector representing the MHB, where each entry 
+      description: Vector representing the MHB, where each entry
       is a ConfigReg containing an LLCache_mhb_entry struct.
     */
-    Vector#(mhbsize, ConfigReg#(LLCache_mhb_entry#(paddr, datawidth, ncores))) 
+    Vector#(mhbsize, ConfigReg#(LLCache_mhb_entry#(paddr, datawidth, ncores)))
         v_mhb <- replicateM(mkConfigReg(unpack(0)));
     /*
       doc: variable: rg_mhb_head
-      description: Head pointer of the MHB. 
+      description: Head pointer of the MHB.
     */
     Reg#(Bit#(TLog#(mhbsize))) rg_mhb_head <- mkReg(0);
 
     /*
       doc: variable: rg_mhb_tail
-      description: Tail pointer of the MHB. 
+      description: Tail pointer of the MHB.
     */
     Reg#(Bit#(TLog#(mhbsize))) rg_mhb_tail <- mkReg(0);
 
@@ -94,8 +94,10 @@ package LLCache_mhb;
 
     method Action ma_update_mhb_entry(
       Bit#(datawidth) data);
-      
+
       let lv_entry = v_mhb[rg_mhb_current_fill];
+      `logLevel(mhb, 2, $format("[MHB][FILL] idx=%0d addr=%h data=%h valid =%b",
+          rg_mhb_current_fill, lv_entry.address, data, lv_entry.valid))
       lv_entry.data = data;
       lv_entry.filled = True;
 
@@ -106,6 +108,8 @@ package LLCache_mhb;
     method ActionValue#(LLCache_mhb_entry#(paddr, datawidth, ncores))
       mav_mhb_release() if (v_mhb[rg_mhb_head].valid && v_mhb[rg_mhb_head].filled);
       LLCache_mhb_entry#(paddr, datawidth, ncores) lv_entry = v_mhb[rg_mhb_head];
+      `logLevel(mhb, 2, $format("[MHB][RELEASE] idx=%0d addr=%h head_next=%0d",
+          rg_mhb_head, lv_entry.address, rg_mhb_head + 1))
 
       v_mhb[rg_mhb_head] <= LLCache_mhb_entry{
         address : 0,
@@ -135,18 +139,23 @@ package LLCache_mhb;
         // already pending
         // update hart_id bit vector
         if (v_mhb[idx].filled) begin
-          // if filled then data is ready and we can return it immediately
           let return_data = v_mhb[idx].data;
+          `logLevel(mhb, 2, $format("[MHB][DATA_READY] addr=%h data=%h idx=%0d",
+              address, return_data, idx))
           return tagged DataReady(return_data);
         end
         else begin
           v_mhb[idx].hart_id <= v_mhb[idx].hart_id | f_index_to_onehot(hart_id);
+          `logLevel(mhb, 2, $format("[MHB][COALESCE] addr=%h hart_id=%0d idx=%0d",
+              address, hart_id, idx))
           return tagged AlreadyPending;
         end
       end else begin
+        `logLevel(mhb, 2, $format("[MHB][ALLOC][NEWALLOC] addr=%h hart_id=%0d tail=%0d head=%0d",
+            address, hart_id, rg_mhb_tail, rg_mhb_head))
         v_mhb[rg_mhb_tail] <=  LLCache_mhb_entry{
           address : address,
-          data    : 0, 
+          data    : ?,
           hart_id : f_index_to_onehot(hart_id),
           valid   : True,
           filled  : False
@@ -154,7 +163,7 @@ package LLCache_mhb;
         rg_mhb_tail <= rg_mhb_tail + 1;
         return tagged NewlyAllocated;
       end
-      
+
     endmethod: mav_mhb_manage_miss
 
   endmodule: mkLLCache_mhb
