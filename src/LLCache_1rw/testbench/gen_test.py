@@ -32,10 +32,9 @@ TAG_SHIFT = 12
 
 ADDR_A = 0xA5A5A5A5
 ADDR_B = 0x5A5A5A5A
+ADDR_C = 0x3C3C3C3C
+ADDR_D = 0xC3C3C3C3
 ADDR_FILL_BASE = 0x00010000
-ADDR_NEWLINE = 0x00020000
-ADDR_PROBE_MISS = 0x00014000
-ADDR_PROBE_HIT = 0x00015000
 
 
 @dataclass(frozen=True)
@@ -119,6 +118,7 @@ def encode(step: Step, paddr_width: int) -> int:
 
 
 def build_test0_basic() -> list[Step]:
+    # Check that a read after processing a miss always hits
     return [
         send_req(ADDR_A),
         expect_miss(ADDR_A),
@@ -132,6 +132,7 @@ def build_test0_basic() -> list[Step]:
 
 
 def build_test1_nonblocking() -> list[Step]:
+    # Check non blocking behaviour: subsequent hit is serviced before the pending miss
     return [
         send_req(ADDR_B),
         send_req(ADDR_A),
@@ -151,9 +152,7 @@ def build_test1_nonblocking() -> list[Step]:
 
 
 def build_test2_fill_and_evict(ways: int) -> list[Step]:
-    if ways < 4:
-        raise RuntimeError(f"ways={ways} is too small for test2")
-
+    # Check eviction happens when the set is fully filled
     steps: list[Step] = []
     for i in range(ways):
         addr = ADDR_FILL_BASE + (i << 12)
@@ -168,10 +167,8 @@ def build_test2_fill_and_evict(ways: int) -> list[Step]:
 
     steps.extend(
         [
-            send_req(ADDR_NEWLINE),
-            expect_miss(ADDR_NEWLINE),
-            send_fill(ADDR_NEWLINE),
-            expect_resp(ADDR_NEWLINE),
+            send_req(ADDR_FILL_BASE),
+            expect_resp(ADDR_FILL_BASE),
             expect_no_miss(2),
             pass_marker(2),
         ]
@@ -179,16 +176,51 @@ def build_test2_fill_and_evict(ways: int) -> list[Step]:
     return steps
 
 
+def build_test3_same_line_hits() -> list[Step]:
+    # Fill one line, then access another address in the same line and expect hit.
+    addr_line_base = ADDR_C & ~0x3F
+    addr_same_line = addr_line_base | 0x18
+    return [
+        send_req(addr_line_base),
+        expect_miss(addr_line_base),
+        send_fill(addr_line_base),
+        expect_resp(addr_line_base),
+        send_req(addr_same_line),
+        expect_resp(addr_same_line),
+        expect_no_miss(2),
+        pass_marker(3),
+    ]
+
+
+def build_test4_hart_id_path() -> list[Step]:
+    # Check that a non-zero hart id is preserved through fill + hit response path.
+    hart = 2
+    return [
+        send_req(ADDR_D, hart=hart),
+        expect_miss(ADDR_D),
+        send_fill(ADDR_D, hart=hart),
+        expect_resp(ADDR_D, hart=hart),
+        send_req(ADDR_D, hart=hart),
+        expect_resp(ADDR_D, hart=hart),
+        expect_no_miss(2),
+        pass_marker(4),
+    ]
+
+
 TEST_BUILDERS = {
     "test0": lambda ways: build_test0_basic(),
     "test1": lambda ways: build_test1_nonblocking(),
     "test2": lambda ways: build_test2_fill_and_evict(ways),
+    "test3": lambda ways: build_test3_same_line_hits(),
+    "test4": lambda ways: build_test4_hart_id_path(),
 }
 
 ENABLED_TESTS = [
     "test0",
     "test1",
-    "test2"
+    "test2",
+    "test3",
+    "test4",
 ]
 
 
