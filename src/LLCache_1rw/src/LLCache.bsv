@@ -128,9 +128,10 @@ package LLCache;
     ) m_tag <- mkLLCache_tagram;
 // Instance of the data array
     Ifc_dataram1rw#(
-      TMul#(`llcwords, `llcblocks),
-      `llcsets                  ,
-      `llcways                  ,
+      `llcwords ,
+      `llcblocks,
+      `llcsets  ,
+      `llcways  ,
       `paddr
     ) m_data <- mkLLCache_dataram;
 

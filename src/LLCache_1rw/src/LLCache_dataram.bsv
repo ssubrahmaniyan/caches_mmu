@@ -14,7 +14,8 @@ package LLCache_dataram;
   import mem_config       :: *;
 
   interface Ifc_dataram1rw
-    #(numeric type lsize,   // size of a line
+    #(numeric type wordsize,   // size of a word in bytes
+      numeric type blocksize,  // size of a block in words
       numeric type nsets,
       numeric type nways,
       numeric type naddr    // number of bits to address the RAM 
@@ -30,7 +31,7 @@ package LLCache_dataram;
       AccessType_t          access,
       Bit#(TLog#(nways))    wayid,
       Bit#(naddr)           addr,
-      Bit#(TMul#(lsize, 8)) data
+      Bit#(TMul#(TMul#(wordsize, blocksize), 8)) data
     );
 
     /*
@@ -39,7 +40,7 @@ package LLCache_dataram;
             with the waymask to read the data line.
             Returns a Maybe# to accomodate write responses also.
     */
-    method DataResponse_t#(lsize) mv_response(
+    method DataResponse_t#(TMul#(wordsize, blocksize)) mv_response(
       TagResponse_t#(nways)   waymask
     );
 
@@ -47,15 +48,20 @@ package LLCache_dataram;
 
   module mkLLCache_dataram
     (Ifc_dataram1rw#(
-      lsize,
+      wordsize,
+      blocksize,
       nsets,
       nways, 
       naddr
     ))
     provisos(
      Log#(nsets, set_bits),
-     Mul#(lsize, 8, line_bits),     // number of bits per line in memory
-     Add#(offset, set_bits, naddr), // bits to index and offset
+     Log#(wordsize, word_bits),
+     Log#(blocksize, block_bits),
+     Add#(word_bits, block_bits, offset), // bits to index and offset
+     Add#(offset, set_bits, _a),  // _a bits for index + offset
+     Add#(tag_bits, _a, naddr),   // tag bits + index + offset = naddr bits
+     Mul#(TMul#(blocksize, wordsize), 8, line_bits), // number of bits in a cache line
      Alias#(Vector#(nways, Bit#(TLog#(nways))), wayVec) 
     );
 
@@ -85,7 +91,7 @@ package LLCache_dataram;
       AccessType_t          access,
       Bit#(TLog#(nways))    wayid,
       Bit#(naddr)           addr,
-      Bit#(TMul#(lsize, 8)) data
+      Bit#(TMul#(TMul#(wordsize, blocksize), 8)) data
     );
 
       Bit#(set_bits) lv_index = addr[v_set_bits + v_offset - 1 : v_offset];
@@ -103,7 +109,7 @@ package LLCache_dataram;
 
     endmethod: ma_request
 
-    method DataResponse_t#(lsize) mv_response(
+    method DataResponse_t#(TMul#(wordsize, blocksize)) mv_response(
       TagResponse_t#(nways) waymask
     );
       
