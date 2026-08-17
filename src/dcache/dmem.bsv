@@ -43,6 +43,9 @@ import SpecialFIFOs :: * ;
   import fa_dtlb :: * ;
   import common_tlb_types :: * ;
 `endif
+`ifdef llc
+  import LLCache_types :: * ;
+`endif
 
   interface Ifc_dmem;
       // -------------------- Cache related interfaces ------------//
@@ -64,9 +67,16 @@ import SpecialFIFOs :: * ;
     method Bool mv_dmem_available;
 
   `ifdef dcache
+  `ifndef llc
     method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) send_mem_wr_req;
     interface Put#(DCache_mem_writeresp) receive_mem_wr_resp;
     method Action deq_mem_wr_req;
+  `else
+    // STUB: mirrors dcache1rw's llc-gated interface, not connected to an LLC
+    // instance anywhere yet - see the warning at Ifc_dcache in dcache1rw.bsv.
+    interface Get#(CA_LLCache_request_t#(`paddr, `linewidth, `ncores)) send_llc_wr_req;
+    interface Put#(LLCache_CA_response_t#(`linewidth, `paddr, `ncores)) receive_llc_wr_resp;
+  `endif
 
     interface Get#(DCache_mem_readreq#(`paddr)) send_mem_rd_req;
     interface Put#(DCache_mem_readresp#(`dbuswidth)) receive_mem_rd_resp;
@@ -185,11 +195,18 @@ import SpecialFIFOs :: * ;
     interface receive_mem_io_resp = dcache.receive_mem_io_resp;
     method ma_cache_enable =  dcache.ma_cache_enable;
 `ifdef dcache
+  `ifndef llc
     method send_mem_wr_req = dcache.send_mem_wr_req;
     interface receive_mem_wr_resp = dcache.receive_mem_wr_resp;
+  `else
+    interface send_llc_wr_req = dcache.send_llc_wr_req;
+    interface receive_llc_wr_resp = dcache.receive_llc_wr_resp;
+  `endif
     interface send_mem_rd_req = dcache.send_mem_rd_req;
     interface receive_mem_rd_resp = dcache.receive_mem_rd_resp;
+  `ifndef llc
     method deq_mem_wr_req = dcache.deq_mem_wr_req;
+  `endif
 `endif
     method ma_commit_store = dcache.ma_commit_store;
     method ma_commit_io = dcache.ma_commit_io;

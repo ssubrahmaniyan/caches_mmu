@@ -127,7 +127,8 @@ package LLCache;
       `llcsets  ,
       `paddr
     ) m_tag <- mkLLCache_tagram;
-// Instance of the data array
+
+    // Instance of the data array
     Ifc_dataram1rw#(
       `llcwords ,
       `llcblocks,

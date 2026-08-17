@@ -168,7 +168,10 @@ import SpecialFIFOs :: * ;
 
 
   import io_func :: * ;
- 
+`ifdef llc
+  import LLCache_types :: * ;
+`endif
+
   typedef struct{
     Bit#(TMax#(1,TLog#(blocks))) init_bank;
     Bit#(TLog#(fbsize)) fbindex;
@@ -192,9 +195,18 @@ import SpecialFIFOs :: * ;
     // -- memory side cache interfaces
     interface Get#(DCache_mem_readreq#(`paddr)) send_mem_rd_req;
     interface Put#(DCache_mem_readresp#(`dbuswidth)) receive_mem_rd_resp;
+  `ifndef llc
     method DCache_mem_writereq#(`paddr, TMul#(`dblocks, TMul#(`dwords, 8))) send_mem_wr_req;
     method Action deq_mem_wr_req;
     interface Put#(DCache_mem_writeresp) receive_mem_wr_resp;
+  `else
+    // STUB: not connected to an LLC instance anywhere yet. Do not define
+    // `llc` in any real build until a consumer is wired to send_llc_wr_req -
+    // ff_llc_wr_request will fill on the first dirty eviction and
+    // permanently stall the cache (mv_cache_available depends on fb_full).
+    interface Get#(CA_LLCache_request_t#(`paddr, `linewidth, `ncores)) send_llc_wr_req;
+    interface Put#(LLCache_CA_response_t#(`linewidth, `paddr, `ncores)) receive_llc_wr_resp;
+  `endif
 
     // -- memory side io interfaces
     interface Get#(DCache_io_req#(`paddr, `dbuswidth)) send_mem_io_req;
@@ -302,10 +314,17 @@ import SpecialFIFOs :: * ;
     FIFOF#(DCache_mem_readreq#(`paddr)) ff_mem_rd_request <- mkSizedFIFOF(2);
     /*doc:fifo: This fifo stores the response from the next level memory.*/
     FIFOF#(DCache_mem_readresp#(`dbuswidth)) ff_mem_rd_resp  <- mkBypassFIFOF();
+  `ifndef llc
     /*doc:fifo: this fifo stores the eviction request to be written back*/
     FIFOF#(DCache_mem_writereq#(`paddr, `linewidth)) ff_mem_wr_request <- mkFIFOF1;
     /*doc:fifo: this fifo stores the write response from an eviction or a io write req*/
     FIFOF#(DCache_mem_writeresp) ff_mem_wr_resp  <- mkBypassFIFOF();
+  `else
+    /*doc:fifo: this fifo stores the eviction request to be written back to the LLC*/
+    FIFOF#(CA_LLCache_request_t#(`paddr, `linewidth, `ncores)) ff_llc_wr_request <- mkFIFOF1;
+    /*doc:fifo: this fifo stores the write ack from the LLC for an eviction*/
+    FIFOF#(LLCache_CA_response_t#(`linewidth, `paddr, `ncores)) ff_llc_wr_resp  <- mkBypassFIFOF();
+  `endif
     /*doc:fifo: this fifo holds the request from core when there has been a tlbmiss */
     FIFOF#(DCache_core_request#(`vaddr, `respwidth, `desize)) ff_hold_request <- mkBypassFIFOF();
     /*doc:fifo: fifo to hold the IO requests going directly to the bus*/
@@ -571,6 +590,7 @@ import SpecialFIFOs :: * ;
 Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address))
       Bool writeback_condition = lv_dirty == 1 && lv_valid == 1;
       if( writeback_condition) begin
+      `ifndef llc
         let lv_req = DCache_mem_writereq{address   : final_address,
                                          burst_len  : fromInteger(((`dblocks * `dwords * 8) / `dbuswidth)  - 1 ),
                                          burst_size : fromInteger(valueOf(TLog#(TDiv#(`dbuswidth,8)))),
@@ -578,6 +598,15 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
                                           };
         ff_mem_wr_request.enq(lv_req);
         `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: Evicting to Memory:",id,fshow(lv_req)))
+      `else
+        let lv_req = CA_LLCache_request_t{address : final_address,
+                                           access  : AccessType_t'(Write),
+                                           data    : dataline,
+                                           hart_id : truncate(id)
+                                          };
+        ff_llc_wr_request.enq(lv_req);
+        `logLevel( dcache, 2, $format("[%2d]DCACHE: Fence: Evicting to LLC:",id,fshow(lv_req)))
+      `endif
       end
       if(lv_curr_way == fromInteger(v_ways-1))
         lv_next_set = zeroExtend(lv_curr_set) + 1;
@@ -614,12 +643,20 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     /*doc:rule: */
     rule rl_deq_write_resp(rg_fence_pending && ff_core_request.first.fence);
       rg_fence_pending <= False;
+    `ifndef llc
       let x = ff_mem_wr_resp.first;
+    `else
+      let x = ff_llc_wr_resp.first;
+    `endif
     endrule
     /*doc:rule: whether the write response is for a fence or is for eviction it has to be evicted.
      Hence this has been decoupled from the previous rule - which is meant only for fence*/
     rule rl_deq_write_response;
+    `ifndef llc
       ff_mem_wr_resp.deq;
+    `else
+      ff_llc_wr_resp.deq;
+    `endif
     endrule
 
   `ifdef dcache_ecc
@@ -1081,11 +1118,19 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
           if(rg_release_readphase ) begin
 
             `logLevel( dcache, 0, $format("[%2d]DCACHE: Evicting Addr:%h set:%d tag:%h data:%h", id,lv_evict_address,set_index,tag,dataline))
+          `ifndef llc
             ff_mem_wr_request.enq(DCache_mem_writereq{address:lv_evict_address,
                                                   burst_len:fromInteger(((`dblocks * `dwords * 8) / `dbuswidth)  - 1 ),
                                                   burst_size:fromInteger(valueOf(TLog#(TDiv#(`dbuswidth,8)))),
                                                   data: truncateLSB(dataline)
                                               });
+          `else
+            ff_llc_wr_request.enq(CA_LLCache_request_t{address : lv_evict_address,
+                                                        access  : AccessType_t'(Write),
+                                                        data    : dataline,
+                                                        hart_id : truncate(id)
+                                                       });
+          `endif
           `ifdef perfmonitors
             wr_total_evictions <= 1;
           `endif
@@ -1311,11 +1356,16 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     interface send_mem_io_req = toGet(ff_mem_io_request);
     interface receive_mem_io_resp = toPut(ff_mem_io_resp);
 
+  `ifndef llc
     method send_mem_wr_req = ff_mem_wr_request.first;
     method Action deq_mem_wr_req;
       ff_mem_wr_request.deq;
     endmethod
     interface receive_mem_wr_resp = toPut(ff_mem_wr_resp);
+  `else
+    interface send_llc_wr_req = toGet(ff_llc_wr_request);
+    interface receive_llc_wr_resp = toPut(ff_llc_wr_resp);
+  `endif
   `ifdef supervisor
     interface get_ptw_resp = toGet(ff_ptw_response);
     interface put_pa_from_tlb = toPut(ff_from_tlb);
@@ -1331,7 +1381,8 @@ Dirty:%b Addr:%h",id, lv_curr_way,lv_curr_set,lv_valid, lv_dirty, final_address)
     method mv_storebuffer_empty = sb_empty;
     method mv_cache_available = ff_core_response.notFull && ff_core_request.notFull &&
         !rg_fence_stall && !fb_full && !rg_performing_replay && !sb_full &&
-        !sb_busy && !io_full `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif ;
+        !sb_busy && !io_full `ifdef dcache_ecc && !rg_perform_sec && !rg_halt_ram_check `endif
+        `ifdef llc && ff_llc_wr_request.notFull `endif ;
   `ifdef dcache_ecc
     method mv_ded_data = wr_ded_data_log;
     method mv_sed_data = wr_sed_data_log;
