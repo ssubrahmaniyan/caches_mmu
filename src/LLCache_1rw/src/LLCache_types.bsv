@@ -3,6 +3,11 @@ package LLCache_types;
     Read = 0,
     Write = 1
   } AccessType_t deriving (Bits, Eq);
+  
+  typedef enum{
+    RESPONSE_DATA,
+    RESPONSE_WRITE_ACK
+  } LLCache_CA_Response_Type_t deriving (Bits, Eq);
 
   typedef struct {
     Bit#(addr_width)    address;
@@ -26,6 +31,7 @@ package LLCache_types;
   deriving (Bits, Eq);
 
   typedef struct{
+    LLCache_CA_Response_Type_t response_type;
     Bit#(data_width)    data;
     Bit#(addr_width)    address;
     Bit#(TLog#(ncores)) hart_id;

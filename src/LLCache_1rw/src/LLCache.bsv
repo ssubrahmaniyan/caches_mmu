@@ -159,24 +159,25 @@ package LLCache;
     Vector#(`llcsets, Reg#(Bit#(`llcways))) v_gamma <- replicateM(mkReg(0)); 
 
     let waymask = m_tag.mv_tagmatch_response(ff_ca_llcache_request.first.address);
+    let access  = ff_ca_llcache_request.first.access;
     let is_hit  = (reduceOr(pack(waymask)) == 1); //performs a bitwise OR on the waymask
     //TODO: add assertion to check that waymask does not have more than one hits.
     
-    (*descending_urgency = "rl_update_cache, rl_hit, rl_miss"*)
+    (*descending_urgency = "rl_hit_write, rl_update_cache, rl_hit_read, rl_miss"*)
     // the update cache rule will respond with data in case of a miss flow
-    rule rl_hit(is_hit);
+    rule rl_hit_read(is_hit && access == Read);
       // retrive and dequeue the request
       let lv_request <- toGet(ff_ca_llcache_request).get();
-
+    
       // get data using waymask
       let lv_data_response = m_data.mv_response(waymask);
 
       let resp = LLCache_CA_response_t {
+          response_type : RESPONSE_DATA,
           data: pack(lv_data_response),
           address: lv_request.address,
           hart_id: lv_request.hart_id
       };
-
 
       // the replacement module needs to be updated on every access
       m_replace.ma_update_set(
@@ -186,7 +187,38 @@ package LLCache;
 
       // enqueue the response to the response FIFO
       ff_data_response.enq(resp);
-    endrule: rl_hit
+    endrule: rl_hit_read
+    
+    rule rl_hit_write(is_hit && access == Write);
+      // read MAY hit, write ALWAYS hits
+      // TODO: add assertion to check write always hits
+      
+      // retrive and dequeue the request
+      let lv_request <- toGet(ff_ca_llcache_request).get();
+      
+      // for writes, we can directly update the data array since it hits
+      Bit#(TLog#(`llcways)) lv_wayidx = f_onehot_to_index(waymask.waymask);
+      m_data.ma_request(
+        AccessType_t'(Write),
+        lv_wayidx,
+        lv_request.address,
+        lv_request.data
+      );
+
+      // update the dirty bit for the way being written to
+      Bit#(set_bits) lv_index = truncateLSB(lv_request.address);
+      v_dirty[lv_index] <= v_dirty[lv_index] | waymask.waymask;
+
+      // respond to CA with an ack
+      let resp = LLCache_CA_response_t {
+          response_type : RESPONSE_WRITE_ACK,
+          data: ?, // don't care about data
+          address: lv_request.address,
+          hart_id: lv_request.hart_id
+      };
+
+      ff_data_response.enq(resp);
+    endrule: rl_hit_write
 
     rule rl_miss(!is_hit);
       // retrieve and dequeue the request
@@ -207,6 +239,7 @@ package LLCache;
         });
       end else if (lv_mhb_result matches tagged DataReady .ret_data) begin
         let resp = LLCache_CA_response_t {
+            response_type : RESPONSE_DATA,
             data: ret_data,
             address: lv_request.address,
             hart_id: lv_request.hart_id
@@ -265,6 +298,7 @@ package LLCache;
       // respond to CA with the data simultaneously
 
       let lv_resp = LLCache_CA_response_t {
+          response_type : RESPONSE_DATA,
           data: lv_entry.data,
           address: lv_entry.address,
           hart_id: f_onehot_to_index(lv_entry.hart_id)
@@ -275,6 +309,7 @@ package LLCache;
     endrule: rl_update_cache
     
     interface Put ca_llcache_req;
+      // for both read and write the tag must first be matched and found
       method Action put(request);
 
         ff_ca_llcache_request.enq(request);

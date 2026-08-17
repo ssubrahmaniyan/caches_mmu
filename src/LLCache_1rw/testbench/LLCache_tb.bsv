@@ -33,6 +33,8 @@ package LLCache_tb;
     Reg#(Bool) rg_no_miss_active <- mkReg(False);
     Reg#(UInt#(16)) rg_no_miss_left <- mkReg(0);
     Reg#(UInt#(16)) rg_no_miss_start <- mkReg(0);
+    
+    Reg#(Bit#(`paddr)) rg_last_written_addr <- mkReg(0);
 
     RegFile#(Bit#(10), TB_Command_t) rg_stim <- mkRegFileFullLoad("test.mem");
     FIFOF#(Bit#(`paddr)) ff_miss_addr <- mkSizedFIFOF(16);
@@ -56,12 +58,20 @@ package LLCache_tb;
       return fn_data_for_tag(fn_data_tag_from_addr(addr));
     endfunction
 
+    function Bit#(LLCLineBits) fn_write_data_from_tag(Bit#(8) tag);
+      return zeroExtend({tag, 24'hDEAD00});
+    endfunction
+
     function Bit#(8) fn_cmd_opcode(TB_Command_t cmd);
       return truncate(cmd >> (`paddr + 24));
     endfunction
 
     function Bit#(16) fn_cmd_arg(TB_Command_t cmd);
       return truncate(cmd >> `paddr);
+    endfunction
+
+    function Bit#(8) fn_cmd_tag(TB_Command_t cmd);
+      return truncate(cmd >> (`paddr + 16));
     endfunction
 
     function Bit#(`paddr) fn_cmd_addr(TB_Command_t cmd);
@@ -78,6 +88,15 @@ package LLCache_tb;
         address: addr,
         access: Read,
         data: 0,
+        hart_id: hart
+      };
+    endfunction
+
+    function TB_CAReq_t fn_mk_write_req(Bit#(`paddr) addr, Bit#(LLCLineBits) data, Bit#(TLog#(`ncores)) hart);
+      return CA_LLCache_request_t{
+        address: addr,
+        access: Write,
+        data: data,
         hart_id: hart
       };
     endfunction
@@ -100,7 +119,15 @@ package LLCache_tb;
       Bit#(LLCLineBits) data,
       Bit#(TLog#(`ncores)) hart
     );
-      return ((resp.address == addr) && (resp.data == data) && (resp.hart_id == hart));
+      return ((resp.address == addr) && (resp.data == data) && (resp.hart_id == hart) && (resp.response_type == RESPONSE_DATA));
+    endfunction
+
+    function Bool fn_write_ack_match(
+      TB_LLCResp_t resp,
+      Bit#(`paddr) addr,
+      Bit#(TLog#(`ncores)) hart
+    );
+      return ((resp.address == addr) && (resp.hart_id == hart) && (resp.response_type == RESPONSE_WRITE_ACK));
     endfunction
 
     function Fmt fn_core_req_fmt(TB_CAReq_t req);
@@ -216,7 +243,14 @@ package LLCache_tb;
       TB_Command_t cmd = rg_stim.sub(truncate(pack(rg_pc)));
       Bit#(`paddr) addr = fn_cmd_addr(cmd);
       Bit#(TLog#(`ncores)) hart = truncate(fn_cmd_arg(cmd));
-      Bit#(LLCLineBits) expected_data = fn_data_for_addr(addr);
+      Bit#(LLCLineBits) expected_data;
+      if (addr == rg_last_written_addr) begin
+        Bit#(8) written_tag = fn_data_tag_from_addr(addr);
+        expected_data = fn_write_data_from_tag(written_tag);
+      end
+      else begin
+        expected_data = fn_data_for_addr(addr);
+      end
       let got = ff_resp.first;
       ff_resp.deq();
       if (!fn_resp_match(got, addr, expected_data, hart)) begin
@@ -241,8 +275,39 @@ package LLCache_tb;
       rg_pc <= rg_pc + 1;
     endrule
 
+    rule rl_op_send_write(!rg_done && !rg_no_miss_active &&
+                          fn_cmd_opcode(rg_stim.sub(truncate(pack(rg_pc)))) == 8'h07);
+      TB_Command_t cmd = rg_stim.sub(truncate(pack(rg_pc)));
+      Bit#(`paddr) addr = fn_cmd_addr(cmd);
+      Bit#(TLog#(`ncores)) hart = truncate(fn_cmd_arg(cmd));
+      Bit#(8) data_tag = fn_cmd_tag(cmd);
+      Bit#(LLCLineBits) data = fn_write_data_from_tag(data_tag);
+      let req = fn_mk_write_req(addr, data, hart);
+      `logLevel(llctb, 1, fn_info($format("[CORE->LLC WRITE] Addr: %h Data: %h Hart: %0d",
+                               req.address, req.data, req.hart_id)))
+      rg_last_written_addr <= addr;
+      dut.ca_llcache_req.put(req);
+      rg_pc <= rg_pc + 1;
+    endrule
+
+    rule rl_op_expect_write_ack(!rg_done && !rg_no_miss_active &&
+                                fn_cmd_opcode(rg_stim.sub(truncate(pack(rg_pc)))) == 8'h08 &&
+                                ff_resp.notEmpty);
+      TB_Command_t cmd = rg_stim.sub(truncate(pack(rg_pc)));
+      Bit#(`paddr) addr = fn_cmd_addr(cmd);
+      Bit#(TLog#(`ncores)) hart = truncate(fn_cmd_arg(cmd));
+      let got = ff_resp.first;
+      ff_resp.deq();
+      if (!fn_write_ack_match(got, addr, hart)) begin
+        `logLevel(llctb, 3, fn_fail($format("[TB][FAIL][CONFLICT] Write ACK mismatch. Got(addr=%h hart=%0d type=%0d) Expected(addr=%h hart=%0d type=WRITE_ACK)",
+                                got.address, got.hart_id, got.response_type, addr, hart)))
+        $finish(1);
+      end
+      rg_pc <= rg_pc + 1;
+    endrule
+
     rule rl_op_unknown(!rg_done && !rg_no_miss_active &&
-                       fn_cmd_opcode(rg_stim.sub(truncate(pack(rg_pc)))) > 8'h06);
+                       fn_cmd_opcode(rg_stim.sub(truncate(pack(rg_pc)))) > 8'h08);
       TB_Command_t cmd = rg_stim.sub(truncate(pack(rg_pc)));
       Bit#(8) op = fn_cmd_opcode(cmd);
       `logLevel(llctb, 3, fn_fail($format("[TB][FAIL][CONFLICT] Unknown opcode %0d at pc=%0d", op, rg_pc)))

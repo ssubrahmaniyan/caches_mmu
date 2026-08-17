@@ -24,6 +24,8 @@ OP_SEND_FILL = 0x03
 OP_EXPECT_RESP = 0x04
 OP_EXPECT_NO_MISS = 0x05
 OP_PASS = 0x06
+OP_SEND_WRITE = 0x07
+OP_EXPECT_WRITE_ACK = 0x08
 
 MAX_ENTRIES = 1024
 
@@ -83,6 +85,14 @@ def send_fill(address: int, hart: int = 0) -> Step:
 
 def expect_resp(address: int, hart: int = 0) -> Step:
     return Step(OP_EXPECT_RESP, address, tag_from_addr(address), hart)
+
+
+def send_write(address: int, hart: int = 0) -> Step:
+    return Step(OP_SEND_WRITE, address, tag_from_addr(address), hart)
+
+
+def expect_write_ack(address: int, hart: int = 0) -> Step:
+    return Step(OP_EXPECT_WRITE_ACK, address, tag_from_addr(address), hart)
 
 
 def expect_no_miss(cycles: int) -> Step:
@@ -207,12 +217,30 @@ def build_test4_hart_id_path() -> list[Step]:
     ]
 
 
+def build_test5_write_hit() -> list[Step]:
+    # Fill a line, then write new data to it, then read to verify the written data.
+    write_addr = 0xabcdabcd
+    return [
+        send_req(write_addr),
+        expect_miss(write_addr),
+        send_fill(write_addr),
+        expect_resp(write_addr),
+        send_write(write_addr),
+        expect_write_ack(write_addr),
+        send_req(write_addr),
+        expect_resp(write_addr),
+        expect_no_miss(2),
+        pass_marker(5),
+    ]
+
+
 TEST_BUILDERS = {
     "test0": lambda ways: build_test0_basic(),
     "test1": lambda ways: build_test1_nonblocking(),
     "test2": lambda ways: build_test2_fill_and_evict(ways),
     "test3": lambda ways: build_test3_same_line_hits(),
     "test4": lambda ways: build_test4_hart_id_path(),
+    "test5": lambda ways: build_test5_write_hit(),
 }
 
 ENABLED_TESTS = [
@@ -221,6 +249,7 @@ ENABLED_TESTS = [
     "test2",
     "test3",
     "test4",
+    "test5",
 ]
 
 
